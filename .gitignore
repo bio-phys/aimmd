@@ -1,3 +1,14 @@
+# cythons annotated coverage htmls
+# ATTENTION: this matches ALL .html files in
+# ALL SUBDIRECTORIES of ANNShooter
+ANNShooter/**/*.html
+
+# OPS storage files
+*.nc
+
+# Spyder project files
+.spyproject/*
+
 # ---> Python
 # Byte-compiled / optimized / DLL files
 __pycache__/
