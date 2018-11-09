@@ -32,7 +32,7 @@ This will add these two channels with a higher priority than the standard channe
 
 2. Create a new environment 'arcd' and install openpathsampling and arcd dependencies. You should replace 'tensorflow' with 'tensorflow-gpu' if you have a Nvidia GPU and want to use it.
 ```
-conda create --name arcd python=3 numpy scipy pandas nose jupyter netcdf4 matplotlib openmm pyyaml svgwrite mdtraj ujson networkx openmmtools cython h5py graphviz pydot pytest sympy tensorflow
+conda create --name arcd python=3 numpy scipy pandas nose jupyter netcdf4 matplotlib openmm pyyaml svgwrite mdtraj ujson networkx openmmtools cython h5py graphviz pydot pytest sympy tensorflow pyaudi
 ```
 3. Activate the environment you just created with `source activate arcd` or `conda activate arcd` depending on your conda version.
 
