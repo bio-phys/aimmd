@@ -38,11 +38,12 @@ conda create --name arcd python=3 numpy scipy pandas nose jupyter netcdf4 matplo
 Clone the openpathsampling github repository, add github/hejung/openpathsampling as an additional remote and checkout the pathsamp_hooks branch.
 cd into the repository, activate the environment you just created (`source activate arcd` or `conda activate arcd` depending on your conda version) and install openpathsampling via pip with `pip install -e .`
 
-3. Install keras and backend. Use conda to install keras dependencies, `conda install -n arcd h5py graphviz pydot`. Then install the backend (I used tensorflow), see the corresponding installation instructions. After installing the backend, keras can be installed via pip from pypi with `pip install keras`.
+3. arcd dependencies I: Install keras and backend. Use conda to install keras dependencies, `conda install -n arcd h5py graphviz pydot`. Then install the backend (I used tensorflow), see the corresponding installation instructions. After installing the backend, keras can be installed via pip from pypi with `pip install keras`.
 
-4. arcd & friends: dependencies
+4. arcd dependencies II:
+conda installable
 ```
-cython pytest sympy
+cython pytest sympy pyaudi
 ```
 (get pyaudi  + dcgpy ) <- pip should do that when installing arcd
 
@@ -74,4 +75,4 @@ You could (and should) give props to all the people who contributed to the code.
 
 ## License
 
-A short snippet describing the license (GPL, MIT, Apache, etc.)
+GPL v3
