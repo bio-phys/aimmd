@@ -1,0 +1,8 @@
+{
+    "python.pythonPath": "/opt/conda/envs/arcd_devel/bin/python",
+    "python.linting.pylintEnabled": false,
+    "python.linting.pep8Enabled": true,
+    "python.linting.enabled": true,
+    // Arguments passed in. Each argument is a separate item in the array.
+    "python.linting.pep8Args": ["--ignore=W503"]
+}

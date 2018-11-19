@@ -1,0 +1,21 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/usr/local/include/",
+                "/opt/conda/envs/arcd_devel/include/",
+                "/opt/conda/envs/arcd_devel/include/eigen3",
+                "/home/think/oprogs/OPS/arcd_deps/d-CGP/include",
+                "/opt/conda/envs/arcd_devel/include/python3.6m"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/clang++-3.8",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "clang-x64"
+        }
+    ],
+    "version": 4
+}
