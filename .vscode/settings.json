@@ -1,5 +1,5 @@
 {
-    "python.pythonPath": "/opt/conda/envs/arcd_devel/bin/python",
+    "python.pythonPath": "${env:CONDA_ENV_LOC}/arcd_devel/bin/python",
     "python.linting.pylintEnabled": false,
     "python.linting.pep8Enabled": true,
     "python.linting.enabled": true,
