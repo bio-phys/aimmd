@@ -172,3 +172,11 @@ class TrainSetdCGPy(TrainSetBase):
         return ([gdual(self._coords[:, i])
                  for i in range(self._coords.shape[1])],
                 self.shot_results)
+
+
+class TrainSetKeras(TrainSetBase):
+    """
+    TODO
+    """
+    
+

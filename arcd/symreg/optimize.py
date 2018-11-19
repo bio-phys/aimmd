@@ -205,7 +205,7 @@ def newton(ex, f, x, yt, steps, n_weights=[2, 3], randomize_weights=True):
         w = ex.get_weights() # initial weights
         # random choice of the weights w.r.t. which we'll minimize the error
         num_vars = np.random.randint(n_weights[0], min(n_weights[1], len(aw)) + 1) # number of weights
-        awidx = np.random.choice(len(aw), num_vars, replace = False) # indexes of chosen weights
+        awidx = np.random.choice(len(aw), num_vars, replace=False) # indexes of chosen weights
         ss = [] # symbols
         for j in range(len(awidx)):
             ss.append("w" + str(aw[awidx[j]][0]) + "_" + str(aw[awidx[j]][1]))
@@ -219,7 +219,7 @@ def newton(ex, f, x, yt, steps, n_weights=[2, 3], randomize_weights=True):
 
         # get gradient and Hessian
         dw = np.zeros(len(ss))
-        H = np.zeros((len(ss),len(ss)))
+        H = np.zeros((len(ss), len(ss)))
         for k in range(len(ss)):
             dw[k] = collapse_vectorized_coefficient(E.get_derivative({"d"+ss[k]: 1}), len(x[0].constant_cf))
             H[k][k] = collapse_vectorized_coefficient(E.get_derivative({"d"+ss[k]: 2}), len(x[0].constant_cf))
