@@ -148,7 +148,7 @@ try:
 except ImportError:
     USE_CYTHON = False
 else:
-    USE_CYTHON = False
+    USE_CYTHON = True
 
 if USE_CYTHON and LINETRACE:
     import Cython
@@ -162,51 +162,52 @@ HERE = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(HERE, 'README.md'), encoding='utf-8') as f:
     LONG_DESCRIPTION = f.read()
 
-import numpy
-include_dirs = ['.', numpy.get_include(), 'm',
-                        '/opt/conda/envs/arcd_devel/include',
-                        '/opt/conda/envs/arcd_devel/include/eigen3',
-                        '/home/think/oprogs/OPS/arcd_deps/d-CGP/include']
-exts = [Extension(
-        'arcd.symreg.sources.optimize',
-        ['arcd/symreg/sources/optimize.cpp'],
-        include_dirs=include_dirs,
-        #extra_compile_args=["-O3", "-march=native", "-fopenmp"],
-        #extra_link_args=['-fopenmp'],
-        extra_link_args=['-lquadmath', '-ltbb', '-lgmp', '-lmpfr',
-                         '-L /opt/cona/envs/lib/',
-                         '-lboost_python36',
-                         '-lboost_system',
-                         '-lboost_timer',
-                         '-lboost_chrono',
-                         '-lboost_serialization',
-                         '-lboost_unit_test_framework',
-                         ],
-        # your include_dirs must contains the '.' for setup to search
-        # ...all the subfolder of the codeRootFolder
-        ),
-        Extension(
-        'arcd.symreg.sources.core',
-        ['arcd/symreg/sources/core.cpp', 'arcd/symreg/sources/docstrings.cpp'],
-        include_dirs=include_dirs,
-        #extra_compile_args=["-O3", "-march=native", "-fopenmp"],
-        #extra_link_args=['-fopenmp'],
-        extra_link_args=['-lquadmath', '-ltbb', '-lgmp', '-lmpfr',
-                         '-L /opt/cona/envs/lib/',
-                         '-lboost_python36',
-                         '-lboost_system',
-                         '-lboost_timer',
-                         '-lboost_chrono',
-                         '-lboost_serialization',
-                         '-lboost_unit_test_framework',
-                         ],
-        # your include_dirs must contains the '.' for setup to search
-        # ...all the subfolder of the codeRootFolder
-        )]
+#import numpy
+#include_dirs = ['.', numpy.get_include(), 'm',
+#                        '/opt/conda/envs/arcd_devel/include',
+#                        '/opt/conda/envs/arcd_devel/include/eigen3',
+#                        '/home/think/oprogs/OPS/arcd_deps/d-CGP/include']
+#exts = [Extension(
+#        'arcd.symreg.sources.optimize',
+#        ['arcd/symreg/sources/optimize.cpp'],
+#        include_dirs=include_dirs,
+#        #extra_compile_args=["-O3", "-march=native", "-fopenmp"],
+#        #extra_link_args=['-fopenmp'],
+#        extra_link_args=['-lquadmath', '-ltbb', '-lgmp', '-lmpfr',
+#                         '-L /opt/cona/envs/lib/',
+#                         '-lboost_python36',
+#                         '-lboost_system',
+#                         '-lboost_timer',
+#                         '-lboost_chrono',
+#                         '-lboost_serialization',
+#                         '-lboost_unit_test_framework',
+#                         ],
+#        # your include_dirs must contains the '.' for setup to search
+#        # ...all the subfolder of the codeRootFolder
+#        ),
+#        Extension(
+#        'arcd.symreg.sources.core',
+#        ['arcd/symreg/sources/core.cpp', 'arcd/symreg/sources/docstrings.cpp'],
+#        include_dirs=include_dirs,
+#        #extra_compile_args=["-O3", "-march=native", "-fopenmp"],
+#        #extra_link_args=['-fopenmp'],
+#        extra_link_args=['-lquadmath', '-ltbb', '-lgmp', '-lmpfr',
+#                         '-L /opt/cona/envs/lib/',
+#                         '-lboost_python36',
+#                         '-lboost_system',
+#                         '-lboost_timer',
+#                         '-lboost_chrono',
+#                         '-lboost_serialization',
+#                         '-lboost_unit_test_framework',
+#                         ],
+#        # your include_dirs must contains the '.' for setup to search
+#        # ...all the subfolder of the codeRootFolder
+#        )]
+#
 setup(
     name="arcd",
     packages=find_packages(),
-    ext_modules=exts,
+    #ext_modules=exts,
 
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see

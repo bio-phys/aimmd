@@ -37,19 +37,51 @@ logger = logging.getLogger(__name__)
 def binom_loss(expression, x, shot_results):
     # we expect shot results to be a 2d np array
     rc = expression(x)[0]
+    n = len(rc.constant_cf)
     # shot_results[:,1] is n_B
     # the RC gives progress towards B, i.e. p_B = 1 / (1 + exp(-rc))
-    return (gdual(shot_results[:, 0])*ad.log(1. + ad.exp(rc))
-            + gdual(shot_results[:, 1])*ad.log(1. + ad.exp(-rc))
-            )
+    return (gdual(shot_results[:, 0]) * ad.log(1. + ad.exp(rc))
+            + gdual(shot_results[:, 1]) * ad.log(1. + ad.exp(-rc))
+            ) / n
 
 
 def multinom_loss(expression, x, shot_results):
     # we expect shot_results to be a 2d np array
     rcs = expression(x)
+    n = len(rcs[0].constant_cf)
     lnZ = ad.log(sum([ad.exp(rc) for rc in rcs]))
-    return sum([(lnZ - rc) * gdual(shot_results[:, i])
+    return (sum([(lnZ - rc) * gdual(shot_results[:, i])
                 for i, rc in enumerate(rcs)])
+            / n
+            )
+
+
+# complexity penalties
+def operation_count(expression, fact=0.01):
+    n = expression.get_n()
+    m = expression.get_m()
+    # TODO:
+    # write this such that we can use more than one output!
+    assert m == 1
+    ex_sp = expression.simplify(['x' + str(i) for i in range(n)],
+                                subs_weights=True)
+    c = ex_sp[0].count_ops()
+    return c * fact
+
+
+def active_genes_count(expression, fact=0.001):
+    return len(expression.get_active_genes()) * fact
+
+
+# weight regularizations
+def l1_regularization(expression, fact=0.01):
+    # TODO
+    pass
+
+
+def l2_regularization(expression, fact=0.01):
+    # TODO
+    pass
 
 
 def regularized_binom_loss(expression, x, shot_results, regularization=0.01):
@@ -61,8 +93,8 @@ def regularized_binom_loss(expression, x, shot_results, regularization=0.01):
                 )
     # shot_results[:,1] is n_B
     # the RC gives progress towards B, i.e. p_B = 1 / (1 + exp(-rc))
-    return (gdual(shot_results[:, 0])*ad.log(1. + ad.exp(rc))
-            + gdual(shot_results[:, 1])*ad.log(1. + ad.exp(-rc))
+    return (gdual(shot_results[:, 0]) * ad.log(1. + ad.exp(rc))
+            + gdual(shot_results[:, 1]) * ad.log(1. + ad.exp(-rc))
             + reg_term)
 
 
@@ -81,13 +113,19 @@ def regularized_multinom_loss(expression, x, shot_results,
 
 
 def optimize_expression(expression, offsprings, max_gen, xt, yt, loss_function,
-                        newtonParams, keep_weights=False):
+                        complexity_regularization=None,
+                        weight_regularization=None,
+                        newtonParams={'steps': 500},
+                        keep_weights=False):
     """
 xt and yt are directly passed to the loss function. In most cases, xt should be
 a list of pyaudi weighted gduals for the gradient calculations, while yt can be
 a numpy array contaning 'just' reference values. The loss function must take 3
 parameters: the dCGPy expression, xt and yt (in that order).
-
+complexity regularization and weight regularization must take only the expression
+as input and return a loss value. They are added to the loss but evaluated only when
+needed, i.e. complexity regularization once after every mutation and weight
+regularization for every newton step.
 
 Adapted from weighted symbolic regression example:
 https://github.com/darioizzo/d-CGP
@@ -95,6 +133,32 @@ https://github.com/darioizzo/d-CGP
 Originally from Dario Izzo, Francesco Biscani, Alessio Mereta.
 dCGPy is GPL licensed.
     """
+    # build loss functions dict
+    loss_functions = {}
+    if complexity_regularization and weight_regularization:
+        loss_functions['full'] = lambda ex, x, y: (loss_function(ex, x, y)
+                                                   + complexity_regularization(ex)
+                                                   + weight_regularization(ex)
+                                                   )
+        loss_functions['newton'] = lambda ex, x, y: (loss_function(ex, x, y)
+                                                   + weight_regularization(ex)
+                                                   )
+    elif complexity_regularization:
+        loss_functions['full'] = lambda ex, x, y: (loss_function(ex, x, y)
+                                                   + complexity_regularization(ex)
+                                                   )
+        loss_functions['newton'] = loss_function
+    elif weight_regularization:
+        loss_functions['full'] = lambda ex, x, y: (loss_function(ex, x, y)
+                                                   + weight_regularization(ex)
+                                                   )
+        loss_functions['newton'] = lambda ex, x, y: (loss_function(ex, x, y)
+                                                   + weight_regularization(ex)
+                                                   )
+    else:
+        loss_functions['full'] = loss_function
+        loss_functions['newton'] = loss_function
+    
     # The offsprings chromosome, loss and weights
     chromosome = [1] * offsprings
     loss = [1] * offsprings
@@ -102,7 +166,7 @@ dCGPy is GPL licensed.
     # Init the best as the initial expression
     best_chromosome = expression.get()
     best_weights = expression.get_weights()
-    best_loss = sum(loss_function(expression, xt, yt).constant_cf)
+    best_loss = sum(loss_functions['newton'](expression, xt, yt).constant_cf)
     if math.isnan(best_loss):
         # if initial expression loss is NaN we set loss to inf
         # such that we later take the first nonNan expression
@@ -121,11 +185,11 @@ dCGPy is GPL licensed.
                 # but it will make us stuck in local minima in parameter space
                 new_parms = newtonParams.copy()
                 new_parms.update({'randomize_weights': False})
-                newton(expression, loss_function, xt, yt, **new_parms)
+                newton(expression, loss_functions['newton'], xt, yt, **new_parms)
             else:
-                newton(expression, loss_function, xt, yt, **newtonParams)
+                newton(expression, loss_functions['newton'], xt, yt, **newtonParams)
             # get the loss
-            loss[i] = sum(loss_function(expression, xt, yt).constant_cf)
+            loss[i] = sum(loss_functions['full'](expression, xt, yt).constant_cf)
             chromosome[i] = expression.get()
             weights[i] = expression.get_weights()
         for i in range(offsprings):
