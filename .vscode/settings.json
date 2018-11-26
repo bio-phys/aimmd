@@ -1,8 +1,9 @@
 {
     "python.pythonPath": "${env:CONDA_ENV_LOC}/arcd_devel/bin/python",
-    "python.linting.pylintEnabled": false,
-    "python.linting.pep8Enabled": true,
+    "python.analysis.logLevel": "Warning",
     "python.linting.enabled": true,
-    // Arguments passed in. Each argument is a separate item in the array.
-    "python.linting.pep8Args": ["--ignore=W503"]
+    "python.linting.pylintEnabled": false,
+    "python.linting.pep8Enabled": false,
+    //"python.linting.pep8Args": ["--ignore=W503"]
+    "python.linting.flake8Enabled": true
 }
