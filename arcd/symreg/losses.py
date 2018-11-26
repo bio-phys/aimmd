@@ -48,12 +48,9 @@ def multinom_loss(expression, x, shot_results):
 def operation_count(expression, fact=0.0005):
     n = expression.get_n()
     m = expression.get_m()
-    # TODO:
-    # write this such that we can use more than one output!
-    assert m == 1
     ex_sp = expression.simplify(['x' + str(i) for i in range(n)],
                                 subs_weights=True)
-    c = ex_sp[0].count_ops()
+    c = sum([ex_sp[i].count_ops() for i in range(m)])
     return c * fact
 
 
