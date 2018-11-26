@@ -33,55 +33,6 @@ from pyaudi import gdual_vdouble as gdual
 logger = logging.getLogger(__name__)
 
 
-def binom_loss(expression, x, shot_results):
-    # we expect shot results to be a 2d np array
-    rc = expression(x)[0]
-    n = len(rc.constant_cf)
-    # shot_results[:,1] is n_B
-    # the RC gives progress towards B, i.e. p_B = 1 / (1 + exp(-rc))
-    return (gdual(shot_results[:, 0]) * ad.log(1. + ad.exp(rc))
-            + gdual(shot_results[:, 1]) * ad.log(1. + ad.exp(-rc))
-            ) / n
-
-
-def multinom_loss(expression, x, shot_results):
-    # we expect shot_results to be a 2d np array
-    rcs = expression(x)
-    n = len(rcs[0].constant_cf)
-    lnZ = ad.log(sum([ad.exp(rc) for rc in rcs]))
-    return (sum([(lnZ - rc) * gdual(shot_results[:, i])
-                for i, rc in enumerate(rcs)])
-            / n
-            )
-
-
-# complexity penalties
-def operation_count(expression, fact=0.01):
-    n = expression.get_n()
-    m = expression.get_m()
-    # TODO:
-    # write this such that we can use more than one output!
-    assert m == 1
-    ex_sp = expression.simplify(['x' + str(i) for i in range(n)],
-                                subs_weights=True)
-    c = ex_sp[0].count_ops()
-    return c * fact
-
-
-def active_genes_count(expression, fact=0.001):
-    return len(expression.get_active_genes()) * fact
-
-
-# weight regularizations
-def l1_regularization(active_weights, fact=0.01):
-    return fact * sum([ad.abs(aw) for aw in active_weights])
-
-
-def l2_regularization(active_weights, fact=0.01):
-    return fact * ad.sqrt(sum([aw * aw
-                               for aw in active_weights]))
-
-
 def optimize_expression(expression, offsprings, max_gen, xt, yt, loss_function,
                         complexity_regularization=None,
                         weight_regularization=None,

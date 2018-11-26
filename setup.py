@@ -47,7 +47,6 @@ from setuptools.extension import Extension
 # +-----------------------------------------------------------------------------
 # | GET GIT VERSION
 # +-----------------------------------------------------------------------------
-
 def get_git_version():
     # Return the git revision as a string
     # copied from numpy setup.py
@@ -93,22 +92,14 @@ def make_extension(ext_name, endswith='.pyx', **kwargs):
     except ImportError:
         include_dirs = ['.', 'm']
     else:
-        #include_dirs = ['.', numpy.get_include(), 'm']
-        include_dirs = ['.', numpy.get_include(), 'm',
-                        '/opt/conda/envs/arcd_devel/include',
-                        '/opt/conda/envs/arcd_devel/include/eigen3',
-                        '/home/think/oprogs/OPS/arcd_deps/d-CGP/include']
-    ext_path = ext_name.replace(".", os.path.sep)+endswith
+        include_dirs = ['.', numpy.get_include(), 'm']
+    ext_path = ext_name.replace(".", os.path.sep) + endswith
     return Extension(
         ext_name,
         [ext_path],
         include_dirs=include_dirs,
-        #extra_compile_args=["-O3", "-march=native", "-fopenmp"],
-        #extra_link_args=['-fopenmp'],
-        extra_link_args=['-lquadmath', '-ltbb', '-lgmp', '-lmpfr',
-                         '-L /opt/cona/envs/lib/',
-                         '-lboost_python36',
-                         ],
+        extra_compile_args=["-O3", "-march=native", "-fopenmp"],
+        extra_link_args=['-fopenmp'],
         **kwargs,
         # your include_dirs must contains the '.' for setup to search
         # ...all the subfolder of the codeRootFolder
