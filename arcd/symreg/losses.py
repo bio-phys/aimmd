@@ -45,7 +45,7 @@ def multinom_loss(expression, x, shot_results):
 
 
 # complexity penalties
-def operation_count(expression, fact=0.001):
+def operation_count(expression, fact=0.0005):
     n = expression.get_n()
     m = expression.get_m()
     # TODO:
@@ -57,15 +57,15 @@ def operation_count(expression, fact=0.001):
     return c * fact
 
 
-def active_genes_count(expression, fact=0.001):
+def active_genes_count(expression, fact=0.0005):
     return len(expression.get_active_genes()) * fact
 
 
 # weight regularizations
-def l1_regularization(active_weights, fact=0.001):
+def l1_regularization(active_weights, fact=0.0005):
     return fact * sum([ad.abs(aw) for aw in active_weights])
 
 
-def l2_regularization(active_weights, fact=0.001):
+def l2_regularization(active_weights, fact=0.0005):
     return fact * ad.sqrt(sum([aw * aw
                                for aw in active_weights]))
