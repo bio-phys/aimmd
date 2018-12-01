@@ -25,8 +25,9 @@ class WrapperBase(ABC):
     """
     TODO
     """
-    def __init__(self, n_out=1):
-        self.n_out = n_out
+    def __init__(self, model):
+        self.model = model
+        n_out = self._get_n_out(model)
         if n_out == 1:
             self.p = self._p_binom
             self.z_sel = self.__call__
@@ -35,11 +36,17 @@ class WrapperBase(ABC):
             self.z_sel = self._z_sel_multinom
 
     def __call__(self, coords):
-        return self.q(coords)
+        return self._q(coords)
 
     @abstractmethod
-    def q(self, coords):
-        # should return the unnormalized log probability/ies
+    def _get_n_out(self, model):
+        # should return the number of outputs for a given model
+        pass
+
+    @abstractmethod
+    def _q(self, coords):
+        # should take a 2d numpy array, dim=(n_points, n_dim)
+        # should return the unnormalized log committment probability/ies
         pass
 
     def _p_binom(self, coords):
@@ -66,11 +73,37 @@ class OPSWrapperBase(WrapperBase):
     """
     TODO
     """
-    def __init__(self, coords_cv, n_out=1):
-        super().__init__(n_out)
+    def __init__(self, model, coords_cv):
+        super().__init__(model)
         self.coords_cv = coords_cv
 
-    def __call__(self, trajectory):
-        return super.__call__(self.coords_cv(trajectory))
+    def __call__(self, trajectory, convert_ops=True):
+        if convert_ops:
+            return super.__call__(self.coords_cv(trajectory))
+        else:
+            return super.__call__(trajectory)
 
-# TODO: keras NN OPS wrapper, (NN wrapper, dCGPy wrapper, dCGPy OPS wrapper)
+
+class KerasWrapperMixin:
+    """
+    Mixin class to wrap keras models
+    """
+    def _get_n_out(self, model):
+        return model.output_shape[1]
+
+    def _q(self, coords):
+        return self.model.predict(coords)
+
+
+class KerasOPSWrapper(KerasWrapperMixin, OPSWrapperBase):
+    """
+    TODO
+    """
+
+
+class KerasWrapper(KerasWrapperMixin, WrapperBase):
+    """
+    TODO
+    """
+
+# TODO: dCGPy wrapper, dCGPy OPS wrapper
