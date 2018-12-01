@@ -17,6 +17,9 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 import logging
 import numpy as np
 from abc import ABC, abstractmethod
+from openpathsampling.engines.snapshot import BaseSnapshot as OPSBaseSnapshot
+from openpathsampling.engines import Trajectory as OPSTrajectory
+
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +61,13 @@ class WrapperBase(ABC):
         return exp_q / np.sum(exp_q, axis=1)
 
     def _z_sel_multinom(self, coords):
+        """
+        This expression is zero if (and only if) x is at the point of
+        maximaly conceivable p(TP|x), i.e. all p_i are equal.
+        z_{sel}(x) always lies in [0, 25], where z_{sel}(x)=25 implies
+        p(TP|x)=0. We can therefore select the point for which this
+        expression is closest to zero as the optimal SP.
+        """
         p = self._p_multinom(coords)
         # the prob to be on any TP is 1 - the prob to be on no TP
         # to be on no TP means beeing on a "self transition" (A->A, etc.)
@@ -79,6 +89,8 @@ class OPSWrapperBase(WrapperBase):
 
     def __call__(self, trajectory, convert_ops=True):
         if convert_ops:
+            if isinstance(trajectory, OPSBaseSnapshot):
+                trajectory = OPSTrajectory([trajectory])
             return super.__call__(self.coords_cv(trajectory))
         else:
             return super.__call__(trajectory)
