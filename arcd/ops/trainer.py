@@ -67,7 +67,8 @@ class KerasModelTrainer(CommittorModelTrainer):
                                    )
 
         history.loss_per_batch.append(loss)
-        history.loss.append([sum([lb for lb in le]) for le in loss])
+        history.loss.append([sum([lb for lb in le]) / len(le)
+                             for le in loss])
 
 
 class KerasModelTrainerEE(KerasModelTrainer):
