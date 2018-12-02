@@ -14,4 +14,4 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
-from . import symreg, data
+from . import symreg, data, nnetwork, ops

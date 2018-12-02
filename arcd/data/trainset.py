@@ -270,7 +270,7 @@ class TrainSetKeras(TSmixin_keras, TrainSetBase):
     """
     def __init__(self, n_states, coords, shot_results, weights=None,
                  batch_size=32, min_weight=0.0005):
-        super().__init__(self, n_states, coords, shot_results, weights)
+        super().__init__(n_states, coords, shot_results, weights)
         self.batch_size = batch_size
         self.min_weight = min_weight
 
@@ -282,7 +282,6 @@ class TrainSetKeras_OPS(TSmixin_keras, TSmixin_OPS, TrainSetBase):
     def __init__(self, coords_cv, states,
                  coords=None, shot_results=None, weights=None,
                  batch_size=32, min_weight=0.0005):
-        super().__init__(self, coords_cv, states,
-                         coords, shot_results, weights)
+        super().__init__(coords_cv, states, coords, shot_results, weights)
         self.batch_size = batch_size
         self.min_weight = min_weight

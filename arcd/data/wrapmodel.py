@@ -91,9 +91,9 @@ class OPSWrapperBase(WrapperBase):
         if convert_ops:
             if isinstance(trajectory, OPSBaseSnapshot):
                 trajectory = OPSTrajectory([trajectory])
-            return super.__call__(self.coords_cv(trajectory))
+            return self._q(self.coords_cv(trajectory))
         else:
-            return super.__call__(trajectory)
+            return self._q(trajectory)
 
 
 class KerasWrapperMixin:

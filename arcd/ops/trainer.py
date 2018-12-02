@@ -63,7 +63,7 @@ class KerasModelTrainer(CommittorModelTrainer):
             loss.append([])
             for xt, yt, w in trainset:
                 loss[epoch].append(model.model.train_on_batch(
-                                         x=xt, y=yt, sample_weights=w)
+                                         x=xt, y=yt, sample_weight=w)
                                    )
 
         history.loss_per_batch.append(loss)
