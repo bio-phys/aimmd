@@ -18,3 +18,4 @@ from .trainset import (TrainSetdCGPy, TrainSetdCGPy_OPS,
                        TrainSetKeras, TrainSetKeras_OPS
                       )
 from .wrapmodel import KerasOPSWrapper, KerasWrapper
+from .history import KerasTrainerHistory

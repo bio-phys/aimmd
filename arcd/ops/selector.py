@@ -19,6 +19,7 @@ import numpy as np
 from openpathsampling.shooting import ShootingPointSelector
 from ..data.history import History
 
+
 logger = logging.getLogger(__name__)
 
 

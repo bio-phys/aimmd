@@ -22,3 +22,14 @@ class History:
     """
     def __init__(self):
         self.expected_efficiency = []
+
+
+class KerasTrainerHistory(History):
+    """
+    TODO
+    """
+    def __init__(self):
+        super().__init__()
+        self.loss = []
+        self.loss_per_batch = []
+        self.training_decision = []

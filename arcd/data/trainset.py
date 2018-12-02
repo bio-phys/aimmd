@@ -151,7 +151,7 @@ class TSmixin_OPS:
     #def pickle_enable(self)
     #def pickle_restore(self, ops_storage)
 
-    def add_step(self, step):
+    def add_mcstep(self, step):
         try:
             details = step.change.canonical.details
             shooting_snap = details.shooting_snapshot
