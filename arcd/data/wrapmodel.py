@@ -85,7 +85,7 @@ class OPSWrapperBase(WrapperBase):
     """
     def __init__(self, model, coords_transform):
         super().__init__(model)
-        self.coords_transfrom = coords_transform
+        self.coords_transform = coords_transform
 
     def __call__(self, trajectory, convert_ops=True):
         if convert_ops:
