@@ -75,7 +75,7 @@ class KerasModelTrainerEE(KerasModelTrainer):
     """
     ExpectedEfficiency KerasModelTrainer
     """
-    def __init__(self, epochs_per_training=1, opt_fact=0.1, trainset_minlen=15,
+    def __init__(self, epochs_per_training=2, opt_fact=0.2, trainset_minlen=15,
                  window_size=30):
         self.epochs_per_training = epochs_per_training
         self.opt_fact = opt_fact
@@ -93,12 +93,20 @@ class KerasModelTrainerEE(KerasModelTrainer):
                 tp_gen = trainset.transitions[-self.window_size:]
             n_tp_ex = sum(p_tp_ex)
             n_tp_tr = sum(tp_gen)
+            d_fact = abs(1 - n_tp_tr / n_tp_ex)
 
             # TODO : log decisions!
             # with REASONS, i.e. TS min length vs. opt fact etc
-            if abs(1 - n_tp_tr / n_tp_ex) > self.opt_fact:
+            if d_fact > self.opt_fact:
+                logger.info('Training: decision_fact={:.3f}, '
+                            + 'expected TPs={:.2f}, generated TPs={:d}.'
+                            + ''.format(d_fact, n_tp_ex, n_tp_tr))
                 return True
             else:
+                logger.info('Not training: decision_fact={:.3f}, '
+                            + 'expected TPs={:.2f}, generated TPs={:d}.'
+                            + ''.format(d_fact, n_tp_ex, n_tp_tr))
                 return False
         else:
+            logger.info('Not training: len(trainset) < trainset_minlen.')
             return False

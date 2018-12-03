@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 class TrainingHook(PathSimulatorHook):
     """
+    TODO
     Parameters:
     -----------
         model - a wrapped model
@@ -34,7 +35,7 @@ class TrainingHook(PathSimulatorHook):
                        'after_step',
                        #'after_simulation'
                        ]
-
+    # TODO: load + save models and history!?
     def __init__(self, model, trainer, trainset, history):
         self.model = model
         self.trainer = trainer
