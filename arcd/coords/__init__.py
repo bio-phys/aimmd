@@ -14,22 +14,5 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
-
-# TODO: save and load!
-class History:
-    """
-    TODO
-    """
-    def __init__(self):
-        self.expected_efficiency = []
-
-
-class KerasTrainerHistory(History):
-    """
-    TODO
-    """
-    def __init__(self):
-        super().__init__()
-        self.loss = []
-        self.loss_per_batch = []
-        self.training_decision = []
+from . import internal, symmetry
+from .utils import transform, get_involved

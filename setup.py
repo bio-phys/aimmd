@@ -34,8 +34,6 @@ give --install-option='--linetrace' to pip install
 or --global-option='--linetrace' to pip install
 or --linetrace option to setup.py
 """
-
-
 import os
 import sys
 import subprocess
@@ -75,130 +73,64 @@ def get_git_version():
     return git_revision
 
 
-def scandir(directory, files=[], endswith='.pyx'):
-    for file in os.listdir(directory):
-        path = os.path.join(directory, file)
-        if os.path.isfile(path) and path.endswith(endswith):
-            files.append(path.replace(os.path.sep, ".")[:-len(endswith)])
-        elif os.path.isdir(path):
-            scandir(path, files, endswith=endswith)
-    return files
-
-
-def make_extension(ext_name, endswith='.pyx', **kwargs):
-    # should never happen, we have setup_require=['numpy']
-    try:
-        import numpy
-    except ImportError:
-        include_dirs = ['.', 'm']
-    else:
-        include_dirs = ['.', numpy.get_include(), 'm']
-    ext_path = ext_name.replace(".", os.path.sep) + endswith
-    return Extension(
-        ext_name,
-        [ext_path],
-        include_dirs=include_dirs,
-        extra_compile_args=["-O3", "-march=native", "-fopenmp"],
-        extra_link_args=['-fopenmp'],
-        **kwargs,
-        # your include_dirs must contains the '.' for setup to search
-        # ...all the subfolder of the codeRootFolder
-        )
-
-
-def make_ext_modules(use_cython=True, linetrace=False):
-    if use_cython:
-        ext_names = scandir('arcd', endswith='.pyx')
-        if linetrace:
-            extensions = [make_extension(name, endswith='.pyx',
-                                         define_macros=[('CYTHON_TRACE_NOGIL', 1)])
-                          for name in ext_names]
-        else:
-            extensions = [make_extension(name, endswith='.pyx')
-                          for name in ext_names]
-        # always recompile
-        return cythonize(extensions, force=True)
-    else:
-        ext_names = scandir('arcd', endswith='.cpp')
-        #ext_names = ['arcd.symreg.sources.optimize',
-        #             'arcd.symreg.sources.core']
-        extensions = [make_extension(name, endswith='.cpp')
-                      for name in ext_names]
-        return extensions
-
-
-# sort out if we'll use cython, linetracing, etc
+# sort out if we'll use linetracing
 if '--linetrace' in sys.argv:
     LINETRACE = True
     sys.argv.remove('--linetrace')
 else:
     LINETRACE = False
 
+# test for and setup cython
 try:
     from Cython.Build import cythonize
 except ImportError:
-    USE_CYTHON = False
-else:
-    USE_CYTHON = True
+    # need cython to build symmetry functions
+    raise
 
-if USE_CYTHON and LINETRACE:
+if LINETRACE:
     import Cython
     Cython.Compiler.Options.get_directive_defaults()['linetrace'] = True
     # need this to get coverage of the function definitions
     Cython.Compiler.Options.get_directive_defaults()['binding'] = True
 
+# prepare Cython modules
+try:
+    import numpy
+except ImportError:
+    # need numpy to build symmetry functions
+    raise
+else:
+    # include_dirs must contains the '.' for setup to search
+    # all the subfolders of the project root
+    include_dirs = ['.', numpy.get_include(), 'm']
 
-HERE = os.path.abspath(os.path.dirname(__file__))
+CY_EXTS = [Extension('arcd.coords._symmetry',
+                     ['arcd/coords/_symmetry.pyx'],
+                     include_dirs=include_dirs,
+                     extra_compile_args=["-O3", "-march=native", "-fopenmp"],
+                     extra_link_args=['-fopenmp'])
+           ]
+
+# set linetrace macro if wanted
+if LINETRACE:
+    for ext in CY_EXTS:
+        ext.define_macros.append(('CYTHON_TRACE_NOGIL', 1))
+
+# cythonize the extensions
+# always recompile
+EXT_MODULES = cythonize(CY_EXTS, force=True)
+
+
 # Get the long description from the README file
+HERE = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(HERE, 'README.md'), encoding='utf-8') as f:
     LONG_DESCRIPTION = f.read()
 
-#import numpy
-#include_dirs = ['.', numpy.get_include(), 'm',
-#                        '/opt/conda/envs/arcd_devel/include',
-#                        '/opt/conda/envs/arcd_devel/include/eigen3',
-#                        '/home/think/oprogs/OPS/arcd_deps/d-CGP/include']
-#exts = [Extension(
-#        'arcd.symreg.sources.optimize',
-#        ['arcd/symreg/sources/optimize.cpp'],
-#        include_dirs=include_dirs,
-#        #extra_compile_args=["-O3", "-march=native", "-fopenmp"],
-#        #extra_link_args=['-fopenmp'],
-#        extra_link_args=['-lquadmath', '-ltbb', '-lgmp', '-lmpfr',
-#                         '-L /opt/cona/envs/lib/',
-#                         '-lboost_python36',
-#                         '-lboost_system',
-#                         '-lboost_timer',
-#                         '-lboost_chrono',
-#                         '-lboost_serialization',
-#                         '-lboost_unit_test_framework',
-#                         ],
-#        # your include_dirs must contains the '.' for setup to search
-#        # ...all the subfolder of the codeRootFolder
-#        ),
-#        Extension(
-#        'arcd.symreg.sources.core',
-#        ['arcd/symreg/sources/core.cpp', 'arcd/symreg/sources/docstrings.cpp'],
-#        include_dirs=include_dirs,
-#        #extra_compile_args=["-O3", "-march=native", "-fopenmp"],
-#        #extra_link_args=['-fopenmp'],
-#        extra_link_args=['-lquadmath', '-ltbb', '-lgmp', '-lmpfr',
-#                         '-L /opt/cona/envs/lib/',
-#                         '-lboost_python36',
-#                         '-lboost_system',
-#                         '-lboost_timer',
-#                         '-lboost_chrono',
-#                         '-lboost_serialization',
-#                         '-lboost_unit_test_framework',
-#                         ],
-#        # your include_dirs must contains the '.' for setup to search
-#        # ...all the subfolder of the codeRootFolder
-#        )]
-#
+
 setup(
     name="arcd",
     packages=find_packages(),
-    #ext_modules=exts,
+    ext_modules=EXT_MODULES,
 
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
@@ -225,7 +157,7 @@ setup(
         #   3 - Alpha
         #   4 - Beta
         #   5 - Production/Stable
-        'Development Status :: 4 - Beta',
+        'Development Status :: 3 - Alpha',
 
         # Indicate who your project is intended for
         'Intended Audience :: Scientists',
@@ -262,8 +194,8 @@ setup(
         'numpy',
         'cython',
         'sympy',
-    #    'openpathsampling',
-    #    'mdtraj',
+        'openpathsampling',
+        'mdtraj',
     #    'networkx',
     #    'h5py',  # for loading and saving of keras models
     #    'keras',
