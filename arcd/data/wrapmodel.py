@@ -83,15 +83,15 @@ class OPSWrapperBase(WrapperBase):
     """
     TODO
     """
-    def __init__(self, model, coords_cv):
+    def __init__(self, model, coords_transform):
         super().__init__(model)
-        self.coords_cv = coords_cv
+        self.coords_transfrom = coords_transform
 
     def __call__(self, trajectory, convert_ops=True):
         if convert_ops:
             if isinstance(trajectory, OPSBaseSnapshot):
                 trajectory = OPSTrajectory([trajectory])
-            return self._q(self.coords_cv(trajectory))
+            return self._q(self.coords_transform(trajectory))
         else:
             return self._q(trajectory)
 

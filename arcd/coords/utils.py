@@ -37,7 +37,7 @@ def transform(mdtra, ic_parms={}, sf_parms={}, custom_cv_func=None,
     See the respective function docstrings for more on the parameters.
     """
     import numpy as np
-    from arcd.coordinates import internal, symmetry
+    from arcd.coords import internal, symmetry
     out = []
     if ic_parms:
         out.append(internal.transform(mdtra, **ic_parms))

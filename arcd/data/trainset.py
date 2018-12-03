@@ -118,10 +118,10 @@ class TSmixin_OPS:
     """
     TODO
     """
-    def __init__(self, coords_cv, states,
+    def __init__(self, coords_transform, states,
                  coords=None, shot_results=None, weights=None,
                  ):
-        self.coords_cv = coords_cv
+        self.coords_transform = coords_transform
         self.states = states
         self._tp_idxs = [[i, j] for i in range(len(states))
                          for j in range(i + 1, len(states))]
@@ -182,7 +182,7 @@ class TSmixin_OPS:
                 logger.warn('Total states reached is < 1. This means we added '
                             + 'uncommited trajectories.')
             # add shooting results and transformed coordinates to training set
-            coords = self.coords_cv(shooting_snap)
+            coords = self.coords_transform(shooting_snap)
             if not np.all(np.isfinite(coords)):
                 logger.warn('There are NaNs or infinities in the training '
                             + 'coordinates. \n We used numpy.nan_to_num() to'
@@ -279,9 +279,10 @@ class TrainSetKeras_OPS(TSmixin_keras, TSmixin_OPS, TrainSetBase):
     """
     TODO
     """
-    def __init__(self, coords_cv, states,
+    def __init__(self, coords_transform, states,
                  coords=None, shot_results=None, weights=None,
                  batch_size=32, min_weight=0.0005):
-        super().__init__(coords_cv, states, coords, shot_results, weights)
+        super().__init__(coords_transform, states,
+                         coords, shot_results, weights)
         self.batch_size = batch_size
         self.min_weight = min_weight
