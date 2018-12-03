@@ -1,0 +1,17 @@
+# .coveragerc to control coverage.py runs for arcd
+# for use with pytest and pytest-cov
+
+[run]
+# see if all possible branches were visited
+branch = True
+# enable cython file coverage
+plugins = Cython.Coverage
+source =
+    arcd
+    tests
+
+[report]
+exclude_lines =
+    # exclude lines that contain one of:
+    pragma: no cover
+    raise NotImplementedError
