@@ -98,14 +98,10 @@ class KerasModelTrainerEE(KerasModelTrainer):
             # TODO : log decisions!
             # with REASONS, i.e. TS min length vs. opt fact etc
             if d_fact > self.opt_fact:
-                logger.info('Training: decision_fact={:.3f}, '
-                            + 'expected TPs={:.2f}, generated TPs={:d}.'
-                            + ''.format(d_fact, n_tp_ex, n_tp_tr))
+                logger.info('Training: decision_fact={:.3f}, expected TPs={:.2f}, generated TPs={:.0f}.'.format(d_fact, n_tp_ex, n_tp_tr))
                 return True
             else:
-                logger.info('Not training: decision_fact={:.3f}, '
-                            + 'expected TPs={:.2f}, generated TPs={:d}.'
-                            + ''.format(d_fact, n_tp_ex, n_tp_tr))
+                logger.info('Not training: decision_fact={:.3f}, expected TPs={:.2f}, generated TPs={:.0f}.'.format(d_fact, n_tp_ex, n_tp_tr))
                 return False
         else:
             logger.info('Not training: len(trainset) < trainset_minlen.')
