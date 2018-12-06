@@ -184,6 +184,7 @@ class CommittorModelSelector(ShootingPointSelector):
         # store p(TP|x_pick) in the trainer
         # slice to preserve trajectory
         ps = self.model.p(trajectory[idx:idx + 1])
+        self.history.expected_committors.append(ps[0])
         if ps.shape[1] == 1:
             p_TP_pick = 2 * ps[0, 0] * (1. - ps[0, 0])
         else:

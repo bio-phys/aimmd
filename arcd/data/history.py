@@ -22,6 +22,7 @@ class History:
     """
     def __init__(self):
         self.expected_efficiency = []
+        self.expected_committors = []
 
 
 class KerasTrainerHistory(History):
