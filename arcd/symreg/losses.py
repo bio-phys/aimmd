@@ -16,6 +16,7 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
 import pyaudi as ad
+import numpy as np
 from pyaudi import gdual_vdouble as gdual
 
 
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 def binom_loss(expression, x, shot_results):
     # we expect shot results to be a 2d np array
     rc = expression(x)[0]
-    n = len(rc.constant_cf)
+    n = np.sum(shot_results)
     # shot_results[:,1] is n_B
     # the RC gives progress towards B, i.e. p_B = 1 / (1 + exp(-rc))
     return (gdual(shot_results[:, 0]) * ad.log(1. + ad.exp(rc))
@@ -36,7 +37,7 @@ def binom_loss(expression, x, shot_results):
 def multinom_loss(expression, x, shot_results):
     # we expect shot_results to be a 2d np array
     rcs = expression(x)
-    n = len(rcs[0].constant_cf)
+    n = np.sum(shot_results)
     lnZ = ad.log(sum([ad.exp(rc) for rc in rcs]))
     return (sum([(lnZ - rc) * gdual(shot_results[:, i])
                 for i, rc in enumerate(rcs)])

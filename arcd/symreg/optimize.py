@@ -39,6 +39,8 @@ def optimize_expression(expression, offsprings, max_gen, xt, yt, loss_function,
                         newtonParams={'steps': 500},
                         keep_weights=False):
     """
+Optimizes the given expression INPLACE.
+
 xt and yt are directly passed to the loss function. In most cases, xt should be
 a list of pyaudi weighted gduals for the gradient calculations, while yt can be
 a numpy array contaning 'just' reference values. The loss function must take 3
