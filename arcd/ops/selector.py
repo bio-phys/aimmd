@@ -17,13 +17,12 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 import logging
 import numpy as np
 from openpathsampling.shooting import ShootingPointSelector
-from ..data.history import History
 
 
 logger = logging.getLogger(__name__)
 
 
-class CommittorModelSelector(ShootingPointSelector):
+class RCModelSelector(ShootingPointSelector):
     """
     Selects 'ideal' shooting points learned by the corresponding model,
     the points are ideal in the sense that p(TP|x) is maximal there.
@@ -31,35 +30,29 @@ class CommittorModelSelector(ShootingPointSelector):
 
     Parameters
     ----------
-    model - :class:`arcd.data.OPSWrapperBase` a wrapped model predicting RC values,
-            should be the same object as for the corresponding CommittorModelTrainer,
-    coords_cv - :class:`openpathsampling.CollectiveVariable` transforming
-                (Cartesian) snapshot coordinates to the coordinate
+    model - :class:`arcd.base.RCModel` a wrapped model predicting RC values
+    descriptor_transform - :class:`openpathsampling.CollectiveVariable` transforming
+                (Cartesian) snapshot coordinates to the descriptor
                 representation in which the model learns, see `.coordinates` for
                 examples of functions that can be turned to a MDtrajFunctionCV
     states - TODO
-    history - TODO
     distribution - string specifying the SP selection distribution,
                    either 'gaussian' or 'lorentzian'
                    'gaussian': p_{sel}(x) ~ exp(-alpha * z_{sel}(x)**2)
                    'lorentzian': p_{sel}(x) ~ gamma**2 / (gamma**2 + z_{sel}(x)**2)
-    scale - float, 'sharpness' parameter of the selection distribution,
-            higher values result in more sharp selections around the TSE,
+    scale - float, 'softness' parameter of the selection distribution,
+            higher values result in a boader spread of SPs around the TSE,
             1/alpha for 'gaussian' and gamma for 'lorentzian'
 
     Notes
     -----
     We use the z_sel function of the model wrapper as input to the selection distribution.
     """
-    def __init__(self, model, coords_cv, states, history=None,
+    def __init__(self, model, descriptor_transform, states,
                  distribution='lorentzian', scale=1.):
-        super(CommittorModelSelector, self).__init__()
-        if history:
-            self.history = history
-        else:
-            self.history = History()
+        super(RCModelSelector, self).__init__()
         self.model = model
-        self.coords_cv = coords_cv
+        self.descriptor_transform = descriptor_transform
         self.states = states
         self.distribution = distribution
         self.scale = scale
@@ -67,24 +60,22 @@ class CommittorModelSelector(ShootingPointSelector):
     @classmethod
     def from_dict(cls, dct):
         # TODO: FIXME: atm we set model = None,
-        # since we can not save keras models in OPS storages
-        # we wrote this dirty hack that ANNTrainer saves the model after simulation
-        # and tries to restore on begin of simulation from hdf5 files named
-        # like the corresponding storage
+        # since we can not arbitrary models in OPS storages
+        # TODO: maybe we can hack something together that stores/loads models
+        # in separate files besides the storage, this has to be model specific
         scale = dct['scale']
         distribution = dct['distribution']
-        obj = cls(None, dct['coords_cv'],
+        obj = cls(None, dct['descriptor_transform'],
                   dct['states'],
-                  history=None,
                   distribution=distribution,
                   scale=scale)
-        logger.warn('Restoring CommittorModelSelector without model.'
-                    + ' Will try to restore it at the first step of TPS.')
+        logger.warn('Restoring RCModelSelector without model.'
+                    + ' Please take care of resetting the model yourself.')
         return obj
 
     def to_dict(self):
         dct = {}
-        dct['coords_cv'] = self.coords_cv
+        dct['descriptor_transform'] = self.descriptor_transform
         dct['distribution'] = self._distribution
         dct['scale'] = self.scale
         dct['states'] = self.states
@@ -115,11 +106,6 @@ class CommittorModelSelector(ShootingPointSelector):
     def f(self, snapshot, trajectory):
         '''
         Returns the unnormalized proposal probability of a snapshot
-
-        Notes
-        -----
-        In principle this is an collectivevariable so we could easily add
-        caching if useful
         '''
         # TODO: do we need to check if snapshot is in trajectory?
         z_sel = self.model.z_sel(snapshot)
@@ -143,7 +129,7 @@ class CommittorModelSelector(ShootingPointSelector):
                             for s in self.states]
         if any(self_transitions):
             return 0.
-        # trajectory is a TP, calculate p_pick
+        # trajectory is a TP since it is no self-transition, calculate p_pick
         sum_bias = self.sum_bias(trajectory)
         if sum_bias == 0.:
             return 1./len(trajectory)
@@ -181,14 +167,18 @@ class CommittorModelSelector(ShootingPointSelector):
             idx += 1
             prob += biases[idx]
 
-        # store p(TP|x_pick) in the trainer
-        # slice to preserve trajectory
-        ps = self.model.p(trajectory[idx:idx + 1])
-        self.history.expected_committors.append(ps[0])
-        if ps.shape[1] == 1:
-            p_TP_pick = 2 * ps[0, 0] * (1. - ps[0, 0])
-        else:
-            p_TP_pick = 1. - np.sum(ps * ps)
-        self.history.expected_efficiency.append(float(p_TP_pick))
+        # let the model know which SP we chose
+        self.model.register_sp(trajectory[idx])
+
+# TODO: this should happen in model now...
+#        ps = self.model.p(trajectory[idx:idx + 1])
+#        if ps.shape[1] == 1:
+#            p_B = float(ps[0, 0])
+#            p_TP_pick = 2 * p_B * (1. - p_B)
+#            self.history.expected_committors.append([1. - p_B, p_B])
+#        else:
+#            p_TP_pick = 1. - np.sum(ps * ps)
+#            self.history.expected_committors.append(ps[0])
+#        self.history.expected_efficiency.append(float(p_TP_pick))
 
         return idx

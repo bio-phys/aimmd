@@ -82,13 +82,14 @@ else:
 
 # test for and setup cython
 try:
+    import Cython
     from Cython.Build import cythonize
+    Cython.Compiler.Options.get_directive_defaults()['language_level'] = 3
 except ImportError:
     # need cython to build symmetry functions
     raise
 
 if LINETRACE:
-    import Cython
     Cython.Compiler.Options.get_directive_defaults()['linetrace'] = True
     # need this to get coverage of the function definitions
     Cython.Compiler.Options.get_directive_defaults()['binding'] = True
@@ -135,7 +136,7 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='0.0.1',
+    version='0.0.2',
 
     description='''Automatic Reaction Coordinate Discovery: Machine learning the reaction coordinate from shooting results.''',
 
@@ -149,7 +150,7 @@ setup(
     author_email='hendrik.andre.jung@gmail.com',
 
     # Choose your license
-    license='LGPLv2.1',
+    license='GPLv3',
 
     # See https://pypi.python.org/pypi?%3Aaction=list_classifiers
     classifiers=[
@@ -196,9 +197,10 @@ setup(
         'sympy',
         'openpathsampling',
         'mdtraj',
-    #    'networkx',
-    #    'h5py',  # for loading and saving of keras models
-    #    'keras',
+        'networkx',
+        'dcgpy',
+        'h5py',  # for loading and saving of keras models
+        'keras',
     ],
 
     # List additional groups of dependencies here (e.g. development

@@ -18,42 +18,72 @@ A short description of the motivation behind the creation and maintenance of the
 
 ## Installation
 Dependencies:
-- openpathsampling developer install to add my 'pathsamp_hooks' github branch
-- keras and backend (I used tensorflow)
+- openpathsampling developer install
+- pytorch and/or keras + backend (tested tensorflow); [if you install both tensorflow and pytorch, install pytorch second to avoid conflicts]
+- cython, pytest, sympy, h5py (conda installable)
 - pyaudi and dcgpy (installable via pip)
-- cython, pytest, sympy (conda installable)
 
-I recommend using conda or virtualenv to not break your system python installation. The following commands will use conda to create a new environment 'arcd' and install everything you need. All commands assume you have conda installed.
+I recommend using conda or virtualenv to not break your system python installation. The following step-by-step instruction will use conda to create a new environment called 'arcd' and install everything you need. All commands assume you have conda already installed.
 1. Add the conda channels 'conda-forge' and 'omnia' with
 ```
 conda config --prepend channels omnia
-conda config --prepend channels conda-forge
+conda config --append channels conda-forge
 ```
-This will add these two channels with a higher priority than the standard channel. Or move them to the top of the channel list if they are already in there.
+This will add these two channels with a higher priority than the standard channel or move them to the top of the channel list if they are already in there.
 
-2. OPS: Create a new environment 'arcd' and install openpathsampling dependencies.
+2. Install OPS: Create a new environment 'arcd' and install the conda package openpathsampling to easily satisfy all dependencies.
 ```
-conda create --name arcd python=3 numpy scipy pandas nose jupyter netcdf4 matplotlib openmm pyyaml svgwrite mdtraj ujson networkx openmmtools future
+conda create --name arcd python=3.6 openpathsampling
 ```
-Clone the openpathsampling github repository, add github/hejung/openpathsampling as an additional remote and checkout the pathsamp_hooks branch.
-cd into the repository, activate the environment you just created (`source activate arcd` or `conda activate arcd` depending on your conda version) and install openpathsampling via pip with `pip install -e .`
 
-3. arcd dependencies I: Install keras and backend. Use conda to install keras dependencies, `conda install -n arcd h5py graphviz pydot`. Then install the backend (I used tensorflow), see the corresponding installation instructions. After installing the backend, keras can be installed via pip from pypi with `pip install keras`.
-
-4. arcd dependencies II:
-conda installable
+3. arcd dependencies I (keras + tensorflow):
+Use the conda package from defaults for easy install
 ```
-cython pytest sympy pyaudi
+conda install -n arcd tensorflow keras -c defaults
+```
+or if you happen to own a compatible GPU
+```
+conda install -n arcd tensorflow-gpu keras -c defaults
+```
+To be able to save keras models you will need to install h5py [highly recommended anyway ;)]
+```
+conda install -n arcd h5py
+```
+and to be able to draw them you will need graphviz and pydot
+```
+conda install -n arcd graphviz pydot
+```
+
+4. arcd dependecies II (pytorch):
+```
+conda install -n arcd pytorch torchvision -c pytorch
+```
+If you happen to own a compatible GPU, choose a CUDA version compatible to your proprietary driver version, e.g.
+```
+conda install -n arcd pytorch torchvision cudatoolkit=8.0 -c pytorch
+```
+
+5. arcd dependencies III:
+```
+conda install -n arcd cython pytest sympy
 ```
 (get pyaudi  + dcgpy ) <- pip should do that when installing arcd
 
-
-If you already have an openpathsampling developer install you only need to add https://github.com/hejung/openpathsampling as a remote and checkout my branch with the pathsampling hooks (pathsamp_hooks).
-
-5. To install arcd directly from the repository (this should also install all extra dependencies via pip):
+6. Now remove openpathsampling and (re-)install it manually from the git repository. You need to clone github.com/hejung/openpathsampling and checkout the pathsampling_hooks branch.
 ```
-git clone https://gogs.kotspeicher.de/hejung/arcd.git
+conda activate arcd
+conda remove --force openpathsampling
+cd /where/ever/you/cloned/the/repo/to/openpathsampling
+# you should now be in the same folder where the setup.py is located
+git checkout pathsampling_hooks
+pip install -e .
+```
+
+7. Finally install arcd. (This should also install any missing dependencies if installable via pip):
+```
+git clone https://gitea.kotspeicher.de/hejung/arcd.git
 cd arcd
+conda activate arcd
 pip install -e .
 ```
 

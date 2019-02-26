@@ -14,4 +14,5 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
-from . import symreg, data, nnetwork, ops, coords
+from . import symreg, pytorch, ops, coords
+from .base.trainset import TrainSet, TrainSetTorchGPU

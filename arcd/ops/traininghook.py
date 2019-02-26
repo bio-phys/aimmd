@@ -26,23 +26,23 @@ class TrainingHook(PathSimulatorHook):
     TODO
     Parameters:
     -----------
-        model - a wrapped model
-        trainer - a trainer object able to train the model
-        history - a History object, saving selection and training history
+        model - :class:`arcd.base.RCModel` that predicts RC values
+        trainset - :class:`arcd.base.TrainSet` to store the shooting results
     """
     implemented_for = [#'before_simulation',
                        #'before_step',
                        'after_step',
                        #'after_simulation'
                        ]
-    # TODO: load + save models and history!?
-    def __init__(self, model, trainer, trainset, history):
+    # TODO: load + save models!?
+    # TODO: every model should have a load/save routine...!
+
+    def __init__(self, model, trainset):
         self.model = model
-        self.trainer = trainer
         self.trainset = trainset
-        self.history = history
 
     def before_simulation(self, sim):
+        # TODO: here we could/should try to load an existing model
         pass
 
     def before_step(self, sim, step_number, step_info, state):
@@ -51,8 +51,11 @@ class TrainingHook(PathSimulatorHook):
     def after_step(self, sim, step_number, step_info, state, results,
                    hook_state):
         # results is the MCStep
-        self.trainset.add_mcstep(results)
-        self.trainer.train(self.model, self.trainset, self.history)
+        self.trainset.append_ops_mcstep(results)
+        self.model.train_hook(self.trainset)
 
     def after_simulation(self, sim):
+        # TODO: here we should save the model
+        # TODO: derive fname from simulation name
+        # self.model.save(fname)
         pass

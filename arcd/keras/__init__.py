@@ -14,4 +14,5 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
-from .utils import create_resnet, create_snn, load_keras_model
+from .rcmodel import EEKerasRCModel
+from .utils import create_resnet, create_snn
