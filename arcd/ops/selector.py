@@ -63,14 +63,14 @@ class RCModelSelector(ShootingPointSelector):
         # since we can not arbitrary models in OPS storages
         # TODO: maybe we can hack something together that stores/loads models
         # in separate files besides the storage, this has to be model specific
-        scale = dct['scale']
-        distribution = dct['distribution']
         obj = cls(None, dct['descriptor_transform'],
                   dct['states'],
-                  distribution=distribution,
-                  scale=scale)
+                  distribution=dct['distribution'],
+                  scale=['scale'])
         logger.warn('Restoring RCModelSelector without model.'
-                    + ' Please take care of resetting the model yourself.')
+                    + 'If used together with arcd.TrainingHook you can ignore '
+                    + 'this warning, otherwise please take care of resetting '
+                    + 'the model yourself.')
         return obj
 
     def to_dict(self):

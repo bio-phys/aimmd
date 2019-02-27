@@ -14,12 +14,14 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
+# TODO: more logging :)
+import logging
+import pickle
+import numpy as np
 from openpathsampling.engines.snapshot import BaseSnapshot as OPSBaseSnapshot
 from openpathsampling.engines.trajectory import Trajectory as OPSTrajectory
+from openpathsampling.collectivevariable import CollectiveVariable
 from abc import ABC, abstractmethod
-import numpy as np
-# TODO: logging :)
-import logging
 
 
 logger = logging.getLogger(__name__)
@@ -48,15 +50,57 @@ class RCModel(ABC):
         # need to know if we use binomial or multinomial
         pass
 
-    @abstractmethod
-    # TODO: save model in a file with name derived from simulation storage name?
-    def save(self, fname):
-        pass
+    # NOTE ON SAVING AND LOADING MODELS
+    # you do not have to do anything if your generic RCModel subclass contains
+    # only python objects in its obj.__dict__
+    # (except for obj.descriptor_transform which we handle here)
+    # Otherwise you will need to implement obj.set_state() and obj.fix_state()
+    # and obj.save(), while obj.load_state() should stay untouched
+    # Have a look at the KerasRCModels and PytorchRCModels to see how
+    # In general state will be a dict, obj.fix_state() should reset all values
+    # to the correct python objects
+    # and cls.set_state(state) should return the object with given state
+    # obj.save() should make all obj.__dict__ values picklable
+    # and then call super().save(fname) to save the model
+    @classmethod
+    def set_state(cls, state):
+        obj = cls()
+        cls.__dict__.update(state)
+        return obj
 
-    @abstractmethod
-    # TODO: try to load model from file
-    def load(self, fname):
-        pass
+    @classmethod
+    def fix_state(self, state):
+        return state
+
+    @classmethod
+    def load_state(cls, fname, ops_storage=None):
+        with open(fname, 'rb') as pfile:
+            state = pickle.load(pfile)
+        transform = state['descriptor_transform']
+        if ops_storage and isinstance(transform, str):
+                # we just assume it is the name of the OPS CV
+                state['descriptor_transform'] = ops_storage.cvs.find(transform)
+        else:
+            raise ValueError('Could not load descriptor_transform from ops_storage.')
+        sub_class = state['__class__']
+        del state['__class__']
+        # to make this a generally applicable function,
+        # we return state and the correct subclass to call
+        # such that we can call sub_class.fix_state(state) to get the final state dict
+        # and then sub_class.set_state(state) should return the correctly initialized obj
+        return state, sub_class
+
+    def save(self, fname, overwrite=False):
+        # TODO: honor overwrite flag !!
+        state = self.__dict__.copy()
+        state['__class__'] = self.__class__
+        if isinstance(state['descriptor_transform'], CollectiveVariable):
+            # replace OPS CVs by their name to reload from OPS storage
+            state['descriptor_transform'] = state['descriptor_transform'].name
+        # now save
+        with open(fname, 'wb') as pfile:
+            # NOTE: we need python >= 3.4 for protocol=4
+            pickle.dump(state, pfile, protocol=4)
 
     @abstractmethod
     def train_hook(self, trainset):
@@ -131,7 +175,10 @@ class RCModel(ABC):
         else:
             log_prob = self.log_prob(descriptors, use_transform)
             rc = [(log_prob[..., i:i+1]
-                   - np.log(np.sum(np.exp(np.delete(log_prob, [i], axis=-1)), axis=-1, keepdims=True))
+                   - np.log(np.sum(np.exp(np.delete(log_prob, [i], axis=-1)),
+                                   axis=-1, keepdims=True
+                                   )
+                            )
                    ) for i in range(log_prob.shape[-1])]
             return np.concatenate(rc, axis=-1)
 

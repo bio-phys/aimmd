@@ -39,11 +39,20 @@ class KerasRCModel(RCModel):
     def n_out(self):
         return self.nnet.output_shape[1]
 
-    def load(self, fname):
-        return load_model(fname)
+    @classmethod
+    def set_state(cls, state):
+        obj = cls(nnet=None)
+        obj.__dict__.update(state)
+        return obj
 
-    def save(self, fname):
-        self.nnet.save(fname)
+    @classmethod
+    def fix_state(cls, state):
+        # TODO: load the keras model from file, set it and return state
+        return state
+
+    def save(self, fname, overwrite=False):
+        # TODO: make __dict__ picklable
+        super().save(fname, overwrite)
 
     def _log_prob(self, descriptors):
         return self.nnet.predict(descriptors)
