@@ -18,7 +18,7 @@ import logging
 from abc import abstractmethod
 from keras import backend as K
 from ..base.rcmodel import RCModel
-from .utils import load_model
+from .utils import load_keras_model
 
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ class KerasRCModel(RCModel):
         self.log_train_decision = []
         self.log_train_loss = []
         self._count_train_hook = 0
+        self.save_nnet_suffix = '_keras.h5'
 
     @property
     def n_out(self):
@@ -47,12 +48,20 @@ class KerasRCModel(RCModel):
 
     @classmethod
     def fix_state(cls, state):
-        # TODO: load the keras model from file, set it and return state
+        nnet = load_keras_model(state['nnet'])
+        state['nnet'] = nnet
         return state
 
     def save(self, fname, overwrite=False):
-        # TODO: make __dict__ picklable
+        self.nnet.save(fname + self.save_nnet_suffix, overwrite=overwrite)
+        # keep a ref to the network
+        nnet = self.nnet
+        # but replace with the path to file in self.__dict__
+        self.nnet = fname + self.save_model_suffix
+        # let super save the state dict
         super().save(fname, overwrite)
+        # and restore the nnet such that self stays functional
+        self.nnet = nnet
 
     def _log_prob(self, descriptors):
         return self.nnet.predict(descriptors)

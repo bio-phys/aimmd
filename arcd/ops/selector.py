@@ -66,7 +66,7 @@ class RCModelSelector(ShootingPointSelector):
         obj = cls(None, dct['descriptor_transform'],
                   dct['states'],
                   distribution=dct['distribution'],
-                  scale=['scale'])
+                  scale=dct['scale'])
         logger.warn('Restoring RCModelSelector without model.'
                     + 'If used together with arcd.TrainingHook you can ignore '
                     + 'this warning, otherwise please take care of resetting '

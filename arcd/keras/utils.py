@@ -320,7 +320,7 @@ def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True):
     return model
 
 
-def load_model(filename):
+def load_keras_model(filename):
     """
     Loads a model from a given keras hdf5 model file.
     Takes care of setting the custom loss function.

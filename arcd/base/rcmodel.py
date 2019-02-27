@@ -16,6 +16,7 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 # TODO: more logging :)
 import logging
+import os
 import pickle
 import numpy as np
 from openpathsampling.engines.snapshot import BaseSnapshot as OPSBaseSnapshot
@@ -91,13 +92,14 @@ class RCModel(ABC):
         return state, sub_class
 
     def save(self, fname, overwrite=False):
-        # TODO: honor overwrite flag !!
         state = self.__dict__.copy()
         state['__class__'] = self.__class__
         if isinstance(state['descriptor_transform'], CollectiveVariable):
             # replace OPS CVs by their name to reload from OPS storage
             state['descriptor_transform'] = state['descriptor_transform'].name
         # now save
+        if os.path.exists(fname) and not overwrite:
+            return
         with open(fname, 'wb') as pfile:
             # NOTE: we need python >= 3.4 for protocol=4
             pickle.dump(state, pfile, protocol=4)
