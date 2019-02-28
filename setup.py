@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Created on Sa Nov 10 16:39:29 2018
@@ -36,42 +35,9 @@ or --linetrace option to setup.py
 """
 import os
 import sys
-import subprocess
 # always prefer setuptools over distutils!
 from setuptools import setup, find_packages
 from setuptools.extension import Extension
-
-
-# +-----------------------------------------------------------------------------
-# | GET GIT VERSION
-# +-----------------------------------------------------------------------------
-def get_git_version():
-    # Return the git revision as a string
-    # copied from numpy setup.py
-    def _minimal_ext_cmd(cmd):
-        # construct minimal environment
-        env = {}
-        for k in ['SYSTEMROOT', 'PATH']:
-            v = os.environ.get(k)
-            if v is not None:
-                env[k] = v
-
-        # LANGUAGE is used on win32
-        env['LANGUAGE'] = 'C'
-        env['LANG'] = 'C'
-        env['LC_ALL'] = 'C'
-        output = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, env=env).communicate()[0]
-        return output
-
-    try:
-        out = _minimal_ext_cmd(['git', 'rev-parse', 'HEAD'])
-        git_revision = out.strip().decode('ascii')
-    except OSError:
-        git_revision = 'Unknown'
-
-    return git_revision
-
 
 # sort out if we'll use linetracing
 if '--linetrace' in sys.argv:
@@ -127,6 +93,11 @@ HERE = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(HERE, 'README.md'), encoding='utf-8') as f:
     LONG_DESCRIPTION = f.read()
 
+# Get version and other stuff from __about__.py
+about_dct = {}
+with open(os.path.join(HERE, "arcd/__about__.py"), 'r') as fp:
+    exec(fp.read(), about_dct)
+
 
 setup(
     name="arcd",
@@ -136,21 +107,21 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='0.0.2',
+    version=about_dct['__version__'],
 
     description='''Automatic Reaction Coordinate Discovery: Machine learning the reaction coordinate from shooting results.''',
 
     long_description=LONG_DESCRIPTION,
 
     # The project's main homepage.
-    url='https://gogs.kotspeicher.de/hejung/arcd',
+    url='https://gitea.kotspeicher.de/hejung/arcd',
 
     # Author details
-    author='hejung',
+    author=about_dct['__author__'],
     author_email='hendrik.andre.jung@gmail.com',
 
     # Choose your license
-    license='GPLv3',
+    license=about_dct['__license__'],
 
     # See https://pypi.python.org/pypi?%3Aaction=list_classifiers
     classifiers=[
@@ -169,7 +140,8 @@ setup(
 
         # Specify the Python versions you support here. In particular, ensure
         # that you indicate whether you support Python 2, Python 3 or both.
-        'Programming Language :: Python :: 3.x',  # should work, not tested
+        'Programming Language :: Python :: 3.4',  # should work, not tested
+        'Programming Language :: Python :: 3.5',  # should work, not tested
         'Programming Language :: Python :: 3.6',  # works, tested
         # NOTE: python 2 will most likely not work as intended:
         # 1. we did not take care of integer division vs float division

@@ -16,3 +16,6 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 from . import symreg, pytorch, ops, coords
 from .base.trainset import TrainSet, TrainSetTorchGPU
+from .__about__ import (__version__, __title__, __author__,
+                        __license__, __copyright__
+                        )
