@@ -147,7 +147,7 @@ class TrainSet(Iterable):
         except IndexError:
             # very wrong kind of move (no trials!)
             # I think this should never happen?
-            logger.warn('Tried to add a MCStep that contains no trials.')
+            logger.error('Tried to add a MCStep that contains no trials.')
         else:
             # find out which states we reached
             trial_traj = mcstep.change.canonical.trials[0].trajectory

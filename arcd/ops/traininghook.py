@@ -15,11 +15,11 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import os
-import pickle
 import logging
 from openpathsampling.pathsimulators.hooks import PathSimulatorHook
 from .selector import RCModelSelector
 from ..base.rcmodel import RCModel
+from ..base.trainset import TrainSet
 
 
 logger = logging.getLogger(__name__)
@@ -38,15 +38,15 @@ class TrainingHook(PathSimulatorHook):
                        'after_step',
                        'after_simulation'
                        ]
+    # need to have it here, such that we can get it without instantiating
+    save_model_extension = RCModel.save_model_extension
+    save_model_suffix = '_RCmodel'
+    save_model_after_simulation = True
 
-    def __init__(self, model, trainset, save_model_interval=500):
+    def __init__(self, model, trainset, save_model_interval=100):
         self.model = model
         self.trainset = trainset
         self.save_model_interval = save_model_interval
-        self.save_model_after_simulation = True
-        # TODO: should this be model specific to indicate the model class?
-        self.save_model_suffix = '_RCmodel'
-        self.save_model_extension = '.pckl'
 
     def _get_model_from_sim_storage(self, sim):
         if sim.storage:
@@ -80,12 +80,23 @@ class TrainingHook(PathSimulatorHook):
             logger.error('Simulation has no attached storage, '
                          + 'can not find a model file.')
 
+    def _create_trainset_from_sim_storage(self, sim, descriptor_transform):
+        if sim.storage:
+            states = sim.move_scheme.network.all_states
+            trainset = TrainSet(states, descriptor_transform)
+            for step in sim.storage.steps:
+                trainset.append_ops_mcstep(step)
+            return trainset
+        else:
+            logger.error('Can not recreate TrainSet without storage')
+
     def before_simulation(self, sim):
         # if we have no model we will try to reload it
-        if not self.model:
+        if self.model is None:
             model = self._get_model_from_sim_storage(sim)
             if model is None:
-                raise RuntimeError('RCmodel not set and could not load any model from file.')
+                raise RuntimeError('RCmodel not set and could not load any'
+                                   + ' model from file.')
             self.model = model
             # TODO: this might not always be what we want!
             # TODO: we put the loaded model in all RCmodelSelectors...?
@@ -95,6 +106,11 @@ class TrainingHook(PathSimulatorHook):
                     if isinstance(mover.selector, RCModelSelector):
                         mover.selector.model = model
             logger.info('Restored saved model into TrainingHook and RCModelSelector')
+        if self.trainset is None:
+            self.trainset = self._create_trainset_from_sim_storage(
+                                        sim, model.descriptor_transform
+                                                                   )
+            logger.info('Recreated TrainSet from storage.steps')
 
     def before_step(self, sim, step_number, step_info, state):
         pass
@@ -110,7 +126,6 @@ class TrainingHook(PathSimulatorHook):
             if step_number % self.save_model_interval == 0:
                 fname = (spath + self.save_model_suffix
                          + '_at_step{:d}'.format(step_number)
-                         + self.save_model_extension
                          )
                 self.model.save(fname)
                 logger.info('Saved intermediate RCModel as ' + fname)
@@ -119,7 +134,7 @@ class TrainingHook(PathSimulatorHook):
         if sim.storage:
             spath = sim.storage.abspath
             # save without step-suffix to reload at simulation start
-            fname = spath + self.save_model_suffix + self.save_model_extension
+            fname = spath + self.save_model_suffix
             # we want to overwrite the last final model,
             # such that we always start with a current model
             self.model.save(fname, overwrite=True)

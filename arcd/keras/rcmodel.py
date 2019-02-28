@@ -28,13 +28,15 @@ class KerasRCModel(RCModel):
     """
     Wraps a Keras model for use with arcd.
     """
+    # need to have it here, such that we can get it without instantiating
+    save_nnet_suffix = '_keras.h5'
+
     def __init__(self, nnet, descriptor_transform=None):
         super().__init__(descriptor_transform)
         self.nnet = nnet
         self.log_train_decision = []
         self.log_train_loss = []
         self._count_train_hook = 0
-        self.save_nnet_suffix = '_keras.h5'
 
     @property
     def n_out(self):
@@ -57,7 +59,7 @@ class KerasRCModel(RCModel):
         # keep a ref to the network
         nnet = self.nnet
         # but replace with the path to file in self.__dict__
-        self.nnet = fname + self.save_model_suffix
+        self.nnet = fname + self.save_nnet_suffix
         # let super save the state dict
         super().save(fname, overwrite)
         # and restore the nnet such that self stays functional

@@ -37,6 +37,9 @@ class RCModel(ABC):
     This could e.g. be a OPS-CV to transform OPS trajectories to numpy arrays,
     such that you can call a model on trajectories directly.
     """
+    # need to have it here, such that we can get it without instantiating
+    save_model_extension = '.pckl'
+
     # TODO: property for trainSet ordering? or leave transform to the specific
     #       implementations of models if necessary?
     def __init__(self, descriptor_transform=None):
@@ -98,6 +101,9 @@ class RCModel(ABC):
             # replace OPS CVs by their name to reload from OPS storage
             state['descriptor_transform'] = state['descriptor_transform'].name
         # now save
+        if not fname.endswith(self.save_model_extension):
+            # make sure we have the correct extension
+            fname += self.save_model_extension
         if os.path.exists(fname) and not overwrite:
             return
         with open(fname, 'wb') as pfile:
