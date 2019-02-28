@@ -44,7 +44,7 @@ class KerasRCModel(RCModel):
 
     @classmethod
     def set_state(cls, state):
-        obj = cls(nnet=None)
+        obj = cls(nnet=state['nnet'])
         obj.__dict__.update(state)
         return obj
 

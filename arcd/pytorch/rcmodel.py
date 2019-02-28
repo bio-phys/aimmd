@@ -77,6 +77,32 @@ def multinomial_loss_vect(input, target):
     return torch.sum((ln_Z - input) * target, dim=1)
 
 
+def _fix_pytorch_device(location):
+    """
+    Checks if location is an available pytorch.device, else
+    returns the pytorch device that is `closest` to location.
+    Adopted from pytorch.serialization.validate_cuda_device
+    """
+    if isinstance(location, torch.device):
+        location = str(location)
+    if not isinstance(location, str):
+        raise ValueError("location should be a string or torch.device")
+    if location[5:] == '':
+        device = 0
+    else:
+        device = max(int(location[5:]), 0)
+    if 'cuda' in location:
+        if not torch.cuda.is_available():
+            # no cuda, go to CPU
+            logger.info('Restoring on CPU, since CUDA is not available.')
+            return torch.device('cpu')
+        if device >= torch.cuda.device_count():
+            # other cuda device ID
+            logger.info('Restoring on a different CUDA device.')
+            return torch.device('cuda')
+    return device
+
+
 # RCModels using one ANN
 class PytorchRCModel(RCModel):
     """
@@ -108,13 +134,51 @@ class PytorchRCModel(RCModel):
         # FIXME:TODO: only works if the last layer is linear!
         return list(self.nnet.modules())[-1].out_features
 
-# TODO: write this :)
     @classmethod
-    def load(self, fname):
-        pass
+    def set_state(cls, state):
+        obj = cls(nnet=state['nnet'], optimizer=state['optimizer'])
+        obj.__dict__.update(state)
+        return obj
 
-    def save(self, fname):
-        pass
+    @classmethod
+    def fix_state(cls, state):
+        # restore the nnet
+        nnet = state['nnet_class'](**state['nnet_call_kwargs'])
+        del state['nnet_class']
+        del state['nnet_call_kwargs']
+        dev = _fix_pytorch_device(state['_device'])
+        nnet.to(dev)
+        nnet.load_state_dict(state['nnet'])
+        state['nnet'] = nnet
+        # and the optimizer
+        # TODO: the least we can do is write TESTS!
+        # TODO: we assume that there is only one param group
+        optimizer = state['optimizer_class'](nnet.parameters())
+        del state['optimizer_class']
+        optimizer.load_state_dict(state['optimizer'])
+        state['optimizer'] = optimizer
+        return state
+
+    def save(self, fname, overwrite=False):
+        # keep a ref to the network
+        nnet = self.nnet
+        # but replace with state_dict in self.__dict__
+        self.nnet_class = nnet.__class__
+        self.nnet_call_kwargs = nnet.call_kwargs
+        self.nnet = nnet.state_dict()
+        # same for optimizer
+        optimizer = self.optimizer
+        self.optimizer_class = optimizer.__class__
+        self.optimizer = optimizer.state_dict()
+        # now let super save the state dict
+        super().save(fname, overwrite)
+        # and restore nnet and optimizer such that self stays functional
+        self.nnet = nnet
+        self.optimizer = optimizer
+        # and remove uneccessary keys to self.__dict__
+        del self.nnet_class
+        del self.nnet_call_kwargs
+        del self.optimizer_class
 
     @abstractmethod
     def train_decision(self, trainset):
@@ -248,10 +312,13 @@ class MultiDomainPytorchRCModel(RCModel):
         self.log_ctrain_loss = []
         self._count_train_hook = 0
         # needed to create the tensors on the correct device
-        self._pdevices = [next(pnet.parameters()).device for pnet in self.pnets]
-        self._pdtypes = [next(pnet.parameters()).dtype for pnet in self.pnets]
+        self._pdevices = [next(pnet.parameters()).device
+                          for pnet in self.pnets]
+        self._pdtypes = [next(pnet.parameters()).dtype
+                         for pnet in self.pnets]
         # we assume same dtype too, if all are on same device
-        self._pnets_same_device = all(self._pdevices[0] == dev for dev in self._pdevices)
+        self._pnets_same_device = all(self._pdevices[0] == dev
+                                      for dev in self._pdevices)
         # _device and _dtype are for cnet
         self._cdevice = next(self.cnet.parameters()).device
         self._cdtype = next(self.cnet.parameters()).dtype
@@ -272,13 +339,79 @@ class MultiDomainPytorchRCModel(RCModel):
         # all networks have the same number of out features
         return list(self.pnets[0].modules())[-1].out_features
 
-# TODO: write this :)
     @classmethod
-    def load(self, fname):
-        pass
+    def set_state(cls, state):
+        obj = cls(pnets=state['pnets'], cnet=state['cnet'],
+                  poptimizer=state['poptimizer'],
+                  coptimizer=state['coptimizer'])
+        obj.__dict__.update(state)
+        return obj
 
-    def save(self, fname):
-        pass
+    @classmethod
+    def fix_state(cls, state):
+        # restore the nnet
+        pnets = [pn(**ckwargs) for pn, ckwargs
+                 in zip(state['pnets_class'], state['pnets_call_kwargs'])]
+        del state['pnets_class']
+        del state['pnets_call_kwargs']
+        for i, pn in enumerate(pnets):
+            pn.load_state_dict(state['pnets'][i])
+            # try moving the model to the platform it was on
+            dev = _fix_pytorch_device(state['_pdevices'][i])
+            pn.to(dev)
+        state['pnets'] = pnets
+        cnet = state['cnet_class'](**state['cnet_call_kwargs'])
+        del state['cnet_class']
+        del state['cnet_call_kwargs']
+        cnet.load_state_dict(state['cnet'])
+        dev = _fix_pytorch_device(state['_cdevice'])
+        cnet.to(dev)
+        state['cnet'] = cnet
+        # and the optimizers
+        # TODO/FIXME: we assume one param group per prediction net
+        poptimizer = state['poptimizer_class']([{'params': pnet.parameters()}
+                                                for pnet in pnets])
+        del state['poptimizer_class']
+        poptimizer.load_state_dict(state['poptimizer'])
+        state['poptimizer'] = poptimizer
+        coptimizer = state['coptimizer_class'](cnet.parameters())
+        del state['coptimizer_class']
+        coptimizer.load_state_dict(state['coptimizer'])
+        state['coptimizer'] = coptimizer
+        return state
+
+    def save(self, fname, overwrite=False):
+        # keep a ref to the networks
+        pnets = self.pnets
+        cnet = self.cnet
+        # but replace with state_dict in self.__dict__
+        self.pnets_class = [pn.__class__ for pn in pnets]
+        self.pnets_call_kwargs = [pn.call_kwargs for pn in pnets]
+        self.pnets = [pn.state_dict() for pn in pnets]
+        self.cnet_class = cnet.__class__
+        self.cnet_call_kwargs = cnet.call_kwargs
+        self.cnet = cnet.state_dict()
+        # same for optimizers
+        poptimizer = self.poptimizer
+        self.poptimizer_class = poptimizer.__class__
+        self.poptimizer = poptimizer.state_dict()
+        coptimizer = self.coptimizer
+        self.coptimizer_class = coptimizer.__class__
+        self.coptimizer = coptimizer.state_dict()
+        # now let super save the state dict
+        super().save(fname, overwrite)
+        # and restore nnet and optimizer such that self stays functional
+        self.pnets = pnets
+        self.cnet = cnet
+        self.poptimizer = poptimizer
+        self.coptimizer = coptimizer
+        # and remove unecessary keys
+        del self.pnets_class
+        del self.pnets_call_kwargs
+        del self.cnet_class
+        del self.cnet_call_kwargs
+        del self.coptimizer_class
+        del self.poptimizer_class
 
     @abstractmethod
     def train_decision(self, trainset):
