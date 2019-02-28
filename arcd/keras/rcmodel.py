@@ -78,6 +78,13 @@ class KerasRCModel(RCModel):
             self.log_train_loss.append([self._train_epoch(trainset)
                                         for _ in range(epochs)])
 
+    def test_loss(self, trainset):
+        loss = self.nnet.evaluate(x=trainset.descriptors,
+                                  y=trainset.shot_results,
+                                  verbose=0)
+        # assume TwoWayShooting and return loss per shot
+        return loss/2.
+
     @abstractmethod
     def train_decision(self, trainset):
         # should return train, new_lr, epochs

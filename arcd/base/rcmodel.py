@@ -56,7 +56,7 @@ class RCModel(ABC):
 
     # NOTE ON SAVING AND LOADING MODELS
     # you do not have to do anything if your generic RCModel subclass contains
-    # only python objects in its obj.__dict__
+    # only picklable python objects in its obj.__dict__
     # (except for obj.descriptor_transform which we handle here)
     # Otherwise you will need to implement obj.set_state() and obj.fix_state()
     # and obj.save(), while obj.load_state() should stay untouched
@@ -113,7 +113,6 @@ class RCModel(ABC):
     @abstractmethod
     def train_hook(self, trainset):
         # this will be called by the OPS training hook after every step
-        # TODO: do we even need a seperate history that is passed here every time?
         pass
 
     @abstractmethod
@@ -121,6 +120,11 @@ class RCModel(ABC):
         # returns the unnormalized log probabilities for given descriptors
         # descriptors is a numpy array with shape (n_points, n_descriptors)
         # the output is expected to be an array of shape (n_points, n_out)
+        pass
+
+    @abstractmethod
+    def test_loss(self, trainset):
+        # should return the test loss per shot
         pass
 
     def train_expected_efficiency_factor(self, trainset, window):

@@ -202,6 +202,20 @@ class PytorchRCModel(RCModel):
             self.log_train_loss.append([self._train_epoch(trainset)
                                         for _ in range(epochs)])
 
+    def test_loss(self, trainset, batch_size=128):
+        total_loss = 0.
+        with torch.no_grad():
+            for descriptors, shot_results in trainset.iter_batch(batch_size, False):
+                # create descriptors and results tensors where the model lives
+                descriptors = torch.as_tensor(descriptors, device=self._device,
+                                              dtype=self._dtype)
+                shot_results = torch.as_tensor(shot_results, device=self._device,
+                                               dtype=self._dtype)
+                q_pred = self.nnet(descriptors)
+                loss = self.loss(q_pred, shot_results)
+                total_loss += float(loss)
+        return total_loss / np.sum(trainset.shot_results)
+
     def _set_lr(self, new_lr):
         # TODO: this could (and should) be the same func for all pytorch models using pytorch.optim optimizers
         # TODO: what if the training scheme does not change the LR?
@@ -454,6 +468,9 @@ class MultiDomainPytorchRCModel(RCModel):
             logger.info('Training classifier for {:d} epochs'.format(epochs_c))
             self.log_ctrain_loss.append([self._train_epoch_cnet(trainset, cnet_target)
                                          for _ in range(epochs_c)])
+
+    def test_loss(self, trainset):
+        return NotImplementedError("TODO")
 
     def _train_epoch_pnets(self, trainset, batch_size=128, shuffle=True):
         # one pass over the whole trainset
