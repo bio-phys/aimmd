@@ -64,9 +64,9 @@ class TrainSet(Iterable):
 
     @property
     def transitions(self):
-        return sum([self._shot_results[:self._fill_pointer, i]
-                    * self._shot_results[:self._fill_pointer, j]
-                    for i, j in self._tp_idxs])
+        return sum(self._shot_results[:self._fill_pointer, i]
+                   * self._shot_results[:self._fill_pointer, j]
+                   for i, j in self._tp_idxs)
 
     def __len__(self):
         return self._fill_pointer
@@ -216,11 +216,11 @@ class TrainSetTorchGPU(TrainSet):
         if not torch.cuda.is_available():
             raise ValueError('No cuda devices available. '
                              + 'Use a "normal" TrainSet instead.')
-        if torch_device:
+        if torch_device is not None:
             self.torch_device = torch_device
         else:
             self.torch_device = 'cuda'
-        if (descriptors and shot_results):
+        if ((descriptors is not None) and (shot_results is not None)):
             descriptors = torch.tensor(descriptors, device=self.torch_device)
             shot_results = torch.tensor(shot_results, device=self.torch_device)
             if shot_results.shape[0] != descriptors.shape[0]:
@@ -245,9 +245,9 @@ class TrainSetTorchGPU(TrainSet):
 
     @property
     def transitions(self):
-        return sum([self._shot_results[:self._fill_pointer, i]
-                    * self._shot_results[:self._fill_pointer, j]
-                    for i, j in self._tp_idxs]).cpu().numpy()
+        return sum(self._shot_results[:self._fill_pointer, i]
+                   * self._shot_results[:self._fill_pointer, j]
+                   for i, j in self._tp_idxs).cpu().numpy()
 
     def _extend_if_needed(self, descriptor_dim, add_entries=100):
         """

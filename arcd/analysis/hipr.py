@@ -27,7 +27,9 @@ class HIPRanalysis:
                 importance and significance in artificial neural networks'
                 by Stanley J. Kemp, Patricia Zaradic and Frank Hanse
                 https://doi.org/10.1016/j.ecolmodel.2007.01.009
+
     """
+
     def __init__(self, model, trainset, call_kwargs={}, n_redraw=1):
         self.trainset = trainset  # the 'true' trainset
         self.model = model  # any RCModel with a test_loss function
@@ -48,6 +50,7 @@ class HIPRanalysis:
                       replacing the ith input descriptor with random noise,
                       while hipr_losses[-1] is the reference loss over the
                       unmodified TrainSet
+
         """
         # last entry is for true loss
         hipr_losses = np.zeros((self.trainset.descriptors.shape[1] + 1,))

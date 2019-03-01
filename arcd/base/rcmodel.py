@@ -81,7 +81,7 @@ class RCModel(ABC):
         with open(fname, 'rb') as pfile:
             state = pickle.load(pfile)
         transform = state['descriptor_transform']
-        if ops_storage and isinstance(transform, str):
+        if (ops_storage is not None) and isinstance(transform, str):
                 # we just assume it is the name of the OPS CV
                 state['descriptor_transform'] = ops_storage.cvs.find(transform)
         else:
@@ -158,7 +158,7 @@ class RCModel(ABC):
     def _apply_descriptor_transform(self, descriptors):
         # apply descriptor_transform if wanted and defined
         # returns either unaltered descriptors or transformed descriptors
-        if self.descriptor_transform:
+        if self.descriptor_transform is not None:
             # transform OPS snapshots to trajectories to get 2d arrays
             if isinstance(descriptors, OPSBaseSnapshot):
                 descriptors = OPSTrajectory([descriptors])

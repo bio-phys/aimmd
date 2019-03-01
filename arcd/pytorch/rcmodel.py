@@ -119,7 +119,7 @@ class PytorchRCModel(RCModel):
         # needed to create the tensors on the correct device
         self._device = next(self.nnet.parameters()).device
         self._dtype = next(self.nnet.parameters()).dtype
-        if loss:
+        if loss is not None:
             # if custom loss given we take that
             self.loss = loss
         else:
@@ -194,7 +194,7 @@ class PytorchRCModel(RCModel):
         self._count_train_hook += 1
         train, new_lr, epochs = self.train_decision(trainset)
         self.log_train_decision.append([train, new_lr, epochs])
-        if new_lr:
+        if new_lr is not None:
             logger.info('Setting learning rate to {:.3e}'.format(new_lr))
             self._set_lr(new_lr)
         if train:
@@ -340,7 +340,7 @@ class MultiDomainPytorchRCModel(RCModel):
         # _device and _dtype are for cnet
         self._cdevice = next(self.cnet.parameters()).device
         self._cdtype = next(self.cnet.parameters()).dtype
-        if loss:
+        if loss is not None:
             # if custom loss given we take that
             # TODO: do we need to check if output is vectorial or will it fail anyway if it is not?
             self.loss = loss
@@ -453,7 +453,7 @@ class MultiDomainPytorchRCModel(RCModel):
         self._count_train_hook += 1
         train, new_lr, epochs = self.train_decision(trainset)
         self.log_train_decision.append([train, new_lr, epochs])
-        if new_lr:
+        if new_lr is not None:
             logger.info('Setting learning rate to {:.3e}'.format(new_lr))
             self._set_lr_popt(new_lr)
         if train:
@@ -465,7 +465,7 @@ class MultiDomainPytorchRCModel(RCModel):
         cnet_target = self._create_cnet_targets(trainset)
         train_c, new_lr_c, epochs_c = self.train_decision_classifier(trainset, cnet_target)
         self.log_ctrain_decision.append([train_c, new_lr_c, epochs_c])
-        if new_lr_c:
+        if new_lr_c is not None:
             logger.info('Setting classifier learning rate to {:.3e}'.format(new_lr_c))
             self._set_lr_copt(new_lr_c)
         if train_c:
