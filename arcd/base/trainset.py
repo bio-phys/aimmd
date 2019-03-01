@@ -39,7 +39,7 @@ class TrainSet(Iterable):
         # TODO: instead of the None value we have now?
         self.descriptor_transform = descriptor_transform
 
-        if (descriptors and shot_results):
+        if ((descriptors is not None) and (shot_results is not None)):
             descriptors = np.asarray(descriptors, dtype=np.float64)
             shot_results = np.asarray(shot_results, dtype=np.float64)
             if shot_results.shape[0] != descriptors.shape[0]:
