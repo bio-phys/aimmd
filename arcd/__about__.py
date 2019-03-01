@@ -34,8 +34,12 @@ def get_git_version():
         env['LANGUAGE'] = 'C'
         env['LANG'] = 'C'
         env['LC_ALL'] = 'C'
+        # execute in the directory where the source files live
+        # to get the correct git_rev even if we changed the working dir
+        source_dir = os.path.dirname(os.path.abspath(__file__))
         output = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, env=env).communicate()[0]
+            cmd, stdout=subprocess.PIPE,
+            env=env, cwd=source_dir).communicate()[0]
         return output
 
     try:
@@ -47,14 +51,19 @@ def get_git_version():
     return git_revision
 
 
-base_version = '0.1'
+base_version = "0.1"
 git_version = get_git_version()
 if git_version is None:
     __version__ = base_version
+elif git_version is '':
+    # this happens if git is installed,
+    # but source is not part of a repo
+    __version__ = base_version
 else:
-    __version__ = base_version + '+' + git_version
+    __version__ = base_version + "+" + git_version
+
 
 __title__ = "arcd"
-__author__ = 'Hendrik Jung'
-__license__ = 'GPLv3'
-__copyright__ = '2019 {:s}'.format(__author__)
+__author__ = "Hendrik Jung"
+__license__ = "GPLv3"
+__copyright__ = "2019 {:s}".format(__author__)
