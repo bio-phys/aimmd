@@ -203,6 +203,7 @@ class PytorchRCModel(RCModel):
                                         for _ in range(epochs)])
 
     def test_loss(self, trainset, batch_size=128):
+        self.nnet.eval()  # put model in evaluation mode
         total_loss = 0.
         with torch.no_grad():
             for descriptors, shot_results in trainset.iter_batch(batch_size, False):
@@ -214,6 +215,7 @@ class PytorchRCModel(RCModel):
                 q_pred = self.nnet(descriptors)
                 loss = self.loss(q_pred, shot_results)
                 total_loss += float(loss)
+        self.nnet.train()  # and back to train mode
         return total_loss / np.sum(trainset.shot_results)
 
     def _set_lr(self, new_lr):
@@ -245,6 +247,7 @@ class PytorchRCModel(RCModel):
         return total_loss / np.sum(trainset.shot_results)
 
     def _log_prob(self, descriptors):
+        self.nnet.eval()  # put model in evaluation mode
         # no gradient accumulation for predictions!
         with torch.no_grad():
             # we do this to create the descriptors array on same GPU/CPU where the model lives
@@ -252,6 +255,7 @@ class PytorchRCModel(RCModel):
                                           dtype=self._dtype)
             # move the prediction tensor to cpu (if not there already) than convert to numpy
             pred = self.nnet(descriptors).cpu().numpy()
+        self.nnet.train()  # make model trainable again
         return pred
 
 
@@ -505,6 +509,7 @@ class MultiDomainPytorchRCModel(RCModel):
         # p_i = \sum_m p_c(m) * p_i(m)
         # i.e. the loss the model would suffer when used as a whole
         # FIXME: we normalize per shot assuming TwoWayShooting as always
+        # self.__call__() puts the model in evaluation mode
         p = self(trainset.descriptors, use_transform=False)
         if self.n_out == 1:
             p = p[:, 0]  # make it a 1d array
@@ -525,6 +530,8 @@ class MultiDomainPytorchRCModel(RCModel):
     def _test_loss_pnets(self, trainset, batch_size):
         # returns the test losses for all pnets and the L_gamma combined loss value
         # as np.array([L(mod_0), L(mod_1), ..., L(mod_m), L_gamma])
+        # evaluation mode for all prediction networks
+        self.pnets = [pn.eval() for pn in self.pnets]
         loss_by_model = [0 for _ in self.pnets]
         total_loss = 0
         # very similiar to _train_epoch_pnets but without gradient collection
@@ -559,12 +566,15 @@ class MultiDomainPytorchRCModel(RCModel):
                 total_loss += float(L_gamma)
             # end trainset loop
         # end torch.no_grad()
+        # back to training mode for all pnets
+        self.pnets = [pn.train() for pn in self.pnets]
         return (np.asarray(loss_by_model + [total_loss])
                 / np.sum(trainset.shot_results)
                 )
 
     def _test_loss_cnet(self, trainset, batch_size):
         cnet_targets = self._create_cnet_targets(trainset, batch_size)
+        self.cnet.eval()  # evaluation mode
         with torch.no_grad():
             total_loss = 0
             descriptors = torch.as_tensor(trainset.descriptors,
@@ -585,6 +595,7 @@ class MultiDomainPytorchRCModel(RCModel):
             loss = multinomial_loss(log_probs, tar)
             total_loss += float(loss)
         # end torch.no_grad()
+        self.cnet.train()  # back to train mode
         # normalize classifier loss per point in trainset
         # this is the same as the per shot normalization,
         # because we only have one event (one correct model) per point
@@ -639,6 +650,8 @@ class MultiDomainPytorchRCModel(RCModel):
                               device=self._cdevice,
                               dtype=self._cdtype)
         fill = 0
+        # put prediction nets in evaluation mode
+        self.pnets = [pn.eval() for pn in self.pnets]
         with torch.no_grad():
             for descriptors, shot_results in trainset.iter_batch(batch_size,
                                                                  shuffle=False):
@@ -678,6 +691,8 @@ class MultiDomainPytorchRCModel(RCModel):
                 fill += bs
             # end batch over trainset loop
         # end torch nograd
+        # put pnets back to train mode
+        self.pnets = [pn.train() for pn in self.pnets]
         return targets
 
     def _train_epoch_cnet(self, trainset, cnet_targets, batch_size=128, shuffle=True):
@@ -761,6 +776,7 @@ class MultiDomainPytorchRCModel(RCModel):
             descriptors = self._apply_descriptor_transform(descriptors)
         # get the probabilities for each model from classifier
         p_c = self._classify(descriptors)  # returns p_c on self._cdevice
+        self.pnets = [pn.eval() for pn in self.pnets]  # pnets to evaluation
         # now committement probabilities
         with torch.no_grad():
             descriptors = torch.as_tensor(descriptors,
@@ -785,10 +801,12 @@ class MultiDomainPytorchRCModel(RCModel):
                     p_m_list.append(p.cpu().numpy())
                 p = p.to(self._pdevices[0])
                 pred += p_c[:, i:i+1] * p
-
-            if domain_predictions:
-                return (pred.cpu().numpy(), p_m_list)
-            return pred.cpu().numpy()
+            # end pnets loop
+        # end torch.no_grad()
+        self.pnets = [pn.train() for pn in self.pnets]  # back to train
+        if domain_predictions:
+            return (pred.cpu().numpy(), p_m_list)
+        return pred.cpu().numpy()
 
     def classify(self, descriptors, use_transform=True):
         """
@@ -806,6 +824,7 @@ class MultiDomainPytorchRCModel(RCModel):
         # return classifier model probabilities for descriptors
         # descriptors is expected to be numpy or torch tensor
         # returns a torch.tensor on the same device the classifier lives on
+        self.cnet.eval()  # classify in evaluation mode
         with torch.no_grad():
             descriptors = torch.as_tensor(descriptors, device=self._cdevice,
                                           dtype=self._cdtype)
@@ -814,7 +833,8 @@ class MultiDomainPytorchRCModel(RCModel):
             # p_c is the probability the classifier assigns the point to be in models class
             p_c = exp_q_c / torch.sum(exp_q_c, dim=1, keepdim=True)
 
-            return p_c
+        self.cnet.train()  # and make the cnet trainable again
+        return p_c
 
 
 class EEMDPytorchRCModel(MultiDomainPytorchRCModel):
