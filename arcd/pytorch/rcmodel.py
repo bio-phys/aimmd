@@ -469,8 +469,126 @@ class MultiDomainPytorchRCModel(RCModel):
             self.log_ctrain_loss.append([self._train_epoch_cnet(trainset, cnet_target)
                                          for _ in range(epochs_c)])
 
-    def test_loss(self, trainset):
-        return NotImplementedError("TODO")
+    def test_loss(self, trainset, loss='L_pred', batch_size=128):
+        """
+        Calculates the test loss over given TrainSet,
+        Parameters:
+        -----------
+        trainset - `:class:arcd.TrainSet` for which to calculate the loss
+        loss - str, one of:
+               'L_pred' - calculates the loss suffered for weighted prediction
+               'L_mod{:d}' - calculates suffered by a specific pnet,
+                             where {:d} is an int index to a pnet
+               'L_gamma' - calculates the generalized mean loss over all models
+               'L_class' - calculates the loss suffered by classifier
+
+        Note that batch_size is ignored for loss='L_pred'.
+        """
+        if loss is 'L_pred':
+            return self._test_loss_pred(trainset)
+        elif 'L_mod' in loss:
+            mod_num = int(loss.lstrip('L_mod'))
+            if not (0 <= mod_num < len(self.pnets)):
+                raise ValueError('Can only calculate "L_mod" for a model index'
+                                 + ' that is smaller than len(self.pnets).')
+            return self._test_loss_pnets(trainset, batch_size)[mod_num]
+        elif loss is 'L_gamma':
+            return self._test_loss_pnets(trainset, batch_size)[-1]
+        elif loss is 'L_class':
+            return self._test_loss_cnet(trainset, batch_size)
+        else:
+            raise ValueError("'loss' must be one of 'L_pred', 'L_mod{:d}', "
+                             + "'L_gamma' or 'L_class'")
+
+    def _test_loss_pred(self, trainset):
+        # calculate the test loss for the combined weighted prediction
+        # p_i = \sum_m p_c(m) * p_i(m)
+        # i.e. the loss the model would suffer when used as a whole
+        # FIXME: we normalize per shot assuming TwoWayShooting as always
+        p = self(trainset.descriptors, use_transform=False)
+        if self.n_out == 1:
+            p = p[:, 0]  # make it a 1d array
+            loss = - (np.sum(trainset.shot_results[:, 0] * np.log(1 - p)
+                             + trainset.shot_results[:, 1] * np.log(p)
+                             )
+                      / np.sum(trainset.shot_results)
+                      )
+        else:
+            log_p = np.log(p)
+            loss = - (np.sum([n * lp
+                              for n, lp in zip(trainset.shot_results, log_p)]
+                             )
+                      / np.sum(trainset.shot_results)
+                      )
+        return loss
+
+    def _test_loss_pnets(self, trainset, batch_size):
+        # returns the test losses for all pnets and the L_gamma combined loss value
+        # as np.array([L(mod_0), L(mod_1), ..., L(mod_m), L_gamma])
+        loss_by_model = [0 for _ in self.pnets]
+        total_loss = 0
+        # very similiar to _train_epoch_pnets but without gradient collection
+        with torch.no_grad():
+            for descriptors, shot_results in trainset.iter_batch(batch_size, False):
+                if self._pnets_same_device:
+                    # create descriptors and results tensors where the models live
+                    descriptors = torch.as_tensor(descriptors,
+                                                  device=self._pdevices[0],
+                                                  dtype=self._pdtypes[0])
+                    shot_results = torch.as_tensor(shot_results,
+                                                   device=self._pdevices[0],
+                                                   dtype=self._pdtypes[0])
+                # we collect the results on the device of the first pnet
+                l_m_sum = torch.zeros((descriptors.shape[0],), device=self._pdevices[0],
+                                      dtype=self._pdtypes[0])
+                for i, pnet in enumerate(self.pnets):
+                    if not self._pnets_same_device:
+                        # create descriptors and results tensors where the models live
+                        descriptors = torch.as_tensor(descriptors,
+                                                      device=self._pdevices[i],
+                                                      dtype=self._pdtypes[i])
+                        shot_results = torch.as_tensor(shot_results,
+                                                       device=self._pdevices[i],
+                                                       dtype=self._pdtypes[i])
+                    q_pred = pnet(descriptors)
+                    l_m = self.loss(q_pred, shot_results)
+                    loss_by_model[i] += float(torch.sum(l_m))
+                    l_m_sum += torch.pow(l_m, self.gamma).to(l_m_sum.device)
+                # end models loop
+                L_gamma = torch.sum(torch.pow(l_m_sum / len(self.pnets), 1/self.gamma))
+                total_loss += float(L_gamma)
+            # end trainset loop
+        # end torch.no_grad()
+        return (np.asarray(loss_by_model + [total_loss])
+                / np.sum(trainset.shot_results)
+                )
+
+    def _test_loss_cnet(self, trainset, batch_size):
+        cnet_targets = self._create_cnet_targets(trainset, batch_size)
+        with torch.no_grad():
+            total_loss = 0
+            descriptors = torch.as_tensor(trainset.descriptors,
+                                          device=self._cdevice,
+                                          dtype=self._cdtype)
+            n_batch = int(len(trainset) / batch_size)
+            rest = len(trainset) % batch_size
+            for b in range(n_batch):
+                des = descriptors[b*batch_size:(b+1)*batch_size]
+                tar = cnet_targets[b*batch_size:(b+1)*batch_size]
+                log_probs = self.cnet(des)
+                loss = multinomial_loss(log_probs, tar)
+                total_loss += float(loss)
+            # the rest
+            des = descriptors[n_batch*batch_size:n_batch*batch_size + rest]
+            tar = cnet_targets[n_batch*batch_size:n_batch*batch_size + rest]
+            log_probs = self.cnet(des)
+            loss = multinomial_loss(log_probs, tar)
+            total_loss += float(loss)
+        # end torch.no_grad()
+        # normalize classifier loss per point in trainset
+        # this is the same as the per shot normalization,
+        # because we only have one event (one correct model) per point
+        return total_loss / len(trainset)
 
     def _train_epoch_pnets(self, trainset, batch_size=128, shuffle=True):
         # one pass over the whole trainset
@@ -718,11 +836,11 @@ class EEMDPytorchRCModel(MultiDomainPytorchRCModel):
                                       'epochs_per_train': 5,
                                       'interval': 3,
                                       'window': 100},
-                 ctrain_params = {'lr_0': 1e-3,
-                                  'lr_min': 1e-4,
-                                  'epochs_per_train': 5,
-                                  'interval': 6,
-                                  'window': 100},
+                 ctrain_params={'lr_0': 1e-3,
+                                'lr_min': 1e-4,
+                                'epochs_per_train': 5,
+                                'interval': 6,
+                                'window': 100},
                  #ctrain_params={'rel_tol': 0.01,
                  #               'epochs_per_train': 5,
                  #               'interval': 3,
@@ -783,6 +901,8 @@ class EEMDPytorchRCModel(MultiDomainPytorchRCModel):
                     )
         return train, lr, epochs
 
+    # TODO: not used atm
+    # TODO: do we even need this?, test if it is usefull compared to expected efficiency
     def train_decision_classifier_const_loss(self, trainset, cnet_targets):
         # if loss increased less than rel_tol since last train we do not train
         # otherwise train with predefined lr of coptimizer for epochs_per_train epochs
@@ -799,8 +919,8 @@ class EEMDPytorchRCModel(MultiDomainPytorchRCModel):
             # get current loss
             with torch.no_grad():
                 descriptors = torch.as_tensor(trainset.descriptors,
-                                      device=self._cdevice,
-                                      dtype=self._cdtype)
+                                              device=self._cdevice,
+                                              dtype=self._cdtype)
                 log_probs = self.cnet(descriptors)
                 loss = float(multinomial_loss(log_probs, cnet_targets))
             # and decide if we train
