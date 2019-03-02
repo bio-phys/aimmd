@@ -19,9 +19,8 @@ from ..base.trainset import TrainSet
 
 
 class HIPRanalysis:
-    # TODO: docstring!
     """
-    Relative input importance analysis.
+    Relative input importance analysis ('HIPR').
 
     Literature 'An approach for determining relative input parameter
                 importance and significance in artificial neural networks'
@@ -31,6 +30,19 @@ class HIPRanalysis:
     """
 
     def __init__(self, model, trainset, call_kwargs={}, n_redraw=1):
+        """
+        Relative input importance analysis ('HIPR').
+
+        model - the arcd.RCModel to perform relative input importance analysis
+        trainset - arcd.TrainSet with unperturbed descriptors and shot_results
+        call_kwargs - dict of additional key word arguments to
+                      RCModel.test_loss(), e.g. for choosing the test_loss
+                      for MultiDomainModels with call_kwargs={'loss':'L_mod0'}
+        n_redraw - int, number of times we redraw random descriptors per point
+                   in trainset, i.e. if redraw=2 we will average the loss over
+                   2*len(trainset) points per model input descriptor
+
+        """
         self.trainset = trainset  # the 'true' trainset
         self.model = model  # any RCModel with a test_loss function
         # fine grained call control, e.g. to select the loss for MultiDomain

@@ -55,7 +55,7 @@ class TrainingHook(PathSimulatorHook):
             sname = os.path.basename(spath)
             content = os.listdir(sdir)
             possible_mods = [c for c in content
-                             if (os.path.isfile(c)
+                             if (os.path.isfile(os.path.join(sdir, c))
                                  and sname in c
                                  and c.endswith(self.save_model_suffix
                                                 + self.save_model_extension)
@@ -63,7 +63,7 @@ class TrainingHook(PathSimulatorHook):
                              ]
             if len(possible_mods) == 1:
                 # only one possible model, take it
-                mod_fname = possible_mods[0]
+                mod_fname = os.path.join(sdir, possible_mods[0])
                 # this gives us the correct subclass and a half-fixed state
                 # i.e. we set descriptor_transform to the OPS CV
                 state, cls = RCModel.load_state(mod_fname, sim.storage)
