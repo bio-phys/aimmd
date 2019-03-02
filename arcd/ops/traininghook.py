@@ -34,7 +34,6 @@ class TrainingHook(PathSimulatorHook):
         trainset - :class:`arcd.base.TrainSet` to store the shooting results
     """
     implemented_for = ['before_simulation',
-                       #'before_step',
                        'after_step',
                        'after_simulation'
                        ]
@@ -49,7 +48,7 @@ class TrainingHook(PathSimulatorHook):
         self.save_model_interval = save_model_interval
 
     def _get_model_from_sim_storage(self, sim):
-        if sim.storage:
+        if sim.storage is not None:
             spath = sim.storage.abspath
             sdir = os.path.dirname(spath)
             sname = os.path.basename(spath)
@@ -71,7 +70,6 @@ class TrainingHook(PathSimulatorHook):
                 state = cls.fix_state(state)
                 # this finally instantiates the correct RCModel class
                 return cls.set_state(state)
-
             elif len(possible_mods) == 0:
                 logger.error('No matching model file found!')
             else:
@@ -81,7 +79,7 @@ class TrainingHook(PathSimulatorHook):
                          + 'can not find a model file.')
 
     def _create_trainset_from_sim_storage(self, sim, descriptor_transform):
-        if sim.storage:
+        if sim.storage is not None:
             states = sim.move_scheme.network.all_states
             trainset = TrainSet(states, descriptor_transform)
             for step in sim.storage.steps:
@@ -112,18 +110,15 @@ class TrainingHook(PathSimulatorHook):
                                                                    )
             logger.info('Recreated TrainSet from storage.steps')
 
-    def before_step(self, sim, step_number, step_info, state):
-        pass
-
     def after_step(self, sim, step_number, step_info, state, results,
                    hook_state):
         # results is the MCStep
         self.trainset.append_ops_mcstep(results)
         self.model.train_hook(self.trainset)
         # save the model every save_model_interval MCSteps
-        if sim.storage:
-            spath = sim.storage.abspath
+        if sim.storage is not None:
             if step_number % self.save_model_interval == 0:
+                spath = sim.storage.abspath
                 fname = (spath + self.save_model_suffix
                          + '_at_step{:d}'.format(step_number)
                          )
@@ -131,7 +126,7 @@ class TrainingHook(PathSimulatorHook):
                 logger.info('Saved intermediate RCModel as ' + fname)
 
     def after_simulation(self, sim):
-        if sim.storage:
+        if sim.storage is not None:
             spath = sim.storage.abspath
             # save without step-suffix to reload at simulation start
             fname = spath + self.save_model_suffix
