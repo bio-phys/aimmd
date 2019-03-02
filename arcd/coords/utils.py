@@ -22,45 +22,16 @@ from . import symmetry, internal
 logger = logging.getLogger(__name__)
 
 
-def transform(mdtra, ic_parms={}, sf_parms={}, custom_cv_func=None,
-              custom_cv_parms={}):
-    """
-    Helper function: returns the concatenated output of internal coordinates
-    symmetry functions and a custom defined cv_function (custom_cv_func).
-    The function parameters of the wanted functions should be passed as dicts,
-    where key=parameter_name and value=parameter_value.
-    The custom_cv_function needs to operate on mdtraj trajectories, similar to
-    internal-coordinates and symmetry-functions, i.e. it will be passed
-    a mdtraj trajectory as first argument and then params by keyword.
-
-    Ordering: internal_coords, symmerty_funcs, custom_cv (if present)
-    See the respective function docstrings for more on the parameters.
-    """
-    import numpy as np
-    from arcd.coords import internal, symmetry
-    out = []
-    if ic_parms:
-        out.append(internal.transform(mdtra, **ic_parms))
-    if sf_parms:
-        # TODO: I don't think we need this?
-        #sf_defaults = {'rho_solv': [33.], 'alpha_cutoff': 150.}
-        #sf_defaults.update(sf_parms)
-        out.append(symmetry.transform(mdtra, **sf_parms))
-    if custom_cv_func:
-        out.append(custom_cv_func(mdtra, **custom_cv_parms))
-
-    return np.concatenate(out, axis=1)
-
-
 def get_involved(idx, ic_parms={}, sf_parms={}, solvent_atoms=None,
                  solvent_resname=None):
     """
     For a given idx returns the type of collective variable (internal ('IC'),
-    symmetry ('SF') or custom cv ('CustomCV')) and all
-    information that the get_involved(idx) of the corresponding sub collective
-    variable gives. Except for custom cv where just the idx into the
-    array of custom cv is given.
-    Have a look at their docstrings for more.
+    symmetry ('SF') or custom cv ('CustomCV')) for a CV built by concatenating
+    IC, SF and custom CV in that order if present.
+    For IC and SF returns all information that the get_involved(idx) of the
+    corresponding submodules give. For custom cv we return the idx into the
+    array of custom cv.
+    Have a look at the submodule docstrings for more.
     """
     n_ic = 0
     n_sf = 0
