@@ -14,8 +14,24 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
-from . import symreg, pytorch, ops, coords
-from .base.trainset import TrainSet, TrainSetTorchGPU
+import logging
+
+
+logger = logging.getLogger(__name__)
+
+
+from . import symreg, ops, coords
+from .base.trainset import TrainSet
 from .__about__ import (__version__, __title__, __author__,
                         __license__, __copyright__
                         )
+
+try:
+    from . import pytorch
+except ImportError:
+    logger.warn("pytorch not available")
+
+try:
+    from . import keras
+except ImportError:
+    logger.warn("keras not available")
