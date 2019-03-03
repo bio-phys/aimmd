@@ -40,8 +40,6 @@ class RCModel(ABC):
     # need to have it here, such that we can get it without instantiating
     save_model_extension = '.pckl'
 
-    # TODO: property for trainSet ordering? or leave transform to the specific
-    #       implementations of models if necessary?
     def __init__(self, descriptor_transform=None):
         self.descriptor_transform = descriptor_transform
         self.expected_p = []

@@ -35,7 +35,7 @@ class RCModelSelector(ShootingPointSelector):
                 (Cartesian) snapshot coordinates to the descriptor
                 representation in which the model learns, see `.coordinates` for
                 examples of functions that can be turned to a MDtrajFunctionCV
-    states - TODO
+    states - list of :class:`openpathsampling.Volume`, one for each state
     distribution - string specifying the SP selection distribution,
                    either 'gaussian' or 'lorentzian'
                    'gaussian': p_{sel}(x) ~ exp(-alpha * z_{sel}(x)**2)
@@ -169,16 +169,4 @@ class RCModelSelector(ShootingPointSelector):
 
         # let the model know which SP we chose
         self.model.register_sp(trajectory[idx])
-
-# TODO: this should happen in model now...
-#        ps = self.model.p(trajectory[idx:idx + 1])
-#        if ps.shape[1] == 1:
-#            p_B = float(ps[0, 0])
-#            p_TP_pick = 2 * p_B * (1. - p_B)
-#            self.history.expected_committors.append([1. - p_B, p_B])
-#        else:
-#            p_TP_pick = 1. - np.sum(ps * ps)
-#            self.history.expected_committors.append(ps[0])
-#        self.history.expected_efficiency.append(float(p_TP_pick))
-
         return idx

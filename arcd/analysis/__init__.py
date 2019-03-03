@@ -15,3 +15,4 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 from .hipr import HIPRanalysis
+from .gradient_movie import GradientMovieMaker

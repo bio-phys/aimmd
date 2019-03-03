@@ -72,7 +72,7 @@ class KerasRCModel(RCModel):
         self._count_train_hook += 1
         train, new_lr, epochs = self.train_decision(trainset)
         self.log_train_decision.append([train, new_lr, epochs])
-        if new_lr:
+        if new_lr is not None:
             K.set_value(self.nnet.optimizer.lr, new_lr)
         if train:
             self.log_train_loss.append([self._train_epoch(trainset)

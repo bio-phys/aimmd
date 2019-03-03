@@ -55,9 +55,9 @@ def initialize_random_expression(n_in, n_out,
            if None will be choosen at random with numpy.random.randint()
 
     """
-    if not kernels:
+    if kernels is None:
         kernels = ['sum', 'diff', 'mul', 'div', 'sig', 'sin', 'log', 'exp']
-    if not seed:
+    if seed is None:
         seed = np.random.randint(533533)
     # transform strings to dCGPy kernels
     kernels = kernel_set(kernels)()
