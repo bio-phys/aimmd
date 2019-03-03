@@ -245,21 +245,26 @@ class GradientMovieMaker:
                               )
 
     def color_by_gradient(self, traj, outfile, atom_indices=None,
-                          anchor_mols=None, overwrite=True):
+                          anchor_mols=None, overwrite=True,
+                          single_frames=True):
         """
         Write magnitude of gradients into Bfactors at each frame in outfile.
 
-        traj - mdtraj or openpathsampling trajectory
+        traj - mdtraj trajectory or openpathsampling trajectory or snapshot
         outfile - str, filename the pdb movie will be written to
         atom_indices - 1d numpy.array of atom indices,
                        if given will calculate gradients only for those atoms
         anchor_mols - list of mdtraj molecules to center the movie on,
                       will be guessed from atom_indices if None
         overwrite - bool, wheter to overwrite existing files with given name
+        single_frames - bool, wheter to output a series of single frame pbds
+                        suffixed by frame number
 
         """
         if (anchor_mols is None) and (atom_indices is not None):
             anchor_mols = self.anchor_mols_from_atom_indices(atom_indices)
+        if isinstance(traj, paths.BaseSnapshot):
+            traj = paths.Trajectory([traj])
         if isinstance(traj, paths.Trajectory):
             traj = traj.to_mdtraj()
 
@@ -275,5 +280,17 @@ class GradientMovieMaker:
             Bfactors.append(np.sqrt(np.sum(dq_dx**2, axis=-1)))
         Bfactors = np.array(Bfactors)
         traj_out = traj.image_molecules(anchor_molecules=anchor_mols)
-        traj_out.save_pdb(outfile, force_overwrite=overwrite,
-                          bfactors=Bfactors)
+        # TODO: make a pymol workflow to create movies from single frames
+        # think we will need to save in single pdbfiles if we want the
+        # different gradients to be displayed in every frame....
+        # at least pymol and VMD only read the Bfactors of the first frame -.-
+        if single_frames:
+            for i, f in enumerate(traj_out):
+                outname = (outfile.rstrip('.pdb')
+                           + '_{:04d}'.format(i)
+                           + '.pdb')
+                f.save_pdb(outname, force_overwrite=overwrite,
+                           bfactors=Bfactors[i])
+        else:
+            traj_out.save_pdb(outfile, force_overwrite=overwrite,
+                              bfactors=Bfactors)
