@@ -286,8 +286,10 @@ class GradientMovieMaker:
         # at least pymol and VMD only read the Bfactors of the first frame -.-
         if single_frames:
             for i, f in enumerate(traj_out):
-                outname = (outfile.rstrip('.pdb')
-                           + '_{:04d}'.format(i)
+                if outfile.endswith('.pdb'):
+                    outfile = outfile[:-4]
+                outname = (outfile
+                           + '_{:03d}'.format(i)
                            + '.pdb')
                 f.save_pdb(outname, force_overwrite=overwrite,
                            bfactors=Bfactors[i])
