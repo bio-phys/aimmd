@@ -73,9 +73,9 @@ class KerasRCModel(RCModel):
         train, new_lr, epochs = self.train_decision(trainset)
         self.log_train_decision.append([train, new_lr, epochs])
         if new_lr is not None:
-            K.set_value(self.nnet.optimizer.lr, new_lr)
+            self.set_lr(new_lr)
         if train:
-            self.log_train_loss.append([self._train_epoch(trainset)
+            self.log_train_loss.append([self.train_epoch(trainset)
                                         for _ in range(epochs)])
 
     def test_loss(self, trainset):
@@ -91,7 +91,10 @@ class KerasRCModel(RCModel):
         # i.e. a bool, a float or None and an int
         pass
 
-    def _train_epoch(self, trainset, batch_size=128, shuffle=True):
+    def set_lr(self, new_lr):
+        K.set_value(self.nnet.optimizer.lr, new_lr)
+
+    def train_epoch(self, trainset, batch_size=128, shuffle=True):
         # train for one epoch == one pass over the trainset
         loss = 0.
         for descriptors, shot_results in trainset.iter_batch(batch_size, shuffle):

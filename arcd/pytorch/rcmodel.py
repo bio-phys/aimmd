@@ -99,6 +99,7 @@ def _fix_pytorch_device(location):
         if device >= torch.cuda.device_count():
             # other cuda device ID
             logger.info('Restoring on a different CUDA device.')
+            # TODO: does this choose any cuda device or always No 0 ?
             return torch.device('cuda')
     return device
 
@@ -196,10 +197,10 @@ class PytorchRCModel(RCModel):
         self.log_train_decision.append([train, new_lr, epochs])
         if new_lr is not None:
             logger.info('Setting learning rate to {:.3e}'.format(new_lr))
-            self._set_lr(new_lr)
+            self.set_lr(new_lr)
         if train:
             logger.info('Training for {:d} epochs'.format(epochs))
-            self.log_train_loss.append([self._train_epoch(trainset)
+            self.log_train_loss.append([self.train_epoch(trainset)
                                         for _ in range(epochs)])
 
     def test_loss(self, trainset, batch_size=128):
@@ -218,17 +219,12 @@ class PytorchRCModel(RCModel):
         self.nnet.train()  # and back to train mode
         return total_loss / np.sum(trainset.shot_results)
 
-    def _set_lr(self, new_lr):
-        # TODO: this could (and should) be the same func for all pytorch models using pytorch.optim optimizers
-        # TODO: what if the training scheme does not change the LR?
-        # adapted from torch.optim.lr_scheduler.ReduceLROnPlateau._reduce_lr()
+    def set_lr(self, new_lr):
         # TODO: new_lr could be a list of different values if we have more parametersets...
         for i, param_group in enumerate(self.optimizer.param_groups):
-            #old_lr = float(param_group['lr'])
-            #new_lr = max(old_lr * self.factor, self.min_lrs[i])
             param_group['lr'] = new_lr
 
-    def _train_epoch(self, trainset, batch_size=128, shuffle=True):
+    def train_epoch(self, trainset, batch_size=128, shuffle=True):
         # one pass over the whole trainset
         # returns loss per shot averaged over whole training set
         total_loss = 0.
@@ -309,7 +305,9 @@ class EEPytorchRCModel(PytorchRCModel):
 class MultiDomainPytorchRCModel(RCModel):
     """
     Wrapper for multi domain pytorch RCModels.
-    Inspired by "Towards an AI physicist for unsupervised learning" by Wu + Tegmark (arXiv:1810.10525)
+
+    Literature: "Towards an AI physicist for unsupervised learning"
+                 by Wu + Tegmark (arXiv:1810.10525)
     """
     def __init__(self, pnets, cnet, poptimizer, coptimizer,
                  descriptor_transform=None, gamma=-1, loss=None):
@@ -455,27 +453,28 @@ class MultiDomainPytorchRCModel(RCModel):
         self.log_train_decision.append([train, new_lr, epochs])
         if new_lr is not None:
             logger.info('Setting learning rate to {:.3e}'.format(new_lr))
-            self._set_lr_popt(new_lr)
+            self.set_lr_popt(new_lr)
         if train:
             logger.info('Training for {:d} epochs'.format(epochs))
-            self.log_train_loss.append([self._train_epoch_pnets(trainset)
+            self.log_train_loss.append([self.train_epoch_pnets(trainset)
                                         for _ in range(epochs)])
 
         # classifier
-        cnet_target = self._create_cnet_targets(trainset)
+        cnet_target = self.create_cnet_targets(trainset)
         train_c, new_lr_c, epochs_c = self.train_decision_classifier(trainset, cnet_target)
         self.log_ctrain_decision.append([train_c, new_lr_c, epochs_c])
         if new_lr_c is not None:
             logger.info('Setting classifier learning rate to {:.3e}'.format(new_lr_c))
-            self._set_lr_copt(new_lr_c)
+            self.set_lr_copt(new_lr_c)
         if train_c:
             logger.info('Training classifier for {:d} epochs'.format(epochs_c))
-            self.log_ctrain_loss.append([self._train_epoch_cnet(trainset, cnet_target)
+            self.log_ctrain_loss.append([self.train_epoch_cnet(trainset, cnet_target)
                                          for _ in range(epochs_c)])
 
     def test_loss(self, trainset, loss='L_pred', batch_size=128):
         """
-        Calculates the test loss over given TrainSet,
+        Calculate the test loss over given TrainSet.
+
         Parameters:
         -----------
         trainset - `:class:arcd.TrainSet` for which to calculate the loss
@@ -485,8 +484,10 @@ class MultiDomainPytorchRCModel(RCModel):
                              where {:d} is an int index to a pnet
                'L_gamma' - calculates the generalized mean loss over all models
                'L_class' - calculates the loss suffered by classifier
+        batch_size - int, number of training points in a single batch
 
         Note that batch_size is ignored for loss='L_pred'.
+
         """
         if loss is 'L_pred':
             return self._test_loss_pred(trainset)
@@ -601,7 +602,7 @@ class MultiDomainPytorchRCModel(RCModel):
         # because we only have one event (one correct model) per point
         return total_loss / len(trainset)
 
-    def _train_epoch_pnets(self, trainset, batch_size=128, shuffle=True):
+    def train_epoch_pnets(self, trainset, batch_size=128, shuffle=True):
         # one pass over the whole trainset
         # returns loss per shot averaged over whole training set as list,
         # one fore each model by idx and last entry is the combined multidomain loss
@@ -643,7 +644,7 @@ class MultiDomainPytorchRCModel(RCModel):
                 / np.sum(trainset.shot_results)
                 )
 
-    def _create_cnet_targets(self, trainset, batch_size=128):
+    def create_cnet_targets(self, trainset, batch_size=128):
         # build the trainset for classifier,
         # i.e. which model has the lowest loss for each point in trainset
         targets = torch.zeros((len(trainset), len(self.pnets)),
@@ -695,7 +696,7 @@ class MultiDomainPytorchRCModel(RCModel):
         self.pnets = [pn.train() for pn in self.pnets]
         return targets
 
-    def _train_epoch_cnet(self, trainset, cnet_targets, batch_size=128, shuffle=True):
+    def train_epoch_cnet(self, trainset, cnet_targets, batch_size=128, shuffle=True):
         total_loss = 0
         descriptors = torch.as_tensor(trainset.descriptors,
                                       device=self._cdevice,
@@ -729,24 +730,15 @@ class MultiDomainPytorchRCModel(RCModel):
         # normalize classifier loss per point in trainset
         return total_loss / len(trainset)
 
-    def _set_lr_popt(self, new_lr):
-        # TODO: this could (and should) be the same func for all pytorch models using pytorch.optim optimizers
-        # TODO: what if the training scheme does not change the LR?
-        # adapted from torch.optim.lr_scheduler.ReduceLROnPlateau._reduce_lr()
+    def set_lr_popt(self, new_lr):
         # TODO: new_lr could be a list of different values if we have more parametersets...
+        # especially here where we train different pnets with the same optimizer!
         for i, param_group in enumerate(self.poptimizer.param_groups):
-            #old_lr = float(param_group['lr'])
-            #new_lr = max(old_lr * self.factor, self.min_lrs[i])
             param_group['lr'] = new_lr
 
-    def _set_lr_copt(self, new_lr):
-        # TODO: this could (and should) be the same func for all pytorch models using pytorch.optim optimizers
-        # TODO: what if the training scheme does not change the LR?
-        # adapted from torch.optim.lr_scheduler.ReduceLROnPlateau._reduce_lr()
+    def set_lr_copt(self, new_lr):
         # TODO: new_lr could be a list of different values if we have more parametersets...
         for i, param_group in enumerate(self.coptimizer.param_groups):
-            #old_lr = float(param_group['lr'])
-            #new_lr = max(old_lr * self.factor, self.min_lrs[i])
             param_group['lr'] = new_lr
 
     # NOTE ON PREDICTIONS:
