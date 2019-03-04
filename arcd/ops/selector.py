@@ -31,10 +31,6 @@ class RCModelSelector(ShootingPointSelector):
     Parameters
     ----------
     model - :class:`arcd.base.RCModel` a wrapped model predicting RC values
-    descriptor_transform - :class:`openpathsampling.CollectiveVariable` transforming
-                (Cartesian) snapshot coordinates to the descriptor
-                representation in which the model learns, see `.coordinates` for
-                examples of functions that can be turned to a MDtrajFunctionCV
     states - list of :class:`openpathsampling.Volume`, one for each state
     distribution - string specifying the SP selection distribution,
                    either 'gaussian' or 'lorentzian'
@@ -48,11 +44,11 @@ class RCModelSelector(ShootingPointSelector):
     -----
     We use the z_sel function of the model wrapper as input to the selection distribution.
     """
-    def __init__(self, model, descriptor_transform, states,
-                 distribution='lorentzian', scale=1.):
+    def __init__(self, model, states=None, distribution='lorentzian', scale=1.):
         super(RCModelSelector, self).__init__()
         self.model = model
-        self.descriptor_transform = descriptor_transform
+        if states is None:
+            logger.warn('Consider passing the states to speed up accepting/rejecting.')
         self.states = states
         self.distribution = distribution
         self.scale = scale
@@ -63,7 +59,7 @@ class RCModelSelector(ShootingPointSelector):
         # since we can not arbitrary models in OPS storages
         # TODO: maybe we can hack something together that stores/loads models
         # in separate files besides the storage, this has to be model specific
-        obj = cls(None, dct['descriptor_transform'],
+        obj = cls(None,
                   dct['states'],
                   distribution=dct['distribution'],
                   scale=dct['scale'])
@@ -75,7 +71,6 @@ class RCModelSelector(ShootingPointSelector):
 
     def to_dict(self):
         dct = {}
-        dct['descriptor_transform'] = self.descriptor_transform
         dct['distribution'] = self._distribution
         dct['scale'] = self.scale
         dct['states'] = self.states
