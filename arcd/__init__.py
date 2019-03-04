@@ -20,11 +20,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-from . import symreg, ops, coords
-from .base.trainset import TrainSet
 from .__about__ import (__version__, __title__, __author__,
                         __license__, __copyright__
                         )
+from . import symreg, ops, coords, analysis
+from .base.trainset import TrainSet
 
 try:
     from . import pytorch

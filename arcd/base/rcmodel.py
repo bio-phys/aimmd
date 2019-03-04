@@ -41,6 +41,16 @@ class RCModel(ABC):
     save_model_extension = '.pckl'
 
     def __init__(self, descriptor_transform=None):
+        """
+        I am an `abc.ABC` and can not be initialized.
+
+        descriptor_transform - any function transforming (Cartesian) snapshot
+                               coordinates to the descriptor representation in
+                               which the model learns, e.g. an
+                               :class:`openpathsampling.CollectiveVariable`,
+                               see `.coordinates` for examples of functions
+                               that can be turned to a MDtrajFunctionCV
+        """
         self.descriptor_transform = descriptor_transform
         self.expected_p = []
         self.expected_q = []

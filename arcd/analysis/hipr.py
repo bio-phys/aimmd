@@ -29,10 +29,12 @@ class HIPRanalysis:
 
     """
 
-    def __init__(self, model, trainset, call_kwargs={}, n_redraw=1):
+    def __init__(self, model, trainset, call_kwargs={}, n_redraw=5):
         """
         Relative input importance analysis ('HIPR').
 
+        Parameters:
+        -----------
         model - the arcd.RCModel to perform relative input importance analysis
         trainset - arcd.TrainSet with unperturbed descriptors and shot_results
         call_kwargs - dict of additional key word arguments to
@@ -51,9 +53,18 @@ class HIPRanalysis:
         # i.e. if redraw=2 we will do 2 HIPR and average the results
         self.n_redraw = n_redraw
 
-    def do_hipr(self):
+    def do_hipr(self, n_redraw=None):
         """
         Perform HIPR analysis and set self.hipr_losses to the result.
+
+        Parameters:
+        -----------
+        n_redraw - int or None, number of times we redraw random descriptors
+                   per point in trainset, i.e. if redraw=2 we will average
+                   the loss over 2*len(trainset) points per model input,
+                   Note that giving n_redraw here will take precedence over
+                   self.n_redraw, we will only use self.n_redraw if n_redraw
+                   given here is None
 
         Returns:
         --------
@@ -68,7 +79,9 @@ class HIPRanalysis:
         hipr_losses = np.zeros((self.trainset.descriptors.shape[1] + 1,))
         maxes = np.max(self.trainset.descriptors, axis=0)
         mins = np.min(self.trainset.descriptors, axis=0)
-        for _ in range(self.n_redraw):
+        if n_redraw is None:
+            n_redraw = self.n_redraw
+        for _ in range(n_redraw):
             for i in range(len(maxes)):
                 descriptors = self.trainset.descriptors.copy()
                 descriptors[:, i] = ((maxes[i] - mins[i])
@@ -83,7 +96,7 @@ class HIPRanalysis:
                               )
                 hipr_losses[i] += self.model.test_loss(ts, **self.call_kwargs)
         # take the mean
-        hipr_losses /= self.n_redraw
+        hipr_losses /= n_redraw
         # and add reference loss
         hipr_losses[-1] = self.model.test_loss(self.trainset,
                                                **self.call_kwargs)
