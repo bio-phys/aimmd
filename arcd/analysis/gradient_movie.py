@@ -246,7 +246,7 @@ class GradientMovieMaker:
 
     def color_by_gradient(self, traj, outfile, atom_indices=None,
                           anchor_mols=None, overwrite=True,
-                          single_frames=True):
+                          single_frames=False):
         """
         Write magnitude of gradients into Bfactors at each frame in outfile.
 
@@ -280,10 +280,11 @@ class GradientMovieMaker:
             Bfactors.append(np.sqrt(np.sum(dq_dx**2, axis=-1)))
         Bfactors = np.array(Bfactors)
         traj_out = traj.image_molecules(anchor_molecules=anchor_mols)
-        # TODO: make a pymol workflow to create movies from single frames
-        # think we will need to save in single pdbfiles if we want the
-        # different gradients to be displayed in every frame....
-        # at least pymol and VMD only read the Bfactors of the first frame -.-
+        # NOTE: visualizing the created movie can be done by writing the
+        # Bfactor values for every frame into the user field in VMD
+        # the user field is dynamically read every frame and allows for
+        # different colors in different frames,
+        # see the VMD script @ examples/resources/pdbbfactor.tcl
         if single_frames:
             for i, f in enumerate(traj_out):
                 if outfile.endswith('.pdb'):
