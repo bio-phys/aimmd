@@ -89,11 +89,12 @@ class RCModel(ABC):
         with open(fname, 'rb') as pfile:
             state = pickle.load(pfile)
         transform = state['descriptor_transform']
-        if (ops_storage is not None) and isinstance(transform, str):
+        if (ops_storage is not None):
+            if isinstance(transform, str):
                 # we just assume it is the name of the OPS CV
                 state['descriptor_transform'] = ops_storage.cvs.find(transform)
-        else:
-            raise ValueError('Could not load descriptor_transform from ops_storage.')
+            else:
+                raise ValueError('Could not load descriptor_transform from ops_storage.')
         sub_class = state['__class__']
         del state['__class__']
         # to make this a generally applicable function,
