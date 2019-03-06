@@ -31,7 +31,7 @@ class HIPRanalysis:
 
     def __init__(self, model, trainset, call_kwargs={}, n_redraw=5):
         """
-        Relative input importance analysis ('HIPR').
+        Relative input importance analysis ('HIPR') as described in literature.
 
         Parameters:
         -----------
@@ -56,6 +56,12 @@ class HIPRanalysis:
     def do_hipr(self, n_redraw=None):
         """
         Perform HIPR analysis and set self.hipr_losses to the result.
+
+        Note that this is not the 'true' HIPR as described in the literature.
+        Here we permutate the descriptors randomly instead of drawing random
+        values, this conserves the distribution of values over the
+        corresponding descriptor dimension and is therefore more sensible if
+        using non-whitened input.
 
         Parameters:
         -----------
@@ -102,3 +108,53 @@ class HIPRanalysis:
                                                **self.call_kwargs)
         self.hipr_losses = hipr_losses
         return hipr_losses
+
+    def do_hipr_plus(self, n_redraw=None):
+        """
+        Perform HIPR analysis plus and set self.hipr_losses_plus to the result.
+
+        Parameters:
+        -----------
+        n_redraw - int or None, number of times we permutate the descriptors
+                   in trainset, i.e. if redraw=2 we will average
+                   the loss over 2*len(trainset) points per model input,
+                   Note that passing n_redraw here will take precedence over
+                   self.n_redraw, we will only use self.n_redraw if n_redraw
+                   given here is None
+
+        Returns:
+        --------
+        hipr_losses_plus - a numpy array (shape=(descriptor_dim + 1,)),
+                           where hipr_losses[i] corresponds to the loss
+                           suffered by permutating the ith input descriptor,
+                           while hipr_losses[-1] is the reference loss over the
+                           unmodified TrainSet
+
+        """
+        # last entry is for true loss
+        hipr_losses_plus = np.zeros((self.trainset.descriptors.shape[1] + 1,))
+        if n_redraw is None:
+            n_redraw = self.n_redraw
+        n_dim = self.trainset.descriptors.shape[1]
+        for _ in range(n_redraw):
+            for i in range(n_dim):
+                descriptors = self.trainset.descriptors.copy()
+                permut_idxs = np.random.permutation(len(self.trainset))
+                descriptors[:, i] = descriptors[:, i][permut_idxs]
+                ts = TrainSet(
+                       self.trainset.states,
+                       descriptor_transform=self.trainset.descriptor_transform,
+                       descriptors=descriptors,
+                       shot_results=self.trainset.shot_results
+                              )
+                hipr_losses_plus[i] += self.model.test_loss(ts,
+                                                            **self.call_kwargs
+                                                            )
+        # take the mean
+        hipr_losses_plus /= n_redraw
+        # and add reference loss
+        hipr_losses_plus[-1] = self.model.test_loss(self.trainset,
+                                                    **self.call_kwargs
+                                                    )
+        self.hipr_losses_plus = hipr_losses_plus
+        return hipr_losses_plus
