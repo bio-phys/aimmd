@@ -78,9 +78,8 @@ class TrainingHook(PathSimulatorHook):
             logger.error('Simulation has no attached storage, '
                          + 'can not find a model file.')
 
-    def _create_trainset_from_sim_storage(self, sim, descriptor_transform):
+    def _create_trainset_from_sim_storage(self, sim, states, descriptor_transform):
         if sim.storage is not None:
-            states = sim.move_scheme.network.all_states
             trainset = TrainSet(states, descriptor_transform)
             for step in sim.storage.steps:
                 trainset.append_ops_mcstep(step)
@@ -99,14 +98,23 @@ class TrainingHook(PathSimulatorHook):
             # TODO: this might not always be what we want!
             # TODO: we put the loaded model in all RCmodelSelectors...?
             # TODO: save the model possibly a second time, but with every RCModelSelector?!
+            selector_states = []
             for move_group in sim.move_scheme.movers.values():
                 for mover in move_group:
                     if isinstance(mover.selector, RCModelSelector):
                         mover.selector.model = model
+                        selector_states.append(mover.selector.states)
             logger.info('Restored saved model into TrainingHook and RCModelSelector')
+
         if self.trainset is None:
+            if len(selector_states) == 1:
+                states = selector_states[0]
+            else:
+                raise ValueError('Could not reconstruct states for trainingset'
+                                 + '. Please pass a training set with states.')
+
             self.trainset = self._create_trainset_from_sim_storage(
-                                        sim, model.descriptor_transform
+                                        sim, states, model.descriptor_transform
                                                                    )
             logger.info('Recreated TrainSet from storage.steps')
 
