@@ -57,12 +57,6 @@ class HIPRanalysis:
         """
         Perform HIPR analysis and set self.hipr_losses to the result.
 
-        Note that this is not the 'true' HIPR as described in the literature.
-        Here we permutate the descriptors randomly instead of drawing random
-        values, this conserves the distribution of values over the
-        corresponding descriptor dimension and is therefore more sensible if
-        using non-whitened input.
-
         Parameters:
         -----------
         n_redraw - int or None, number of times we redraw random descriptors
@@ -112,6 +106,12 @@ class HIPRanalysis:
     def do_hipr_plus(self, n_redraw=None):
         """
         Perform HIPR analysis plus and set self.hipr_losses_plus to the result.
+
+        Note that this is not the 'true' HIPR as described in the literature.
+        Here we permutate the descriptors randomly instead of drawing random
+        values, this conserves the distribution of values over the
+        corresponding descriptor dimension and is therefore hopefully more
+        sensible if using non-whitened input.
 
         Parameters:
         -----------

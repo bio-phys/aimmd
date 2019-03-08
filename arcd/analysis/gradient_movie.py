@@ -246,6 +246,7 @@ class GradientMovieMaker:
 
     def color_by_gradient(self, traj, outfile, atom_indices=None,
                           anchor_mols=None, overwrite=True,
+                          normalize_per_frame=True,
                           single_frames=False):
         """
         Write magnitude of gradients into Bfactors at each frame in outfile.
@@ -257,10 +258,26 @@ class GradientMovieMaker:
         anchor_mols - list of mdtraj molecules to center the movie on,
                       will be guessed from atom_indices if None
         overwrite - bool, wheter to overwrite existing files with given name
+        normalize_per_frame - bool, wheter to additionally write out a
+                              trajectory with gradients normalized per frame
         single_frames - bool, wheter to output a series of single frame pbds
                         suffixed by frame number
 
         """
+        def strip_pdb_suffix(outfile):
+            if outfile.endswith('.pdb'):
+                    outfile = outfile[:-4]
+            return outfile
+
+        def write_single_frames(tra, Bfactors, outfile, overwrite):
+            for i, f in enumerate(tra):
+                outfile = strip_pdb_suffix(outfile)
+                outname = (outfile
+                           + '_{:03d}'.format(i)
+                           + '.pdb')
+                f.save_pdb(outname, force_overwrite=overwrite,
+                           bfactors=Bfactors[i])
+
         if (anchor_mols is None) and (atom_indices is not None):
             anchor_mols = self.anchor_mols_from_atom_indices(atom_indices)
         if isinstance(traj, paths.BaseSnapshot):
@@ -269,6 +286,8 @@ class GradientMovieMaker:
             traj = traj.to_mdtraj()
 
         Bfactors = []
+        if normalize_per_frame:
+            Bfactors_normalized = []
         descriptors = self.descriptor_transform.cv_callable(
                                     traj, **self.descriptor_transform.kwargs
                                                             )
@@ -278,22 +297,33 @@ class GradientMovieMaker:
                                                                atom_indices)
             dq_dx = np.sum(dq_ddescript[f] * ddescript_dx, axis=-1)
             Bfactors.append(np.sqrt(np.sum(dq_dx**2, axis=-1)))
+            if normalize_per_frame:
+                norm = np.sqrt(np.sum(dq_dx**2, axis=-1, keepdims=True))
+                with np.errstate(invalid='ignore'):
+                    dq_dx_unit = np.true_divide(dq_dx, norm)
+                dq_dx_unit[np.isnan(dq_dx_unit)] = 0
+                Bfactors_normalized.append(np.sqrt(np.sum(dq_dx**2, axis=-1)))
+
         Bfactors = np.array(Bfactors)
         traj_out = traj.image_molecules(anchor_molecules=anchor_mols)
+        if normalize_per_frame:
+            Bfactors_normalized = np.array(Bfactors_normalized)
         # NOTE: visualizing the created movie can be done by writing the
         # Bfactor values for every frame into the user field in VMD
         # the user field is dynamically read every frame and allows for
         # different colors in different frames,
         # see the VMD script @ examples/resources/pdbbfactor.tcl
         if single_frames:
-            for i, f in enumerate(traj_out):
-                if outfile.endswith('.pdb'):
-                    outfile = outfile[:-4]
-                outname = (outfile
-                           + '_{:03d}'.format(i)
-                           + '.pdb')
-                f.save_pdb(outname, force_overwrite=overwrite,
-                           bfactors=Bfactors[i])
+            write_single_frames(traj_out, Bfactors, outfile, overwrite)
+            if normalize_per_frame:
+                outfile = strip_pdb_suffix(outfile)
+                outfile = outfile + '_frame_normalized'
+                write_single_frames(traj_out, Bfactors_normalized,
+                                    outfile, overwrite)
         else:
             traj_out.save_pdb(outfile, force_overwrite=overwrite,
                               bfactors=Bfactors)
+            outfile = strip_pdb_suffix(outfile)
+            outfile = outfile + '_frame_normalized.pdb'
+            traj_out.save_pdb(outfile, force_overwrite=overwrite,
+                              bfactors=Bfactors_normalized)
