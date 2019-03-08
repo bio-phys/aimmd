@@ -65,5 +65,5 @@ else:
 
 __title__ = "arcd"
 __author__ = "Hendrik Jung"
-__license__ = "GPLv3"
+__license__ = "GNU GENERAL PUBLIC LICENSE v3"
 __copyright__ = "2019 {:s}".format(__author__)

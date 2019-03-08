@@ -94,7 +94,7 @@ with open(os.path.join(HERE, 'README.md'), encoding='utf-8') as f:
     LONG_DESCRIPTION = f.read()
 
 # Get version and other stuff from __about__.py
-about_dct = {}
+about_dct = {'__file__': __file__}
 with open(os.path.join(HERE, "arcd/__about__.py"), 'r') as fp:
     exec(fp.read(), about_dct)
 

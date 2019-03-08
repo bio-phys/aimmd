@@ -6,15 +6,11 @@ arcd - Automatic Reaction Coordinate Discovery: Machine learning the reaction co
 
 ## Code Example
 
-Show what the library does as concisely as possible, developers should be able to figure out **how** your project solves their problem by looking at the code example. Make sure the API you are showing off is obvious, and that your code is short and concise.
-
-```
-your code goes here
-```
+Please see the Ipython notebooks in the example folder for an introduction.
 
 ## Motivation
 
-A short description of the motivation behind the creation and maintenance of the project. This should explain **why** the project exists.
+This project exists because finding reaction coordinates of molecular systems is a great way of understanding how they work.
 
 ## Installation
 Dependencies:
@@ -27,7 +23,7 @@ I recommend using conda or virtualenv to not break your system python installati
 1. Add the conda channels 'conda-forge' and 'omnia' with
 ```
 conda config --prepend channels omnia
-conda config --append channels conda-forge
+conda config --prepend channels conda-forge
 ```
 This will add these two channels with a higher priority than the standard channel or move them to the top of the channel list if they are already in there.
 
@@ -41,9 +37,9 @@ Use the conda package from defaults for easy install
 ```
 conda install -n arcd tensorflow keras -c defaults
 ```
-or if you happen to own a compatible GPU
+or if you happen to own a compatible GPU (choose a CUDA version compatible to your system driver)
 ```
-conda install -n arcd tensorflow-gpu keras -c defaults
+conda install -n arcd tensorflow-gpu keras cudatoolkit=8.0 -c defaults
 ```
 To be able to save keras models you will need to install h5py [highly recommended anyway ;)]
 ```
