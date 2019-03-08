@@ -246,7 +246,7 @@ class GradientMovieMaker:
 
     def color_by_gradient(self, traj, outfile, atom_indices=None,
                           anchor_mols=None, overwrite=True,
-                          normalize_per_frame=True,
+                          normalize_per_frame=False,
                           single_frames=False):
         """
         Write magnitude of gradients into Bfactors at each frame in outfile.
