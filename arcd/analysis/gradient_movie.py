@@ -323,7 +323,8 @@ class GradientMovieMaker:
         else:
             traj_out.save_pdb(outfile, force_overwrite=overwrite,
                               bfactors=Bfactors)
-            outfile = strip_pdb_suffix(outfile)
-            outfile = outfile + '_frame_normalized.pdb'
-            traj_out.save_pdb(outfile, force_overwrite=overwrite,
-                              bfactors=Bfactors_normalized)
+            if normalize_per_frame:
+                outfile = strip_pdb_suffix(outfile)
+                outfile = outfile + '_frame_normalized.pdb'
+                traj_out.save_pdb(outfile, force_overwrite=overwrite,
+                                  bfactors=Bfactors_normalized)
