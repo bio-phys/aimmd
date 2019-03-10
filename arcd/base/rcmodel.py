@@ -14,7 +14,6 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
-# TODO: more logging :)
 import logging
 import os
 import pickle
@@ -36,21 +35,26 @@ class RCModel(ABC):
     which will be applied to descriptors before prediction by the model.
     This could e.g. be a OPS-CV to transform OPS trajectories to numpy arrays,
     such that you can call a model on trajectories directly.
-    """
-    # need to have it here, such that we can get it without instantiating
-    save_model_extension = '.pckl'
+    For OPS CollectivVariables we have special support for saving and loading
+    if used in conjunction with OPS storages.
 
-    def __init__(self, descriptor_transform=None):
-        """
-        I am an `abc.ABC` and can not be initialized.
-
+    Attributes:
+    -----------
         descriptor_transform - any function transforming (Cartesian) snapshot
                                coordinates to the descriptor representation in
                                which the model learns, e.g. an
                                :class:`openpathsampling.CollectiveVariable`,
                                see `.coordinates` for examples of functions
                                that can be turned to a MDtrajFunctionCV
-        """
+        save_model_extension - str, the file extension to use when saving
+
+    """
+
+    # need to have it here, such that we can get it without instantiating
+    save_model_extension = '.pckl'
+
+    def __init__(self, descriptor_transform=None):
+        """I am an `abc.ABC` and can not be initialized."""
         self.descriptor_transform = descriptor_transform
         self.expected_p = []
         self.expected_q = []
@@ -58,7 +62,7 @@ class RCModel(ABC):
     @property
     @abstractmethod
     def n_out(self):
-        # returns the number of model outputs
+        """Return the number of model outputs, i.e. states."""
         # need to know if we use binomial or multinomial
         pass
 
@@ -76,16 +80,19 @@ class RCModel(ABC):
     # and then call super().save(fname) to save the model
     @classmethod
     def set_state(cls, state):
+        """Return an object of the same class with given internal state."""
         obj = cls()
         cls.__dict__.update(state)
         return obj
 
     @classmethod
     def fix_state(self, state):
+        """Corrects a given loaded state to an operational state."""
         return state
 
     @classmethod
     def load_state(cls, fname, ops_storage=None):
+        """Return internal state from given file, possibly (re)set OPS CVs."""
         with open(fname, 'rb') as pfile:
             state = pickle.load(pfile)
         transform = state['descriptor_transform']
@@ -94,16 +101,20 @@ class RCModel(ABC):
                 # we just assume it is the name of the OPS CV
                 state['descriptor_transform'] = ops_storage.cvs.find(transform)
             else:
-                raise ValueError('Could not load descriptor_transform from ops_storage.')
+                raise ValueError('Could not load descriptor_transform from '
+                                 + 'ops_storage.')
         sub_class = state['__class__']
         del state['__class__']
         # to make this a generally applicable function,
         # we return state and the correct subclass to call
-        # such that we can call sub_class.fix_state(state) to get the final state dict
-        # and then sub_class.set_state(state) should return the correctly initialized obj
+        # such that we can do state=sub_class.fix_state(state)
+        # to first get the final operational state dict
+        # and then call sub_class.set_state(state)
+        # which returns the correctly initialized obj
         return state, sub_class
 
     def save(self, fname, overwrite=False):
+        """Save internal state to file."""
         state = self.__dict__.copy()
         state['__class__'] = self.__class__
         if isinstance(state['descriptor_transform'], CollectiveVariable):
@@ -121,7 +132,7 @@ class RCModel(ABC):
 
     @abstractmethod
     def train_hook(self, trainset):
-        # this will be called by the OPS training hook after every step
+        """Will be called by arcd.TraininHook after every MCStep."""
         pass
 
     @abstractmethod
@@ -133,14 +144,18 @@ class RCModel(ABC):
 
     @abstractmethod
     def test_loss(self, trainset):
-        # should return the test loss per shot
+        """Return test loss per shot in trainset."""
         pass
 
     def train_expected_efficiency_factor(self, trainset, window):
         """
-        Calculates (1 - {n_TP}_true / {n_TP}_expected)**2
-        {n_TP}_true is summed over the last window entries of the trainset transitions
-        {n_TP}_expected is calculated from self.expected_p assuming 2 independent shots
+        Calculate (1 - {n_TP}_true / {n_TP}_expected)**2
+
+        {n_TP}_true - summed over the last 'window' entries of the given
+                      trainsets transitions
+        {n_TP}_expected - calculated from self.expected_p assuming
+                          2 independent shots per point
+
         """
         # make sure there are enough points, otherwise take less
         # TODO: or should we return 1. in that case?
@@ -155,12 +170,12 @@ class RCModel(ABC):
                                   for j in range(i + 1, self.n_out)
                                   ])
         factor = (1 - n_tp_true / n_tp_ex)**2
-        logger.info('Calculcated expected efficiency factor {:.3e} over {:d} points.'.format(factor, n_points))
+        logger.info('Calculcated expected efficiency factor '
+                    + '{:.3e} over {:d} points.'.format(factor, n_points))
         return factor
 
-    # this will be called by selector after selecting a SP
-    # TODO: do we need this? where else to put the storing of current prediction for SP?
     def register_sp(self, shoot_snap):
+        """Will be called by arcd.RCModelSelector after selecting a SP."""
         self.expected_q.append(self.q(shoot_snap)[0])
         self.expected_p.append(self(shoot_snap)[0])
 
@@ -177,6 +192,7 @@ class RCModel(ABC):
     def log_prob(self, descriptors, use_transform=True):
         """
         Return the unnormalized log probabilities for given descriptors.
+
         For n_out=1 only the log probability to reach state B is returned.
         """
         # if self.descriptor_transform is defined we use it before prediction
@@ -187,7 +203,8 @@ class RCModel(ABC):
 
     def q(self, descriptors, use_transform=True):
         """
-        Returns the reaction coordinate value(s) for given descriptors.
+        Return the reaction coordinate value(s) for given descriptors.
+
         For n_out=1 the RC towards state B is returned,
         otherwise the RC towards the state is returned for each state.
         """
@@ -205,6 +222,8 @@ class RCModel(ABC):
 
     def __call__(self, descriptors, use_transform=True):
         """
+        Return the commitment probability/probabilities.
+
         Returns p_B if n_out=1,
         otherwise the committment probabilities towards the states.
         """
@@ -222,8 +241,9 @@ class RCModel(ABC):
 
     def z_sel(self, descriptors, use_transform=True):
         """
-        Returns the value of the selection coordinate,
-        which is zero at the most optimal point conceivable.
+        Return the value of the selection coordinate z_sel.
+
+        It is zero at the most optimal point conceivable.
         For n_out=1 this is simply the unnormalized log probability.
         """
         if self.n_out == 1:
@@ -232,6 +252,8 @@ class RCModel(ABC):
 
     def _z_sel_multinom(self, descriptors, use_transform):
         """
+        Multinomial selection coordinate.
+
         This expression is zero if (and only if) x is at the point of
         maximaly conceivable p(TP|x), i.e. all p_i are equal.
         z_{sel}(x) always lies in [0, 25], where z_{sel}(x)=25 implies
