@@ -28,12 +28,28 @@ logger = logging.getLogger(__name__)
 
 class TrainingHook(PathSimulatorHook):
     """
-    TODO
-    Parameters:
+    OPS PathSimulatorHook to train arcd.RCModels on shooting data.
+
+    Note that the training itself is left to the model, this simply calls
+    the models train_hook() function after every MCStep and keeps the
+    trainingset up to date.
+
+    Attributes:
     -----------
         model - :class:`arcd.base.RCModel` that predicts RC values
         trainset - :class:`arcd.base.TrainSet` to store the shooting results
+        save_model_interval - save the current model every save_model_interval
+                              MCStep with a suffix indicating the step,
+                              Note: can be inifnity to never save
+        save_model_extension - str, the file extension to use when saving the
+                               model, same as arcd.RCModel.save_model_extension
+        save_model_suffix - str, suffix to append to OPS storage name when
+                            constructing the model savename
+        save_model_after_simulation - bool, wheter to save the (final) model
+                                      after the last MCStep
+
     """
+
     implemented_for = ['before_simulation',
                        'after_step',
                        'after_simulation'
@@ -44,6 +60,7 @@ class TrainingHook(PathSimulatorHook):
     save_model_after_simulation = True
 
     def __init__(self, model, trainset, save_model_interval=500):
+        """Initialize an arcd.TrainingHook."""
         self.model = model
         self.trainset = trainset
         self.save_model_interval = save_model_interval
@@ -67,7 +84,8 @@ class TrainingHook(PathSimulatorHook):
                 # this gives us the correct subclass and a half-fixed state
                 # i.e. we set descriptor_transform to the OPS CV
                 state, cls = RCModel.load_state(mod_fname, sim.storage)
-                # this corrects the rest of the state, e.g. load the ANN with weights
+                # this corrects the rest of the state,
+                # e.g. loads the associated ANN with weights
                 state = cls.fix_state(state)
                 # this finally instantiates the correct RCModel class
                 return cls.set_state(state)
@@ -79,7 +97,8 @@ class TrainingHook(PathSimulatorHook):
             logger.error('Simulation has no attached storage, '
                          + 'can not find a model file.')
 
-    def _create_trainset_from_sim_storage(self, sim, states, descriptor_transform):
+    def _create_trainset_from_sim_storage(self, sim, states,
+                                          descriptor_transform):
         if sim.storage is not None:
             trainset = TrainSet(states, descriptor_transform)
             for step in sim.storage.steps:
@@ -89,6 +108,7 @@ class TrainingHook(PathSimulatorHook):
             logger.error('Can not recreate TrainSet without storage')
 
     def before_simulation(self, sim):
+        """Will be called by OPS Pathsimulator once before the simulation."""
         # if we have no model we will try to reload it
         if self.model is None:
             model = self._get_model_from_sim_storage(sim)
@@ -97,15 +117,15 @@ class TrainingHook(PathSimulatorHook):
                                    + ' model from file.')
             self.model = model
             # TODO: this might not always be what we want!
-            # TODO: we put the loaded model in all RCmodelSelectors...?
-            # TODO: save the model possibly a second time, but with every RCModelSelector?!
+            # we put the loaded model in all RCmodelSelectors...?
+            # save the model possibly a second time, but with every Selector?!
             selector_states = []
             for move_group in sim.move_scheme.movers.values():
                 for mover in move_group:
                     if isinstance(mover.selector, RCModelSelector):
                         mover.selector.model = model
                         selector_states.append(mover.selector.states)
-            logger.info('Restored saved model into TrainingHook and RCModelSelector')
+            logger.info('Restored saved model into TrainingHook and Selector')
         # if we have no trainset try to repopulate it
         if self.trainset is None:
             if len(selector_states) == 1:
@@ -127,6 +147,7 @@ class TrainingHook(PathSimulatorHook):
 
     def after_step(self, sim, step_number, step_info, state, results,
                    hook_state):
+        """Will be called by OPS PathSimulator after every MCStep."""
         # results is the MCStep
         self.trainset.append_ops_mcstep(results)
         self.model.train_hook(self.trainset)
@@ -141,6 +162,7 @@ class TrainingHook(PathSimulatorHook):
                 logger.info('Saved intermediate RCModel as ' + fname)
 
     def after_simulation(self, sim):
+        """Will be called by OPS PathSimulator once after the simulation."""
         if sim.storage is not None:
             spath = sim.storage.abspath
             # save without step-suffix to reload at simulation start

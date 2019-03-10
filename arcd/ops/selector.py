@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 
 class RCModelSelector(ShootingPointSelector):
     """
-    Selects 'ideal' shooting points learned by the corresponding model,
-    the points are ideal in the sense that p(TP|x) is maximal there.
+    Select 'ideal' shooting points learned by the corresponding model.
+
+    The points are 'ideal' in the sense that p(TP|x) is maximal there.
     Can be used together with `CommittorModelTrainer`.
 
     Parameters
@@ -35,30 +36,37 @@ class RCModelSelector(ShootingPointSelector):
     distribution - string specifying the SP selection distribution,
                    either 'gaussian' or 'lorentzian'
                    'gaussian': p_{sel}(x) ~ exp(-alpha * z_{sel}(x)**2)
-                   'lorentzian': p_{sel}(x) ~ gamma**2 / (gamma**2 + z_{sel}(x)**2)
+                   'lorentzian': p_{sel}(x) ~ gamma**2
+                                              / (gamma**2 + z_{sel}(x)**2)
     scale - float, 'softness' parameter of the selection distribution,
             higher values result in a boader spread of SPs around the TSE,
             1/alpha for 'gaussian' and gamma for 'lorentzian'
 
     Notes
     -----
-    We use the z_sel function of the model wrapper as input to the selection distribution.
+    We use the z_sel function of the RCModel as input for the SP selection.
+
     """
-    def __init__(self, model, states=None, distribution='lorentzian', scale=1.):
+
+    def __init__(self, model, states=None,
+                 distribution='lorentzian', scale=1.):
+        """Initialize a RCModelSelector."""
         super(RCModelSelector, self).__init__()
         self.model = model
         if states is None:
-            logger.warn('Consider passing the states to speed up accepting/rejecting.')
+            logger.warn('Consider passing the states to speed up'
+                        + ' accepting/rejecting.')
         self.states = states
         self.distribution = distribution
         self.scale = scale
 
     @classmethod
     def from_dict(cls, dct):
-        # TODO: FIXME: atm we set model = None,
+        """Will be called by OPS when loading self from storage."""
+        # atm we set model = None,
         # since we can not arbitrary models in OPS storages
-        # TODO: maybe we can hack something together that stores/loads models
-        # in separate files besides the storage, this has to be model specific
+        # but if used with an arcd.TrainingHook it will (re)set the model
+        # to the one saved besides the OPS storage
         obj = cls(None,
                   dct['states'],
                   distribution=dct['distribution'],
@@ -70,6 +78,7 @@ class RCModelSelector(ShootingPointSelector):
         return obj
 
     def to_dict(self):
+        """Will be called by OPS when saving self to storage."""
         dct = {}
         dct['distribution'] = self._distribution
         dct['scale'] = self.scale
@@ -78,6 +87,7 @@ class RCModelSelector(ShootingPointSelector):
 
     @property
     def distribution(self):
+        """Return the name of the shooting point selection distribution."""
         return self._distribution
 
     @distribution.setter
@@ -99,10 +109,7 @@ class RCModelSelector(ShootingPointSelector):
         return np.exp(-z**2/self.scale)
 
     def f(self, snapshot, trajectory):
-        '''
-        Returns the unnormalized proposal probability of a snapshot
-        '''
-        # TODO: do we need to check if snapshot is in trajectory?
+        """Return the unnormalized proposal probability of a snapshot."""
         z_sel = self.model.z_sel(snapshot)
         if not np.all(np.isfinite(z_sel)):
             logger.warn('The model predicts NaNs or infinities. '
@@ -117,10 +124,11 @@ class RCModelSelector(ShootingPointSelector):
         return ret
 
     def probability(self, snapshot, trajectory):
+        """Return proposal probability of the snapshot for this trajectory."""
         # only evaluate costly symmetry functions if needed,
         # if trajectory is no TP it has weight 0 and p_pick = 0 for all points
-        self_transitions = [1 < sum([s(p)
-                                     for p in [trajectory[0], trajectory[-1]]])
+        self_transitions = [1 < sum(s(p)
+                                    for p in [trajectory[0], trajectory[-1]])
                             for s in self.states]
         if any(self_transitions):
             return 0.
@@ -131,6 +139,9 @@ class RCModelSelector(ShootingPointSelector):
         return self.f(snapshot, trajectory) / sum_bias
 
     def sum_bias(self, trajectory):
+        """
+        Return the partition function of proposal probabilities for trajectory.
+        """
         # casting to python float solves the problem that
         # metropolis_acceptance is not saved !
         return float(np.sum(self._biases(trajectory)))
@@ -144,9 +155,7 @@ class RCModelSelector(ShootingPointSelector):
         return self._f_sel(z_sels)
 
     def pick(self, trajectory):
-        '''
-        Returns the index of the chosen snapshot within `trajectory`
-        '''
+        """Return the index of the chosen snapshot within trajectory."""
         biases = self._biases(trajectory)
         sum_bias = np.sum(biases)
         if sum_bias == 0.:
