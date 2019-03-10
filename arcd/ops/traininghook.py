@@ -17,6 +17,7 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 import os
 import logging
 from openpathsampling.pathsimulators.hooks import PathSimulatorHook
+from openpathsampling.collectivevariable import CollectiveVariable
 from .selector import RCModelSelector
 from ..base.rcmodel import RCModel
 from ..base.trainset import TrainSet
@@ -42,7 +43,7 @@ class TrainingHook(PathSimulatorHook):
     save_model_suffix = '_RCmodel'
     save_model_after_simulation = True
 
-    def __init__(self, model, trainset, save_model_interval=100):
+    def __init__(self, model, trainset, save_model_interval=500):
         self.model = model
         self.trainset = trainset
         self.save_model_interval = save_model_interval
@@ -105,7 +106,7 @@ class TrainingHook(PathSimulatorHook):
                         mover.selector.model = model
                         selector_states.append(mover.selector.states)
             logger.info('Restored saved model into TrainingHook and RCModelSelector')
-
+        # if we have no trainset try to repopulate it
         if self.trainset is None:
             if len(selector_states) == 1:
                 states = selector_states[0]
@@ -117,6 +118,12 @@ class TrainingHook(PathSimulatorHook):
                                         sim, states, model.descriptor_transform
                                                                    )
             logger.info('Recreated TrainSet from storage.steps')
+        # save the descriptor_transform
+        # this should essentially be a no-op if it is already in storage
+        # but circumvents unhappy users that forgot to save the transform
+        if isinstance(self.model.descriptor_transform, CollectiveVariable):
+            if sim.storage is not None:
+                sim.storage.save(self.model.descriptor_transform)
 
     def after_step(self, sim, step_number, step_info, state, results,
                    hook_state):
