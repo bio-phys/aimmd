@@ -22,19 +22,8 @@ class HIPRanalysis:
     """
     Relative input importance analysis ('HIPR').
 
-    Literature 'An approach for determining relative input parameter
-                importance and significance in artificial neural networks'
-                by Stanley J. Kemp, Patricia Zaradic and Frank Hanse
-                https://doi.org/10.1016/j.ecolmodel.2007.01.009
-
-    """
-
-    def __init__(self, model, trainset, call_kwargs={}, n_redraw=5):
-        """
-        Relative input importance analysis ('HIPR') as described in literature.
-
-        Parameters:
-        -----------
+    Parameters:
+    -----------
         model - the arcd.RCModel to perform relative input importance analysis
         trainset - arcd.TrainSet with unperturbed descriptors and shot_results
         call_kwargs - dict of additional key word arguments to
@@ -44,7 +33,16 @@ class HIPRanalysis:
                    in trainset, i.e. if redraw=2 we will average the loss over
                    2*len(trainset) points per model input descriptor
 
-        """
+
+    Literature 'An approach for determining relative input parameter
+                importance and significance in artificial neural networks'
+                by Stanley J. Kemp, Patricia Zaradic and Frank Hanse
+                https://doi.org/10.1016/j.ecolmodel.2007.01.009
+
+    """
+
+    def __init__(self, model, trainset, call_kwargs={}, n_redraw=5):
+        """Initialize HIPRanalysis."""
         self.trainset = trainset  # the 'true' trainset
         self.model = model  # any RCModel with a test_loss function
         # fine grained call control, e.g. to select the loss for MultiDomain

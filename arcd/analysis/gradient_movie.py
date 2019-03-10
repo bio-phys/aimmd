@@ -24,13 +24,11 @@ logger = logging.getLogger(__name__)
 
 
 class GradientMovieMaker:
-    """Create pdb-movie sequences with RC gradient info in Bfactors."""
+    """
+    Create pdb-movie sequences with RC gradient info in Bfactors.
 
-    def __init__(self, model, descriptor_transform, topology,
-                 towards_state=None, n_frames=100, amplitude=0.025):
-        """
-        Create pdb-movie sequences with RC gradient info in Bfactors.
-
+    Parameters:
+    -----------
         model - :class:`arcd.RCModel`
         descriptor_transform - :class:`openpathsampling.MDTrajFunctionCV`
         topology - :class:`mdtraj.Topology`
@@ -38,7 +36,12 @@ class GradientMovieMaker:
                         only relevant for multi state RCModels
         n_frames - int, number of frames for gradient swinging motion movies
         amplitude - float, maximal amplitude for gradient swinging movies
-        """
+
+    """
+
+    def __init__(self, model, descriptor_transform, topology,
+                 towards_state=None, n_frames=100, amplitude=0.025):
+        """Initialize GradientMovieMaker."""
         if model.n_out > 1:
             if towards_state is None:
                 towards_state = 0
