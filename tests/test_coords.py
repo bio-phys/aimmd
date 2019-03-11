@@ -20,7 +20,7 @@ from arcd.coords._symmetry import integrate_cos_binom
 import arcd.coords.symmetry as sym
 
 
-class Test_symmetry(object):
+class Test_symmetry:
     def test_cv(self):
         # setup topology
         top = md.Topology()
@@ -103,8 +103,9 @@ class Test_symmetry(object):
 
     def g_5(self, r1, r2, ang, eta, r_s, zeta, lamb, rho_solv=1, n_per_solv=1.):
         val = (1. + lamb*np.cos(ang))**zeta * np.exp(-eta*((r1 - r_s)**2
-                                                      + (r2 - r_s)**2))
-        pow_zeta = 2.**(1. - zeta) # prefactor for angular part
+                                                     + (r2 - r_s)**2)
+                                                     )
+        pow_zeta = 2.**(1. - zeta)  # prefactor for angular part
         if r_s == 0.:
             # it is some sort of sphere around the origin
             # angular part not yet integrated, 2/3 instead of 4/3
@@ -114,7 +115,7 @@ class Test_symmetry(object):
             number_correction = ((rho_solv * n_per_solv
                                   * 4. * np.sqrt(2) * r_s**2)
                                  / np.sqrt(eta))
-        number_correction *= integrate_cos_binom(zeta)# * pow_zeta
+        number_correction *= integrate_cos_binom(zeta)  # * pow_zeta
         # actualy we have n * (n - 1)/2 pairs/angles
         # but this approximation is guaranteed to be non-negative
         number_correction *= number_correction/2.

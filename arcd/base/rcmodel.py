@@ -47,11 +47,15 @@ class RCModel(ABC):
                                see `.coordinates` for examples of functions
                                that can be turned to a MDtrajFunctionCV
         save_model_extension - str, the file extension to use when saving
+        z_sel_scale - float, scale z_sel to [0., z_sel_scale] for multinomial
+                      training and predictions
 
     """
 
     # need to have it here, such that we can get it without instantiating
     save_model_extension = '.pckl'
+    # scale z_sel to [0., z_sel_scale] for multinomial predictions
+    z_sel_scale = 25
 
     def __init__(self, descriptor_transform=None):
         """I am an `abc.ABC` and can not be initialized."""
@@ -264,9 +268,7 @@ class RCModel(ABC):
         # the prob to be on any TP is 1 - the prob to be on no TP
         # to be on no TP means beeing on a "self transition" (A->A, etc.)
         reactive_prob = 1 - np.sum(p * p, axis=1)
-        # TODO: this should not be hardcoded....
-        # scale z_sel to [0, 25]
         return (
-                (25 / (1 - 1 / self.n_out))
+                (self.z_sel_scale / (1 - 1 / self.n_out))
                 * (1 - 1 / self.n_out - reactive_prob)
                 )
