@@ -241,7 +241,7 @@ class RCModel(ABC):
 
     def _p_multinom(self, descriptors, use_transform):
         exp_log_p = np.exp(self.log_prob(descriptors, use_transform))
-        return exp_log_p / np.sum(exp_log_p, axis=1)
+        return exp_log_p / np.sum(exp_log_p, axis=1, keepdims=True)
 
     def z_sel(self, descriptors, use_transform=True):
         """
