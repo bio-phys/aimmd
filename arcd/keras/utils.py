@@ -139,9 +139,13 @@ def create_snn(ndim, hidden_parms, optimizer, n_states, multi_state=True):
     # LAYERS
     # preprocess options dictionaries
     for d in hidden_parms:
-        fact = d['units_factor']  # number of hidden units = units_fact * ndim
-        del d['units_factor']
-        d['units'] = int(fact*ndim)
+        try:
+            fact = d['units_factor']  # number of hidden units = units_fact * ndim
+            del d['units_factor']
+            d['units'] = int(fact*ndim)
+        except KeyError:
+            # test access so we get the KeyError
+            t = d['units']
     # hidden layers
     drop, parms = drop_from_parms(hidden_parms[0])
     parms = fix_snn_parms(parms)
@@ -284,9 +288,13 @@ def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True):
     # HIDDEN LAYERS
     # preprocess options dictionaries
     for d in hidden_parms:
-        fact = d['units_factor']  # number of hidden units = units_fact * ndim
-        del d['units_factor']
-        d['units'] = int(fact*ndim)
+        try:
+            fact = d['units_factor']  # number of hidden units = units_fact * ndim
+            del d['units_factor']
+            d['units'] = int(fact*ndim)
+        except KeyError:
+            # test if it is there
+            t = d['units']
     # hidden layers
     drop, res, batch, parms = drop_residual_batch_from_parms(hidden_parms[0])
     if res:
