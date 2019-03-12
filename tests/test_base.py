@@ -18,17 +18,24 @@ import numpy as np
 
 
 class Test_RCModel:
-    def test_call_binomial(self, oneout_rcmodel):
+    def test_binomial(self, oneout_rcmodel):
         model = oneout_rcmodel
         n_points = 40
         n_dim = 5
         descriptors = np.random.normal(size=(n_points, n_dim))
-        # the model returns np.sum(input, axis=1) as log_prob
-        # the 'transform' is to use -input, such that for binomial,
-        # where q_B = -q_A, the probabilities should be interchanged
         p_B_trans = model(descriptors)
         p_B_notrans = model(descriptors, use_transform=False)
+        q_trans = model.q(descriptors)
+        q_notrans = model.q(descriptors, use_transform=False)
+        # the model returns np.sum(input, axis=1) as log_prob
+        # the 'transform' is to use -input, such that for binomial
+        # where q_B = -q_A by construction,
+        # the probabilities should be interchanged
+        assert np.allclose(q_trans, -q_notrans)
         assert np.allclose(p_B_trans, 1 - p_B_notrans)
+        # make sure z_sel is q_B
+        assert np.allclose(q_trans, model.z_sel(descriptors))
+        # basic shape checks
         assert p_B_trans.shape[0] == n_points
         assert p_B_trans.shape[1] == 1
 
