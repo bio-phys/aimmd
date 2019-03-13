@@ -15,6 +15,7 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
+import os
 from abc import abstractmethod
 from keras import backend as K
 from ..base.rcmodel import RCModel
@@ -50,6 +51,11 @@ class KerasRCModel(RCModel):
 
     @classmethod
     def fix_state(cls, state):
+        if not os.path.exists(state['nnet']):
+            # try fixing changed absolute paths by taking
+            # ops_storage_dir + base filname
+            fname = os.path.basename(state['nnet'])
+            state['nnet'] = os.path.join(state['_ops_storage_dirname'], fname)
         nnet = load_keras_model(state['nnet'])
         state['nnet'] = nnet
         return state
@@ -58,8 +64,9 @@ class KerasRCModel(RCModel):
         self.nnet.save(fname + self.save_nnet_suffix, overwrite=overwrite)
         # keep a ref to the network
         nnet = self.nnet
-        # but replace with the path to file in self.__dict__
-        self.nnet = fname + self.save_nnet_suffix
+        # but replace with the name of the file in self.__dict__
+        # make sure we take just the basename
+        self.nnet = os.path.basename(fname + self.save_nnet_suffix)
         # let super save the state dict
         super().save(fname, overwrite)
         # and restore the nnet such that self stays functional

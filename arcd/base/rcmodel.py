@@ -101,6 +101,10 @@ class RCModel(ABC):
             state = pickle.load(pfile)
         transform = state['descriptor_transform']
         if (ops_storage is not None):
+            # set storage_dir variable so we can load models saved besides it
+            state['_ops_storage_dirname'] = os.path.dirname(
+                                                        ops_storage.abspath
+                                                            )
             if isinstance(transform, str):
                 # we just assume it is the name of the OPS CV
                 state['descriptor_transform'] = ops_storage.cvs.find(transform)

@@ -16,6 +16,7 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import os
 import logging
+import numpy as np
 from openpathsampling.pathsimulators.hooks import PathSimulatorHook
 from openpathsampling.collectivevariable import CollectiveVariable
 from .selector import RCModelSelector
@@ -58,6 +59,10 @@ class TrainingHook(PathSimulatorHook):
     save_model_extension = RCModel.save_model_extension
     save_model_suffix = '_RCmodel'
     save_model_after_simulation = True
+    # we will save the trainset after the last step
+    # into sim.storage.tags as $save_trainset_prefix + '.after_step_{:d}'
+    save_trainset_prefix = 'arcd.TrainSet.data'
+    save_trainset_suffix = '.after_step_{:d}'
 
     def __init__(self, model, trainset, save_model_interval=500):
         """Initialize an arcd.TrainingHook."""
@@ -100,12 +105,37 @@ class TrainingHook(PathSimulatorHook):
     def _create_trainset_from_sim_storage(self, sim, states,
                                           descriptor_transform):
         if sim.storage is not None:
+            descriptors, shot_results = self._find_trainset_data(sim.storage)
+            if descriptors is not None:
+                # we found a trainset in storage
+                logger.info('Found old TrainSet data in storage.tags')
+                return TrainSet(states, descriptor_transform,
+                                descriptors, shot_results)
+
+            logger.info('Could not find old TrainSet data. '
+                        + 'Recreating from storage.steps.')
             trainset = TrainSet(states, descriptor_transform)
             for step in sim.storage.steps:
                 trainset.append_ops_mcstep(step)
             return trainset
         else:
             logger.error('Can not recreate TrainSet without storage')
+
+    def _find_trainset_data(self, storage):
+        keys = list(storage.tags.keys())
+        keys = [k for k in keys if self.save_trainset_prefix in k]
+        if len(keys) < 1:
+            # did not find anything
+            return None, None
+        strip = (len(self.save_trainset_prefix)
+                 + len(self.save_trainset_suffix)
+                 - 4  # we ignore the first characters up until the number
+                 )
+        # find the trainset data with the highest step number
+        numbers = [int(k[strip:]) for k in keys]
+        max_idx = np.argmax(numbers)
+        descriptors, shot_results = storage.tags[keys[max_idx]]
+        return descriptors, shot_results
 
     def before_simulation(self, sim):
         """Will be called by OPS Pathsimulator once before the simulation."""
@@ -129,6 +159,7 @@ class TrainingHook(PathSimulatorHook):
         # if we have no trainset try to repopulate it
         if self.trainset is None:
             if len(selector_states) == 1:
+                # only one arcd.RCModelSelector, take its states
                 states = selector_states[0]
             else:
                 raise ValueError('Could not reconstruct states for trainingset'
@@ -171,6 +202,13 @@ class TrainingHook(PathSimulatorHook):
             # such that we always start with a current model
             self.model.save(fname, overwrite=True)
             logger.info('Saved RCmodel as ' + fname)
+            # also save the descriptors and shot-results for faster
+            # TrainSet recreation
+            save_name = (self.save_trainset_prefix
+                         + self.save_trainset_suffix.format(sim.step)
+                         )
+            sim.storage.tags[save_name] = [self.trainset.descriptors,
+                                           self.trainset.shot_results]
         else:
             logger.warn('Could not save model, as there is no storage '
                         + 'associated with the simulation.')
