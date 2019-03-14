@@ -68,7 +68,7 @@ class RCModel(ABC):
     def n_out(self):
         """Return the number of model outputs, i.e. states."""
         # need to know if we use binomial or multinomial
-        pass
+        raise NotImplementedError
 
     # NOTE ON SAVING AND LOADING MODELS
     # you do not have to do anything if your generic RCModel subclass contains
@@ -141,19 +141,19 @@ class RCModel(ABC):
     @abstractmethod
     def train_hook(self, trainset):
         """Will be called by arcd.TraininHook after every MCStep."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def _log_prob(self, descriptors):
         # returns the unnormalized log probabilities for given descriptors
         # descriptors is a numpy array with shape (n_points, n_descriptors)
         # the output is expected to be an array of shape (n_points, n_out)
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def test_loss(self, trainset):
         """Return test loss per shot in trainset."""
-        pass
+        raise NotImplementedError
 
     def train_expected_efficiency_factor(self, trainset, window):
         """
@@ -264,8 +264,9 @@ class RCModel(ABC):
 
         This expression is zero if (and only if) x is at the point of
         maximaly conceivable p(TP|x), i.e. all p_i are equal.
-        z_{sel}(x) always lies in [0, 25], where z_{sel}(x)=25 implies
-        p(TP|x)=0. We can therefore select the point for which this
+        z_{sel}(x) always lies in [0, self.z_sel_scale], where
+        z_{sel}(x)=self.z_sel_scale implies p(TP|x)=0.
+        We can therefore select the point for which this
         expression is closest to zero as the optimal SP.
         """
         p = self._p_multinom(descriptors, use_transform)

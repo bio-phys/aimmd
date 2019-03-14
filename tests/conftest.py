@@ -20,24 +20,43 @@ import numpy as np
 # the tests segfault....!?
 import mdtraj
 from arcd.base.rcmodel import RCModel
+from openpathsampling.engines import Trajectory
+
+
+@pytest.fixture
+def oneout_rcmodel_notrans():
+    return OneOutRCModel(None)
+
+
+@pytest.fixture
+def oneout_rcmodel_opstrans():
+    def transform(x):
+        if isinstance(x, Trajectory):
+            return np.array([[0.]])
+        else:
+            return np.array([[-200.]])
+    return OneOutRCModel(transform)
 
 
 @pytest.fixture
 def oneout_rcmodel():
-    return OneOutRCModel()
+    return OneOutRCModel(lambda x: -x)
+
+
+@pytest.fixture
+def twoout_rcmodel_notrans():
+    return TwoOutRCModel(None)
 
 
 @pytest.fixture
 def twoout_rcmodel():
-    return TwoOutRCModel()
+    return TwoOutRCModel(lambda x: -x)
 
 
 class OneOutRCModel(RCModel):
-    def __init__(self):
+    def __init__(self, transform):
         # work on numpy arrays directly, but test the use of transform
         # using transform should exchange p_A with p_B
-        def transform(x):
-            return -x
         super().__init__(descriptor_transform=transform)
         self.n_train = 0
 
@@ -60,10 +79,7 @@ class OneOutRCModel(RCModel):
 
 
 class TwoOutRCModel(RCModel):
-    def __init__(self):
-        # work on numpy arrays directly, but test the use of transform
-        def transform(x):
-            return -x
+    def __init__(self, transform):
         super().__init__(descriptor_transform=transform)
         self.n_train = 0
 
@@ -86,4 +102,3 @@ class TwoOutRCModel(RCModel):
     def test_loss(self, trainset):
         # just to be able to instantiate
         raise NotImplementedError
-
