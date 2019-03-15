@@ -16,9 +16,23 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import numpy as np
 from openpathsampling.engines import BaseSnapshot
+import arcd
 
 
 class Test_RCModel:
+    def test_save_fix_load(self, oneout_rcmodel_notrans, tmp_path):
+        p = tmp_path / 'Test_RCModel_test_save_fix_load'
+        fname = str(p)
+        model = oneout_rcmodel_notrans
+        model.expected_p.append('test')
+        model.save(fname)
+        fname += model.save_model_extension
+        state, cls = model.__class__.load_state(fname)
+        state = cls.fix_state(state)
+        loaded_model = cls.set_state(state)
+        assert loaded_model.expected_p[0] == model.expected_p[0]
+        assert loaded_model.__dict__ == model.__dict__
+
     def test_binomial(self, oneout_rcmodel):
         model = oneout_rcmodel
         n_points = 40
@@ -72,3 +86,40 @@ class Test_RCModel:
         # TODO: these are a bit silly, can we come up with something better?
         assert np.allclose(np.array([0.5]), mod_notrans(np.array([[0.]])))
         assert np.allclose(np.array([0.5]), mod_opstrans(BaseSnapshot()))
+
+    def test_expected_efficiency_factor(self, oneout_rcmodel_notrans,
+                                        twoout_rcmodel_notrans):
+        mod_oneout = oneout_rcmodel_notrans
+        mod_twoout = twoout_rcmodel_notrans
+        # expect 1 TP from two times p(TP|SP) = 1/2
+        # expect 0 TPs from two times p(TP|SP) = 0
+        sps = [np.array([[200.]]), np.array([[0.]]),
+               np.array([[200.]]), np.array([[0.]])
+               ]
+        # contains 1 TP
+        ts1 = arcd.TrainSet(['A', 'B'], descriptor_transform=None,
+                            descriptors=np.concatenate(sps, axis=0),
+                            shot_results=np.array([[0., 2.], [1., 1.],
+                                                   [0., 2.], [2., 0.]])
+                            )
+        # contains 2 TPs
+        ts2 = arcd.TrainSet(['A', 'B'], descriptor_transform=None,
+                            descriptors=np.concatenate(sps, axis=0),
+                            shot_results=np.array([[0., 2.], [1., 1.],
+                                                   [1., 1.], [2., 0.]])
+                            )
+        for sp in sps:
+            mod_oneout.register_sp(sp)
+            mod_twoout.register_sp(sp)
+        # EE factor should be zero if n_TP_ex = n_TP_true
+        assert np.allclose(0., mod_oneout.train_expected_efficiency_factor(ts1, len(sps)+1))
+        assert np.allclose(0., mod_twoout.train_expected_efficiency_factor(ts1, len(sps)+1))
+        # window smaller than len(model.expected_p)
+        assert np.allclose(0., mod_oneout.train_expected_efficiency_factor(ts1, len(sps)-1))
+        assert np.allclose(0., mod_twoout.train_expected_efficiency_factor(ts1, len(sps)-1))
+        # EEfactor should be (1 - n_TP_true / n_TP_ex)**2 = (1 - 2/1)**2 = 1
+        assert np.allclose(1., mod_oneout.train_expected_efficiency_factor(ts2, len(sps)+1))
+        assert np.allclose(1., mod_twoout.train_expected_efficiency_factor(ts2, len(sps)+1))
+        # window smaller than len(model.expected_p)
+        assert np.allclose(1., mod_oneout.train_expected_efficiency_factor(ts2, len(sps)-1))
+        assert np.allclose(1., mod_twoout.train_expected_efficiency_factor(ts2, len(sps)-1))

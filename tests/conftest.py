@@ -20,7 +20,12 @@ import numpy as np
 # the tests segfault....!?
 import mdtraj
 from arcd.base.rcmodel import RCModel
-from openpathsampling.engines import Trajectory
+from openpathsampling.engines import Trajectory as OPSTrajectory
+
+
+@pytest.fixture
+def oneout_rcmodel():
+    return OneOutRCModel(lambda x: -x)
 
 
 @pytest.fixture
@@ -31,7 +36,7 @@ def oneout_rcmodel_notrans():
 @pytest.fixture
 def oneout_rcmodel_opstrans():
     def transform(x):
-        if isinstance(x, Trajectory):
+        if isinstance(x, OPSTrajectory):
             return np.array([[0.]])
         else:
             return np.array([[-200.]])
@@ -39,8 +44,8 @@ def oneout_rcmodel_opstrans():
 
 
 @pytest.fixture
-def oneout_rcmodel():
-    return OneOutRCModel(lambda x: -x)
+def twoout_rcmodel():
+    return TwoOutRCModel(lambda x: -x)
 
 
 @pytest.fixture
@@ -48,13 +53,8 @@ def twoout_rcmodel_notrans():
     return TwoOutRCModel(None)
 
 
-@pytest.fixture
-def twoout_rcmodel():
-    return TwoOutRCModel(lambda x: -x)
-
-
 class OneOutRCModel(RCModel):
-    def __init__(self, transform):
+    def __init__(self, transform=None):
         # work on numpy arrays directly, but test the use of transform
         # using transform should exchange p_A with p_B
         super().__init__(descriptor_transform=transform)

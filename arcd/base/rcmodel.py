@@ -86,7 +86,7 @@ class RCModel(ABC):
     def set_state(cls, state):
         """Return an object of the same class with given internal state."""
         obj = cls()
-        cls.__dict__.update(state)
+        obj.__dict__.update(state)
         return obj
 
     @classmethod
