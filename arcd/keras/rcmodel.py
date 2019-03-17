@@ -89,8 +89,7 @@ class KerasRCModel(RCModel):
         loss = self.nnet.evaluate(x=trainset.descriptors,
                                   y=trainset.shot_results,
                                   verbose=0)
-        # assume TwoWayShooting and return loss per shot
-        return loss/2.
+        return loss
 
     @abstractmethod
     def train_decision(self, trainset):
@@ -109,8 +108,8 @@ class KerasRCModel(RCModel):
             loss += (self.nnet.train_on_batch(x=descriptors, y=shot_results)
                      * len(shot_results)
                      )
-        # *2 to get loss per shot as for pytorch models, i.e. we assume TwoWayShooting
-        loss /= 2.*len(trainset)
+        # get loss per shot as for pytorch models, the lossFXs are normalized
+        loss /= len(trainset)
         return loss
 
 

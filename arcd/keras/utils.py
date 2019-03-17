@@ -44,6 +44,7 @@ def binomial_loss(y_true, y_pred):
     We expect the ann to output the reaction coordinate rc and construct p_B
     as p_B = 1/(1 + exp(-rc))
 
+    NOTE: this is normalized per shot.
     Parameters
     ----------
     We expect y_true to be an array with shape (N, 2), where N is the number
@@ -53,12 +54,15 @@ def binomial_loss(y_true, y_pred):
     rc = y_pred[:, 0]
     n_a = y_true[:, 0]
     n_b = y_true[:, 1]
-    return n_b*K.log(1. + K.exp(-rc)) + n_a*K.log(1. + K.exp(rc))
+    return ((n_b*K.log(1. + K.exp(-rc)) + n_a*K.log(1. + K.exp(rc)))
+            / (n_a + n_b))
 
 
 def multinomial_loss(y_true, y_pred):
     """
     Maximum likelihood loss function for multiple state TPS.
+
+    NOTE: this is normalized per shot.
     Parameters
     ----------
     We expect y_true to be an array with shape (N, N_states), where N is the
@@ -68,7 +72,7 @@ def multinomial_loss(y_true, y_pred):
     This is equivalent to binomial_loss if N_states = 2.
     """
     ln_Z = K.log(K.sum(K.exp(y_pred), axis=-1, keepdims=True))
-    return K.sum((ln_Z - y_pred) * y_true, axis=-1)
+    return K.sum((ln_Z - y_pred) * y_true, axis=-1) / K.sum(y_true, axis=-1)
 
 
 def create_snn(ndim, hidden_parms, optimizer, n_states, multi_state=True):
