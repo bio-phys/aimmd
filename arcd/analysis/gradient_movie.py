@@ -257,6 +257,7 @@ class GradientMovieMaker:
         traj - mdtraj trajectory or openpathsampling trajectory or snapshot
         outfile - str, filename the pdb movie will be written to
         atom_indices - 1d numpy.array of atom indices,
+                       or list of numpy.arrays (one for each frame),
                        if given will calculate gradients only for those atoms
         anchor_mols - list of mdtraj molecules to center the movie on,
                       will be guessed from atom_indices if None
@@ -287,6 +288,9 @@ class GradientMovieMaker:
             traj = paths.Trajectory([traj])
         if isinstance(traj, paths.Trajectory):
             traj = traj.to_mdtraj()
+        if isinstance(atom_indices[0], int):
+            # make it possible to pass atom_indices for each frame
+            atom_indices = [atom_indices for _ in range(len(traj))]
 
         Bfactors = []
         if normalize_per_frame:
@@ -297,7 +301,7 @@ class GradientMovieMaker:
         dq_ddescript = self.gradients_model_q(descriptors)
         for f in range(traj.n_frames):
             ddescript_dx = self.gradients_descriptor_transform(traj[f:f+1],
-                                                               atom_indices)
+                                                               atom_indices[f])
             dq_dx = np.sum(dq_ddescript[f] * ddescript_dx, axis=-1)
             Bfactors.append(np.sqrt(np.sum(dq_dx**2, axis=-1)))
             if normalize_per_frame:
