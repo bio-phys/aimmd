@@ -133,7 +133,7 @@ class RCModel(ABC):
             # make sure we have the correct extension
             fname += self.save_model_extension
         if os.path.exists(fname) and not overwrite:
-            return
+            raise IOError('File {:s} exists.'.format(fname))
         with open(fname, 'wb') as pfile:
             # NOTE: we need python >= 3.4 for protocol=4
             pickle.dump(state, pfile, protocol=4)
