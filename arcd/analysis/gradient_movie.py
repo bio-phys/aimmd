@@ -85,8 +85,9 @@ class GradientMovieMaker:
             s_num = self.towards_state
         n_point = descriptors.shape[0]
         n_dim = descriptors.shape[1]
-        # TODO/FIXME check that h is not 0
         h = self.model_sqrt_eps * descriptors
+        # make sure h > 0
+        h[h == 0.] = self.model_sqrt_eps * 0.01
         grads = np.zeros((n_point, n_dim))
         for d in range(n_dim):
             val_pl = descriptors.copy()
@@ -136,8 +137,9 @@ class GradientMovieMaker:
         if atom_indices is None:
             logger.warn("Consider giving atom_indices to improve performance.")
             atom_indices = np.arange(n_atoms)
-        # TODO/FIXME check that h is not 0
         h = self.descriptor_transform_sqrt_eps * traj.xyz[0]
+        # make sure h > 0
+        h[h == 0.] = self.descriptor_transform_sqrt_eps * 0.01
         gradients = np.zeros((n_atoms, 3, n_descript))
         for at in atom_indices:
             xyz_probe = np.zeros((6, n_atoms, 3))
