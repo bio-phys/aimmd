@@ -59,7 +59,7 @@ def get_involved(idx, g_parms, mol_idxs, solvent_atoms, solvent_resname):
     except StopIteration:
         # we reached the end of the list without finding a matching index
         raise ValueError('Something is wrong, either idx is out of range or we got malformated/wrong variables besides idx')
-    bounds = [0] + bounds  # we add a zero at the start for the next line to work
+    bounds = [0] + list(bounds)  # we add a zero at the start for the next line to work
     carry = idx - bounds[solv_rname_idx]
     solv_idx = int(carry / (n_mol * n_sf))
     carry = carry % (n_mol * n_sf)
