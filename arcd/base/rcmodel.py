@@ -164,6 +164,8 @@ class RCModel(ABC):
         {n_TP}_expected - calculated from self.expected_p assuming
                           2 independent shots per point
 
+        Note that we will return min(1, EE-Factor)
+
         """
         # make sure there are enough points, otherwise take less
         # TODO: or should we return 1. in that case?
@@ -180,7 +182,7 @@ class RCModel(ABC):
         factor = (1 - n_tp_true / n_tp_ex)**2
         logger.info('Calculcated expected efficiency factor '
                     + '{:.3e} over {:d} points.'.format(factor, n_points))
-        return factor
+        return min(1, factor)
 
     def register_sp(self, shoot_snap):
         """Will be called by arcd.RCModelSelector after selecting a SP."""
