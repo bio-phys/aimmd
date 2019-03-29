@@ -184,10 +184,10 @@ class RCModel(ABC):
                     + '{:.3e} over {:d} points.'.format(factor, n_points))
         return min(1, factor)
 
-    def register_sp(self, shoot_snap):
+    def register_sp(self, shoot_snap, use_transform=True):
         """Will be called by arcd.RCModelSelector after selecting a SP."""
-        self.expected_q.append(self.q(shoot_snap)[0])
-        self.expected_p.append(self(shoot_snap)[0])
+        self.expected_q.append(self.q(shoot_snap, use_transform)[0])
+        self.expected_p.append(self(shoot_snap, use_transform)[0])
 
     def _apply_descriptor_transform(self, descriptors):
         # apply descriptor_transform if wanted and defined
