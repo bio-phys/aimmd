@@ -82,14 +82,18 @@ class TrainSet(Iterable):
             elif key < 0:
                 key = len(self) + key
             # slice to preserve dimensionality
-            return (self._descriptors[:self._fill_pointer][key:key+1],
-                    self._shot_results[:self._fill_pointer][key:key+1])
+            descriptors = self._descriptors[:self._fill_pointer][key:key+1]
+            shots = self._shot_results[:self._fill_pointer][key:key+1]
         elif isinstance(key, slice):
             start, stop, step = key.indices(len(self))
-            return (self._descriptors[start:stop:step],
-                    self._shot_results[start:stop:step])
+            descriptors = self._descriptors[start:stop:step]
+            shots = self._shot_results[start:stop:step]
         else:
             raise KeyError('keys must be int or slice.')
+
+        return TrainSet(self.states,
+                        descriptor_transform=self.descriptor_transform,
+                        descriptors=descriptors, shot_results=shots)
 
     # TODO: do we need __setitem__ ??
     def __setitem__(self, key):
