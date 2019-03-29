@@ -24,13 +24,32 @@ logger = logging.getLogger(__name__)
 
 class TrainSet(Iterable):
     """
-    Store shooting results (i.e. states reached) and the corresponding
-    descriptors.
+    Stores shooting results and the corresponding descriptors.
+
+    Additionally handles the 'unwrapping' of MonteCarlo steps from OPS,
+    i.e. we can just call self.append_ops_mcstep(MCstep) and the trainset
+    will extract states reached and descriptor values.
     """
 
     # TODO: do we need weights for the points?
     def __init__(self, states, descriptor_transform=None,
                  descriptors=None, shot_results=None):
+        """
+        Create a TrainSet.
+
+        states - list of 'states', where a 'state' can be any object taking
+                 a OPS snapshot and returning True/False to indicate if the
+                 snapshot is inside of state, e.g. any OPS volume
+                 NOTE: If not used together with OPS it suffices to give a list
+                 with the correct length, e.g. ['A', 'B']
+        descriptor_transform - None or any function working on OPS snapshots,
+                               is applied to the OPS snapshots extracted in
+                               self.append_ops_mcstep() to get the descriptors
+        descriptors - None or numpy.ndarray [shape=(n_points, n_dim)],
+                      if given trainset is initialized with these descriptors
+        shot_results - None or numpy.ndarray [shape=(n_points, n_states)],
+                       if given trainset is initialized with these shot_results
+        """
         self.states = states
         n_states = len(states)
         self._tp_idxs = [[i, j] for i in range(n_states)
@@ -56,22 +75,27 @@ class TrainSet(Iterable):
 
     @property
     def shot_results(self):
+        """Return states reached for each point."""
         return self._shot_results[:self._fill_pointer]
 
     @property
     def descriptors(self):
+        """Return descriptor coordinates for each point."""
         return self._descriptors[:self._fill_pointer]
 
     @property
     def transitions(self):
+        """Calculate number of transitions for each point."""
         return sum(self._shot_results[:self._fill_pointer, i]
                    * self._shot_results[:self._fill_pointer, j]
                    for i, j in self._tp_idxs)
 
     def __len__(self):
+        """Return number of points in TrainSet."""
         return self._fill_pointer
 
     def __getitem__(self, key):
+        """Return a new TrainSet with a subset of points."""
         if isinstance(key, int):
             # catch out of bounds access
             if key >= len(self):
@@ -100,7 +124,7 @@ class TrainSet(Iterable):
         raise NotImplementedError
 
     def iter_batch(self, batch_size=64, shuffle=True):
-        """Returns an Iterator over the whole TrainSet in chunks of batch size."""
+        """Iterates over the whole TrainSet in chunks of batch size."""
         return TrainSetIterator(self, batch_size, shuffle)
 
     def __iter__(self):
