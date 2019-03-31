@@ -124,13 +124,14 @@ class TrainSet(Iterable):
         raise NotImplementedError
 
     def iter_batch(self, batch_size=64, shuffle=True):
-        """Iterates over the whole TrainSet in chunks of batch size."""
+        """Iterate over the (shuffled) TrainSet in chunks of batch_size."""
         return TrainSetIterator(self, batch_size, shuffle)
 
     def __iter__(self):
         """
-        This simply uses batch_size=64 and shuffle=True.
-        See iter_batch if you need to control batch_size and shuffle.
+        Iterate over the shuffled TrainSet in chunks of 64 points.
+
+        Use self.iter_batch() if you want to control batch_size or shuffle.
         """
         return TrainSetIterator(self, 64, True)
 
@@ -141,21 +142,25 @@ class TrainSet(Iterable):
         shadow_len = self._shot_results.shape[0]
         if shadow_len == 0:
             # no points yet, just create the arrays
-            self._shot_results = np.zeros((add_entries, len(self.states)), dtype=np.float64)
-            self._descriptors = np.zeros((add_entries, descriptor_dim), dtype=np.float64)
+            self._shot_results = np.zeros((add_entries, len(self.states)),
+                                          dtype=np.float64)
+            self._descriptors = np.zeros((add_entries, descriptor_dim),
+                                         dtype=np.float64)
         elif shadow_len <= self._fill_pointer + 1:
             # no space left for the next point, extend
             self._shot_results = np.concatenate(
-                (self._shot_results, np.zeros((add_entries, len(self.states)), dtype=np.float64))
+                (self._shot_results,
+                 np.zeros((add_entries, len(self.states)), dtype=np.float64)
+                 )
                                                 )
             self._descriptors = np.concatenate(
-                (self._descriptors, np.zeros((add_entries, descriptor_dim), dtype=np.float64))
+                (self._descriptors,
+                 np.zeros((add_entries, descriptor_dim), dtype=np.float64)
+                 )
                                                )
 
     def append_ops_mcstep(self, mcstep, ignore_invalid=False):
-        """
-        Appends the results and descriptors extracted from given OPS MCStep.
-        """
+        """Append the results and descriptors from given OPS MCStep."""
         try:
             details = mcstep.change.canonical.details
             shooting_snap = details.shooting_snapshot
@@ -182,14 +187,20 @@ class TrainSet(Iterable):
                                      for state in self.states])
             total_count = sum(shot_results)
 
-            # TODO: for now we assume TwoWayShooting, because otherwise we can not redraw v!
-            # warn if no states were reached, dont add the point except ignore_invalid=True,
+            # TODO: for now we assume TwoWayShooting,
+            # because otherwise we can not redraw v,
+            # which would break our independence assumption!
+            # (if we ignore the velocities of the SPs)
+
+            # warn if no states were reached,
+            # do not add the point except ignore_invalid=True,
             # it makes no contribution to the loss since terms are 0,
             # this makes the 'harmonic loss' from multi-domain models blow up,
-            # also some regularization schemes will overregularize by miscounting
+            # also some regularization schemes will overcount/overregularize
             if total_count < 2 and not ignore_invalid:
-                logger.warn('Total states reached is < 2. This probably means there are '
-                            + 'uncommited trajectories. Will not add the point.')
+                logger.warn('Total states reached is < 2. This probably means '
+                            + 'there are uncommited trajectories. '
+                            + 'Will not add the point.')
                 return
             # get and possibly transform descriptors
             # descriptors is a 1d-array, since we use a snap and no traj in CV
