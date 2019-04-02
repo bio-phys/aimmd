@@ -95,7 +95,7 @@ class KerasRCModel(RCModel):
     def train_decision(self, trainset):
         # should return train, new_lr, epochs
         # i.e. a bool, a float or None and an int
-        pass
+        raise NotImplementedError
 
     def set_lr(self, new_lr):
         K.set_value(self.nnet.optimizer.lr, new_lr)

@@ -172,7 +172,8 @@ class TrainSet(Iterable):
             # wrong kind of move (no shooting_snapshot)
             # this could actually happen if we use arcd in one simulation
             # together with other TPS/TIS schemes
-            logger.warn('Tried to add a MCStep that has no shooting_snapshot.')
+            logger.warning('Tried to add a MCStep that has no '
+                           + 'shooting_snapshot.')
         except IndexError:
             # very wrong kind of move (no trials!)
             # I think this should never happen?
@@ -198,7 +199,7 @@ class TrainSet(Iterable):
             # this makes the 'harmonic loss' from multi-domain models blow up,
             # also some regularization schemes will overcount/overregularize
             if total_count < 2 and not ignore_invalid:
-                logger.warn('Total states reached is < 2. This probably means '
+                logger.warning('Total states reached is < 2. This probably means '
                             + 'there are uncommited trajectories. '
                             + 'Will not add the point.')
                 return
@@ -206,7 +207,7 @@ class TrainSet(Iterable):
             # descriptors is a 1d-array, since we use a snap and no traj in CV
             descriptors = self.descriptor_transform(shooting_snap)
             if not np.all(np.isfinite(descriptors)):
-                logger.warn('There are NaNs or infinities in the training '
+                logger.warning('There are NaNs or infinities in the training '
                             + 'descriptors. \n We used numpy.nan_to_num() to'
                             + ' proceed. You might still want to have '
                             + '(and should have) a look @ \n'

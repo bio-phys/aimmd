@@ -54,8 +54,8 @@ class RCModelSelector(ShootingPointSelector):
         super(RCModelSelector, self).__init__()
         self.model = model
         if states is None:
-            logger.warn('Consider passing the states to speed up'
-                        + ' accepting/rejecting.')
+            logger.warning('Consider passing the states to speed up'
+                           + ' accepting/rejecting.')
         self.states = states
         self.distribution = distribution
         self.scale = scale
@@ -71,10 +71,10 @@ class RCModelSelector(ShootingPointSelector):
                   dct['states'],
                   distribution=dct['distribution'],
                   scale=dct['scale'])
-        logger.warn('Restoring RCModelSelector without model.'
-                    + 'If used together with arcd.TrainingHook you can ignore '
-                    + 'this warning, otherwise please take care of resetting '
-                    + 'the model yourself.')
+        logger.warning('Restoring RCModelSelector without model.'
+                       + 'If used together with arcd.TrainingHook you can '
+                       + 'ignore this warning, otherwise please take care of '
+                       + 'resetting the model yourself.')
         return obj
 
     def to_dict(self):
@@ -112,8 +112,8 @@ class RCModelSelector(ShootingPointSelector):
         """Return the unnormalized proposal probability of a snapshot."""
         z_sel = self.model.z_sel(snapshot)
         if not np.all(np.isfinite(z_sel)):
-            logger.warn('The model predicts NaNs or infinities. '
-                        + 'We used np.nan_to_num to proceed')
+            logger.warning('The model predicts NaNs or infinities. '
+                           + 'We used np.nan_to_num to proceed')
             z_sel = np.nan_to_num(z_sel)
         # casting to python float solves the problem that
         # metropolis_acceptance is not saved !
@@ -149,8 +149,8 @@ class RCModelSelector(ShootingPointSelector):
     def _biases(self, trajectory):
         z_sels = self.model.z_sel(trajectory)
         if not np.all(np.isfinite(z_sels)):
-            logger.warn('The model predicts NaNs or infinities. '
-                        + 'We used np.nan_to_num to proceed')
+            logger.warning('The model predicts NaNs or infinities. '
+                           + 'We used np.nan_to_num to proceed')
             z_sels = np.nan_to_num(z_sels)
         return self._f_sel(z_sels)
 
