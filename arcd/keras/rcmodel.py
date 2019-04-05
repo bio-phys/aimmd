@@ -54,6 +54,8 @@ class KerasRCModel(RCModel):
         if not os.path.exists(state['nnet']):
             # try fixing changed absolute paths by taking
             # ops_storage_dir + base filname
+            # this enables us to copy the whole folder containing OPS-storage
+            # and model to another location/machine
             fname = os.path.basename(state['nnet'])
             state['nnet'] = os.path.join(state['_ops_storage_dirname'], fname)
         nnet = load_keras_model(state['nnet'])
@@ -65,8 +67,7 @@ class KerasRCModel(RCModel):
         # keep a ref to the network
         nnet = self.nnet
         # but replace with the name of the file in self.__dict__
-        # make sure we take just the basename
-        self.nnet = os.path.basename(fname + self.save_nnet_suffix)
+        self.nnet = fname + self.save_nnet_suffix
         # let super save the state dict
         super().save(fname, overwrite)
         # and restore the nnet such that self stays functional

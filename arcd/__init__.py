@@ -29,9 +29,9 @@ from .base.trainset import TrainSet
 try:
     from . import pytorch
 except ImportError:
-    logger.warn("pytorch not available")
+    logger.warning("pytorch not available")
 
 try:
     from . import keras
 except ImportError:
-    logger.warn("keras not available")
+    logger.warning("keras not available")
