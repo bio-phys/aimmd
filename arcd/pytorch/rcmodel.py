@@ -574,7 +574,7 @@ class MultiDomainPytorchRCModel(RCModel):
                 )
 
     def _test_loss_cnet(self, trainset, batch_size):
-        cnet_targets = self._create_cnet_targets(trainset, batch_size)
+        cnet_targets = self.create_cnet_targets(trainset, batch_size)
         self.cnet.eval()  # evaluation mode
         with torch.no_grad():
             total_loss = 0
