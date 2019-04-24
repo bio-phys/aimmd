@@ -156,3 +156,45 @@ class HIPRanalysis:
                                                     )
         self.hipr_losses_plus = hipr_losses_plus
         return hipr_losses_plus
+
+    def do_hipr_plus_correlations(self, indices, n_redraw=None):
+        """
+        Perform HIPR analysis plus for given index combinations.
+
+        Permute the descriptor values for the given indices together
+        to quantify the correlations between them.
+        """
+        if n_redraw is None:
+            n_redraw = self.n_redraw
+        try:
+            # assume that we did a 'normal' HIPR plus already
+            hipr_losses_plus = self.hipr_losses_plus
+        except AttributeError:
+            # if not do it now
+            hipr_losses_plus = self.do_hipr_plus(n_redraw=n_redraw)
+
+        out = []
+        for idxs in indices:
+            losses = np.zeros((len(idxs) + 1,))
+            for i, idx in enumerate(idxs):
+                # get single losses from hipr_plus
+                losses[i] = hipr_losses_plus[idx]
+            for _ in range(n_redraw):
+                # now permute all idxs together
+                descriptors = self.trainset.descriptors.copy()
+                permut_idxs = np.random.permutation(len(self.trainset))
+                for idx in idxs:
+                    descriptors[:, idx] = descriptors[:, idx][permut_idxs]
+                ts = TrainSet(
+                    self.trainset.states,
+                    descriptor_transform=self.trainset.descriptor_transform,
+                    descriptors=descriptors,
+                    shot_results=self.trainset.shot_results
+                             )
+                losses[len(idxs)] += self.model.test_loss(ts,
+                                                          **self.call_kwargs)
+            # take the mean only for combinations
+            losses[-1] /= n_redraw
+            out.append(losses)
+
+        return out
