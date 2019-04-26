@@ -41,6 +41,9 @@ class RCModelSelector(ShootingPointSelector):
     scale - float, 'softness' parameter of the selection distribution,
             higher values result in a boader spread of SPs around the TSE,
             1/alpha for 'gaussian' and gamma for 'lorentzian'
+    density_adaptation - bool, whether we try to correct for imbalances in
+                         the density of points on TPs to achieve a more uniform
+                         SP density along the reaction coordinate
 
     Notes
     -----
@@ -48,8 +51,8 @@ class RCModelSelector(ShootingPointSelector):
 
     """
 
-    def __init__(self, model, states=None,
-                 distribution='lorentzian', scale=1.):
+    def __init__(self, model, states=None, distribution='lorentzian',
+                 scale=1., density_adaptation=True):
         """Initialize a RCModelSelector."""
         super(RCModelSelector, self).__init__()
         self.model = model
@@ -59,6 +62,7 @@ class RCModelSelector(ShootingPointSelector):
         self.states = states
         self.distribution = distribution
         self.scale = scale
+        self.density_adaptation = density_adaptation
 
     @classmethod
     def from_dict(cls, dct):

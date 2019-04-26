@@ -279,3 +279,100 @@ class RCModel(ABC):
                 (self.z_sel_scale / (1 - 1 / self.n_out))
                 * (1 - 1 / self.n_out - reactive_prob)
                 )
+
+
+class TPDensityCollector:
+    """
+    Keep track of the density of points on TPs projected to probability space.
+
+    TODO: document!
+
+    """
+
+    def __init__(self, model, bins=10):
+        """
+        Initialize a TPDensityCollector.
+
+        Parameters:
+        -----------
+        model - arcd.base.RCModel, the model predicting the probabilities
+        bins - number of bins in each probability direction
+
+        """
+        self.model = model
+        self.n_probabilities = model.n_out
+        self.bins = bins
+        # need to know the number of forbidden bins, i.e. where sum_prob > 1
+        bounds = np.arange(0., 1., 1./bins)
+        # this magic line creates all possible combinations of probs
+        # as an array of shape (bins**n_probs, n_probs)
+        combs = np.array(np.meshgrid(
+                            *tuple(bounds for _ in range(self.n_probabilities))
+                                     )
+                         ).T.reshape(-1, self.n_probabilities)
+        sums = np.sum(combs, axis=1)
+        n_forbidden_bins = len(np.where(sums > 1)[0])
+        self._n_allowed_bins = bins**self.n_probabilities - n_forbidden_bins
+
+    def evaluate_density_for_trajectories(self, trajectories, update=True):
+        """
+        Evaluate the density on the given trajectories.
+
+        Parameters:
+        -----------
+        trajectories - iterator/iterable of trajectories to evaluate
+        update - bool, if True we will add the density to the current estimate,
+                 if False we will overwrite any current estimates,
+                 default is True
+
+        """
+        p_list = [[] for _ in range(self.n_probabilities)]
+        for tra in trajectories:
+            pred = self.model(tra)
+            for i in range(self.n_probabilities):
+                p_list[i].append(pred[:, i])
+        histo, edges = np.histogramdd(
+                            [np.concatenate(p, axis=0)
+                             for p in p_list],
+                            bins=self.bins,
+                            range=[[0., 1.]
+                                   for _ in range(self.n_probabilities)]
+                                      )
+        if update:
+            self.density_histogram += histo
+        else:
+            self.density_histogram = histo
+
+    def get_density(self, probabilities):
+        """
+        Return the current density estimate for a given probability vector.
+
+        Parameters:
+        -----------
+        probabilities - numpy.ndarray, shape=(n_points, model.n_out)
+
+        Returns:
+        --------
+        densities - numpy.ndarray, shape=(n_points,), values of the density
+                    at the given points in probability-space
+
+        """
+        idxs = tuple(np.intp(np.floor(probabilities[:, i] * self.bins))
+                     for i in range(self.n_probabilities)
+                     )
+        return self.density_histogram[idxs]
+
+    def get_correction(self, probabilities):
+        """
+        Return the 'flattening factor' for the observed density of points.
+
+        The factor is calculate as
+         (total_count + n_allowed_bins) / (counts[probabilities] + 1),
+        i.e. the factor is 1 / rho(probabilities),
+        but we use the Laplace-m-estimator / Add-one-smoothing
+        to make sure we do not have zero density anywhere.
+
+        """
+        dens = self.get_density(probabilities)
+        norm = np.sum(self.density_histogram)
+        return (norm + self._n_allowed_bins) / (dens + 1)
