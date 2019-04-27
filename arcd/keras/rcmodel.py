@@ -33,11 +33,13 @@ class KerasRCModel(RCModel):
     save_nnet_suffix = '_keras.h5'
 
     def __init__(self, nnet, descriptor_transform=None):
-        super().__init__(descriptor_transform)
         self.nnet = nnet
         self.log_train_decision = []
         self.log_train_loss = []
         self._count_train_hook = 0
+        # need to call super __init__ last such that it can make use of
+        # the properties and methods we implement here
+        super().__init__(descriptor_transform)
 
     @property
     def n_out(self):

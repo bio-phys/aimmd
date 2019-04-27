@@ -41,6 +41,12 @@ class RCModelSelector(ShootingPointSelector):
     scale - float, 'softness' parameter of the selection distribution,
             higher values result in a boader spread of SPs around the TSE,
             1/alpha for 'gaussian' and gamma for 'lorentzian'
+    density_adaptation - bool, whether we try to correct for imbalances in
+                         the density of points on TPs to achieve a more uniform
+                         SP density along the reaction coordinate,
+                         NOTE: updating the density estimate needs to be
+                         enabled in the arcd.TrainingHook for this feature
+                         to have an effect
 
     Notes
     -----
@@ -48,8 +54,8 @@ class RCModelSelector(ShootingPointSelector):
 
     """
 
-    def __init__(self, model, states=None,
-                 distribution='lorentzian', scale=1.):
+    def __init__(self, model, states=None, distribution='lorentzian',
+                 scale=1., density_adaptation=True):
         """Initialize a RCModelSelector."""
         super(RCModelSelector, self).__init__()
         self.model = model
@@ -59,6 +65,7 @@ class RCModelSelector(ShootingPointSelector):
         self.states = states
         self.distribution = distribution
         self.scale = scale
+        self.density_adaptation = density_adaptation
 
     @classmethod
     def from_dict(cls, dct):
@@ -70,7 +77,11 @@ class RCModelSelector(ShootingPointSelector):
         obj = cls(None,
                   dct['states'],
                   distribution=dct['distribution'],
-                  scale=dct['scale'])
+                  scale=dct['scale'],
+                  # this should make selectors saved before adding
+                  # denisty_adaptadtion work as intended
+                  density_adaptation=dct.get('density_adaptation', False)
+                  )
         logger.warning('Restoring RCModelSelector without model.'
                        + 'If used together with arcd.TrainingHook you can '
                        + 'ignore this warning, otherwise please take care of '
@@ -83,6 +94,7 @@ class RCModelSelector(ShootingPointSelector):
         dct['distribution'] = self._distribution
         dct['scale'] = self.scale
         dct['states'] = self.states
+        dct['density_adaptation'] = self.density_adaptation
         return dct
 
     @property
@@ -118,6 +130,12 @@ class RCModelSelector(ShootingPointSelector):
         # casting to python float solves the problem that
         # metropolis_acceptance is not saved !
         ret = float(self._f_sel(z_sel))
+        if self.density_adaptation:
+            committor_probs = self.model(snapshot)
+            density_fact = self.model.density_collector.get_correction(
+                                                            committor_probs
+                                                                       )
+            ret *= float(density_fact)
         if ret == 0.:
             if self.sum_bias(trajectory) == 0.:
                 return 1.
@@ -152,7 +170,14 @@ class RCModelSelector(ShootingPointSelector):
             logger.warning('The model predicts NaNs or infinities. '
                            + 'We used np.nan_to_num to proceed')
             z_sels = np.nan_to_num(z_sels)
-        return self._f_sel(z_sels)
+        ret = self._f_sel(z_sels)
+        if self.density_adaptation:
+            committor_probs = self.model(trajectory)
+            density_fact = self.model.density_collector.get_correction(
+                                                            committor_probs
+                                                                       )
+            ret *= density_fact.reshape((len(trajectory), self.model.n_out))
+        return ret
 
     def pick(self, trajectory):
         """Return the index of the chosen snapshot within trajectory."""
