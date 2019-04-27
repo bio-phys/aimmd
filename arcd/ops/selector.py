@@ -78,7 +78,9 @@ class RCModelSelector(ShootingPointSelector):
                   dct['states'],
                   distribution=dct['distribution'],
                   scale=dct['scale'],
-                  density_adaptation=dct['density_adaptation']
+                  # this should make selectors saved before adding
+                  # denisty_adaptadtion work as intended
+                  density_adaptation=dct.get('density_adaptation', False)
                   )
         logger.warning('Restoring RCModelSelector without model.'
                        + 'If used together with arcd.TrainingHook you can '
