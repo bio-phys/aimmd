@@ -110,7 +110,6 @@ class PytorchRCModel(RCModel):
     Wraps pytorch neural networks for use with arcd
     """
     def __init__(self, nnet, optimizer, descriptor_transform=None, loss=None):
-        super().__init__(descriptor_transform)
         self.nnet = nnet  # a pytorch.nn.Module
         # any pytorch.optim optimizer, model parameters need to be registered already
         self.optimizer = optimizer
@@ -129,6 +128,9 @@ class PytorchRCModel(RCModel):
                 self.loss = binomial_loss
             else:
                 self.loss = multinomial_loss
+        # again call super __init__ last such taht it can use the fully
+        # initialized subclasses methods
+        super().__init__(descriptor_transform)
 
     @property
     def n_out(self):
@@ -315,7 +317,6 @@ class MultiDomainPytorchRCModel(RCModel):
         # poptimizer = optimizer for prediction networks
         # cnet = classifier deciding which network to take
         # coptimizer optimizer for classification networks
-        super().__init__(descriptor_transform)
         self.pnets = pnets
         self.cnet = cnet
         # any pytorch.optim optimizer, model parameters need to be registered already
@@ -348,6 +349,9 @@ class MultiDomainPytorchRCModel(RCModel):
                 self.loss = binomial_loss_vect
             else:
                 self.loss = multinomial_loss_vect
+        # super __init__ needs to access some of its childs methods and properties
+        super().__init__(descriptor_transform)
+
 
     @property
     def n_out(self):

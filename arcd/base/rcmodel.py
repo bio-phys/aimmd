@@ -56,12 +56,20 @@ class RCModel(ABC):
     save_model_extension = '.pckl'
     # scale z_sel to [0., z_sel_scale] for multinomial predictions
     z_sel_scale = 25
+    # (TP) density collection params
+    _density_collection_enabled = True
+    _density_colletion_n_bins = 10
 
     def __init__(self, descriptor_transform=None):
         """I am an `abc.ABC` and can not be initialized."""
         self.descriptor_transform = descriptor_transform
         self.expected_p = []
         self.expected_q = []
+        if self._density_collection_enabled:
+            self.density_collector = TrajectoryDensityCollector(
+                                            n_dim=self.n_out,
+                                            bins=self._density_colletion_n_bins
+                                                                )
 
     @property
     @abstractmethod
@@ -281,62 +289,66 @@ class RCModel(ABC):
                 )
 
 
-class TPDensityCollector:
+class TrajectoryDensityCollector:
     """
-    Keep track of the density of points on TPs projected to probability space.
+    Keep track of density of points on trajectories projected to probabilities.
 
-    TODO: document!
+    Usually trajectories will be transition paths and the space will be the
+    space spanned by the commitment probabilities predicted by a RCModel.
+    The inverse of the estimate of the density of points on TPs can be used as
+    an additional factor in the shooting point selection to flatten the
+    distribution of proposed shooting points in commitment probability space.
 
     """
 
-    def __init__(self, model, bins=10):
+    def __init__(self, n_dim, bins=10):
         """
         Initialize a TPDensityCollector.
 
         Parameters:
         -----------
-        model - arcd.base.RCModel, the model predicting the probabilities
-        bins - number of bins in each probability direction
+        n_dim - int, dimensionality of the histogram space
+        bins - number of bins in each direction
 
         """
-        self.model = model
-        self.n_probabilities = model.n_out
+        self.n_dim = n_dim
         self.bins = bins
+        self.density_histogram = np.zeros(tuple(bins for _ in range(n_dim)))
         # need to know the number of forbidden bins, i.e. where sum_prob > 1
         bounds = np.arange(0., 1., 1./bins)
         # this magic line creates all possible combinations of probs
         # as an array of shape (bins**n_probs, n_probs)
-        combs = np.array(np.meshgrid(
-                            *tuple(bounds for _ in range(self.n_probabilities))
-                                     )
-                         ).T.reshape(-1, self.n_probabilities)
+        combs = np.array(np.meshgrid(*tuple(bounds for _ in range(self.n_dim)))
+                         ).T.reshape(-1, self.n_dim)
         sums = np.sum(combs, axis=1)
         n_forbidden_bins = len(np.where(sums > 1)[0])
-        self._n_allowed_bins = bins**self.n_probabilities - n_forbidden_bins
+        self._n_allowed_bins = bins**self.n_dim - n_forbidden_bins
 
-    def evaluate_density_for_trajectories(self, trajectories, update=True):
+    def evaluate_density_on_trajectories(self, model, trajectories, update=True):
         """
         Evaluate the density on the given trajectories.
 
         Parameters:
         -----------
+        model - any callable returning values to histogram for trajectories,
+                e.g. an arcd.base.RCModel predicting commitment probabilities
         trajectories - iterator/iterable of trajectories to evaluate
         update - bool, if True we will add the density to the current estimate,
-                 if False we will overwrite any current estimates,
+                 if False we will overwrite the current estimate,
                  default is True
 
         """
-        p_list = [[] for _ in range(self.n_probabilities)]
+        p_list = [[] for _ in range(self.n_dim)]
         for tra in trajectories:
-            pred = self.model(tra)
-            for i in range(self.n_probabilities):
+            pred = model(tra)
+            for i in range(self.n_dim):
                 p_list[i].append(pred[:, i])
         histo, edges = np.histogramdd(
                             [np.concatenate(p, axis=0)
                              for p in p_list],
                             bins=self.bins,
                             range=[[0., 1.]
-                                   for _ in range(self.n_probabilities)]
+                                   for _ in range(self.n_dim)]
                                       )
         if update:
             self.density_histogram += histo
@@ -349,7 +361,7 @@ class TPDensityCollector:
 
         Parameters:
         -----------
-        probabilities - numpy.ndarray, shape=(n_points, model.n_out)
+        probabilities - numpy.ndarray, shape=(n_points, self.n_dim)
 
         Returns:
         --------
@@ -358,7 +370,7 @@ class TPDensityCollector:
 
         """
         idxs = tuple(np.intp(np.floor(probabilities[:, i] * self.bins))
-                     for i in range(self.n_probabilities)
+                     for i in range(self.n_dim)
                      )
         return self.density_histogram[idxs]
 
@@ -366,7 +378,7 @@ class TPDensityCollector:
         """
         Return the 'flattening factor' for the observed density of points.
 
-        The factor is calculate as
+        The factor is calculated as
          (total_count + n_allowed_bins) / (counts[probabilities] + 1),
         i.e. the factor is 1 / rho(probabilities),
         but we use the Laplace-m-estimator / Add-one-smoothing

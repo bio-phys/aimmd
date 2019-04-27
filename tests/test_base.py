@@ -30,8 +30,13 @@ class Test_RCModel:
         state, cls = model.__class__.load_state(fname)
         state = cls.fix_state(state)
         loaded_model = cls.set_state(state)
-        assert loaded_model.expected_p[0] == model.expected_p[0]
-        assert loaded_model.__dict__ == model.__dict__
+        for key, val in model.__dict__.items():
+            if key == 'density_collector':
+                loaded_dc = loaded_model.__dict__['density_collector']
+                for skey, sval in val.__dict__.items():
+                    assert np.all(loaded_dc.__dict__[skey] == sval)
+            else:
+                assert np.all(loaded_model.__dict__[key] == val)
 
     def test_binomial(self, oneout_rcmodel):
         model = oneout_rcmodel
