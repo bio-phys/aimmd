@@ -49,6 +49,14 @@ class RCModel(ABC):
         save_model_extension - str, the file extension to use when saving
         z_sel_scale - float, scale z_sel to [0., z_sel_scale] for multinomial
                       training and predictions
+        density_collection_n_bins - number of bins in each probability
+                                    direction to collect the density of points
+                                    on TPs
+                                    NOTE: this has to be set before creating
+                                    the model, i.e.
+                                    `RCModel.density_collection_n_bins = n_bins`
+                                    and then
+                                    `model = RCModel(**init_parms)`
 
     """
 
@@ -57,18 +65,22 @@ class RCModel(ABC):
     # scale z_sel to [0., z_sel_scale] for multinomial predictions
     z_sel_scale = 25
     # (TP) density collection params
-    _density_collection_enabled = True
-    _density_colletion_n_bins = 10
+    # NOTE: Everything here only makes it possible to collect TP densities
+    # by attaching a TrajectoryDenistyCollector, however for this feature
+    # to have any effect we need to regularly update the density estimate!
+    # Updating the density estimate is done by the corresponding TrainingHook,
+    # and unless updating the density is enabled there we will not waste
+    # computing power with unecessary updates of the density
+    density_collection_n_bins = 10
 
     def __init__(self, descriptor_transform=None):
         """I am an `abc.ABC` and can not be initialized."""
         self.descriptor_transform = descriptor_transform
         self.expected_p = []
         self.expected_q = []
-        if self._density_collection_enabled:
-            self.density_collector = TrajectoryDensityCollector(
+        self.density_collector = TrajectoryDensityCollector(
                                             n_dim=self.n_out,
-                                            bins=self._density_colletion_n_bins
+                                            bins=self.density_collection_n_bins
                                                                 )
 
     @property

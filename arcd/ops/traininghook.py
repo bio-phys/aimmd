@@ -39,9 +39,19 @@ class TrainingHook(PathSimulatorHook):
     -----------
         model - :class:`arcd.base.RCModel` that predicts RC values
         trainset - :class:`arcd.base.TrainSet` to store the shooting results
-        save_model_interval - save the current model every save_model_interval
-                              MCStep with a suffix indicating the step,
+        save_model_interval - int, save the current model every
+                              save_model_interval MCStep with a suffix
+                              indicating the step,
                               Note: can be inifnity to never save
+        density_collection - dict, contains parameters to control collection of
+                             density of points on TPs,
+                             'enabled' - bool, wheter to collect at all
+                             'update_interval' - int, interval in which we
+                                                 add new TPs to estimate
+                             'recreate_interval' - int, interval in which we
+                                                   recreate the estimate, i.e.
+                                                   use newly predicted probs
+                                                   for all points
         save_model_extension - str, the file extension to use when saving the
                                model, same as arcd.RCModel.save_model_extension
         save_model_suffix - str, suffix to append to OPS storage name when
@@ -66,7 +76,7 @@ class TrainingHook(PathSimulatorHook):
 
     def __init__(self, model, trainset, save_model_interval=500,
                  density_collection={'enabled': True,
-                                     'update_interval': 50,
+                                     'update_interval': 250,
                                      'recreate_interval': 1000,
                                      }
                  ):
@@ -75,7 +85,7 @@ class TrainingHook(PathSimulatorHook):
         self.trainset = trainset
         self.save_model_interval = save_model_interval
         density_collection_defaults = {'enabled': True,
-                                       'update_interval': 50,
+                                       'update_interval': 250,
                                        'recreate_interval': 1000,
                                        }
         density_collection_defaults.update(density_collection)
