@@ -59,7 +59,7 @@ class KerasRCModel(RCModel):
             # this enables us to copy the whole folder containing OPS-storage
             # and model to another location/machine
             fname = os.path.basename(state['nnet'])
-            state['nnet'] = os.path.join(state['_ops_storage_dirname'], fname)
+            state['nnet'] = os.path.join(state['_pickle_file_dirname'], fname)
         nnet = load_keras_model(state['nnet'])
         state['nnet'] = nnet
         return state

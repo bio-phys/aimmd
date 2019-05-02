@@ -119,12 +119,11 @@ class RCModel(ABC):
         """Return internal state from given file, possibly (re)set OPS CVs."""
         with open(fname, 'rb') as pfile:
             state = pickle.load(pfile)
-        transform = state['descriptor_transform']
+        # set pickle_file_dirname variable so we can load models saved besides
+        # as e.g. the keras hdf5 files
+        state['_pickle_file_dirname'] = os.path.abspath(os.path.dirname(fname))
         if (ops_storage is not None):
-            # set storage_dir variable so we can load models saved besides it
-            state['_ops_storage_dirname'] = os.path.dirname(
-                                                        ops_storage.abspath
-                                                            )
+            transform = state['descriptor_transform']
             if isinstance(transform, str):
                 # we just assume it is the name of the OPS CV
                 state['descriptor_transform'] = ops_storage.cvs.find(transform)
