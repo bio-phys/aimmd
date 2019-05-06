@@ -119,7 +119,6 @@ class TrainSet(Iterable):
                         descriptor_transform=self.descriptor_transform,
                         descriptors=descriptors, shot_results=shots)
 
-    # TODO: do we need __setitem__ ??
     def __setitem__(self, key):
         raise NotImplementedError
 
@@ -159,8 +158,21 @@ class TrainSet(Iterable):
                  )
                                                )
 
-    def append_ops_mcstep(self, mcstep, ignore_invalid=False):
-        """Append the results and descriptors from given OPS MCStep."""
+    def append_ops_mcstep(self, mcstep, add_states=0, add_invalid=False):
+        """
+        Append the results and descriptors from given OPS MCStep.
+
+        Parameters:
+        -----------
+        mcstep - :class:`openpathsampling.MCStep`, the step from which we
+                 extract the descriptors and shot_results
+        add_states - int, how many times to add the endpoints of the trial
+                     trajectories lying inside the states
+        add_invalid - bool, wheter invalid MCSteps should be added,
+                      a MCStep is invalid if it contains uncommitted trials,
+                      i.e. trajectories that did not reach any state
+
+        """
         try:
             details = mcstep.change.canonical.details
             shooting_snap = details.shooting_snapshot
@@ -198,26 +210,41 @@ class TrainSet(Iterable):
             # it makes no contribution to the loss since terms are 0,
             # this makes the 'harmonic loss' from multi-domain models blow up,
             # also some regularization schemes will overcount/overregularize
-            if total_count < 2 and not ignore_invalid:
-                logger.warning('Total states reached is < 2. This probably means '
-                            + 'there are uncommited trajectories. '
-                            + 'Will not add the point.')
+            if total_count < 2 and not add_invalid:
+                logger.warning('Total states reached is < 2. This probably '
+                               + 'means there are uncommited trajectories. '
+                               + 'Will not add the point.')
                 return
             # get and possibly transform descriptors
             # descriptors is a 1d-array, since we use a snap and no traj in CV
             descriptors = self.descriptor_transform(shooting_snap)
             if not np.all(np.isfinite(descriptors)):
                 logger.warning('There are NaNs or infinities in the training '
-                            + 'descriptors. \n We used numpy.nan_to_num() to'
-                            + ' proceed. You might still want to have '
-                            + '(and should have) a look @ \n'
-                            + 'np.where(np.isinf(descriptors): '
-                            + str(np.where(np.isinf(descriptors)))
-                            + 'and np.where(np.isnan(descriptors): '
-                            + str(np.where(np.isnan(descriptors))))
+                               + 'descriptors. \n We used numpy.nan_to_num() '
+                               + 'to proceed. You might still want to have '
+                               + '(and should have) a look @ \n'
+                               + 'np.where(np.isinf(descriptors): '
+                               + str(np.where(np.isinf(descriptors)))
+                               + 'and np.where(np.isnan(descriptors): '
+                               + str(np.where(np.isnan(descriptors))))
                 descriptors = np.nan_to_num(descriptors)
             # add shooting results and transformed descriptors to training set
             self.append_point(descriptors, shot_results)
+            if add_states:
+                for pt in test_points:
+                    try:
+                        s_num = next(i for i, s in enumerate(self.states)
+                                     if s(pt))
+                    except StopIteration:
+                        # we reached end of states but found no matching one
+                        # this means this trajectory is uncommitted
+                        continue
+                    descriptors = self.descriptor_transform(pt)
+                    shot_results = np.zeros((len(self.states),))
+                    # the point is committed by definition so we use add_states
+                    # as ad-hoc number how many times we reached the state
+                    shot_results[s_num] = add_states
+                    self.append_point(descriptors, shot_results)
 
     def append_point(self, descriptors, shot_results):
         """

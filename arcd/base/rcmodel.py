@@ -382,9 +382,9 @@ class TrajectoryDensityCollector:
         """
         # we take the min to make sure we are always in the
         # histogram range, even if p = 1
-        idxs = tuple(np.intp(min(np.floor(probabilities[:, i] * self.bins),
-                                 self.bins - 1
-                                 )
+        idxs = tuple(np.intp(
+                        np.minimum(np.floor(probabilities[:, i] * self.bins),
+                                   self.bins - 1)
                              )
                      for i in range(self.n_dim)
                      )

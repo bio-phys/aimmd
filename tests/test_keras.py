@@ -155,7 +155,8 @@ class Test_keras:
         load_sampler.run(1)
         # check that the two trainsets are the same
         # at least except for the last step
-        assert np.allclose(load_trainhook.trainset.descriptors[:-1],
+        # the last 'step' has 3 entries, since we add the two endstates
+        assert np.allclose(load_trainhook.trainset.descriptors[:-3],
                            trainset.descriptors)
-        assert np.allclose(load_trainhook.trainset.shot_results[:-1],
+        assert np.allclose(load_trainhook.trainset.shot_results[:-3],
                            trainset.shot_results)

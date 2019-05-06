@@ -52,6 +52,10 @@ class TrainingHook(PathSimulatorHook):
                                                    recreate the estimate, i.e.
                                                    use newly predicted probs
                                                    for all points
+        train_states - int, number of (virtual) shots from the endpoints of
+                       each trial trajectory that lie inside the states,
+                       used to enrich the TrainingSet with commited SPs,
+                       use a value of 0 to deactivate, default is 10
         save_model_extension - str, the file extension to use when saving the
                                model, same as arcd.RCModel.save_model_extension
         save_model_suffix - str, suffix to append to OPS storage name when
@@ -73,12 +77,16 @@ class TrainingHook(PathSimulatorHook):
     # into sim.storage.tags as $save_trainset_prefix + '.after_step_{:d}'
     save_trainset_prefix = 'arcd.TrainSet.data'
     save_trainset_suffix = '.after_step_{:d}'
+    # whether we add invalid MCSteps to the TrainSet
+    # this is passed to TrainSet.add_ops_step() as add_invalid
+    add_invalid_mcsteps = False
 
     def __init__(self, model, trainset, save_model_interval=500,
                  density_collection={'enabled': True,
                                      'first_collection': 500,
                                      'recreate_interval': 1000,
-                                     }
+                                     },
+                 train_states=10,
                  ):
         """Initialize an arcd.TrainingHook."""
         self.model = model
@@ -90,6 +98,7 @@ class TrainingHook(PathSimulatorHook):
                                        }
         density_collection_defaults.update(density_collection)
         self.density_collection = density_collection_defaults
+        self.train_states = train_states
 
     def _get_model_from_sim_storage(self, sim):
         if sim.storage is not None:
@@ -137,7 +146,10 @@ class TrainingHook(PathSimulatorHook):
                         + 'Recreating from storage.steps.')
             trainset = TrainSet(states, descriptor_transform)
             for step in sim.storage.steps:
-                trainset.append_ops_mcstep(step)
+                trainset.append_ops_mcstep(
+                                mcstep=step, add_states=self.train_states,
+                                add_invalid=self.add_invalid_mcsteps
+                                          )
             return trainset
         else:
             logger.error('Can not recreate TrainSet without storage')
@@ -159,7 +171,7 @@ class TrainingHook(PathSimulatorHook):
             # make sure this trainset is the one saved at last step!
             # if the previous TPS simulation was killed it can happen that
             # the trainset is not saved, we try to correct as good as possible
-            # and this should at least warn now
+            # this should at least warn now and will result in TS recreation
             logger.warning('The TrainSet we found does not match the number of'
                            + ' steps in storage. This could mean the'
                            + ' simulation before did not terminate properly.')
@@ -228,7 +240,9 @@ class TrainingHook(PathSimulatorHook):
                     yield change.canonical.trials[0].trajectory
 
         # results is the MCStep
-        self.trainset.append_ops_mcstep(results)
+        self.trainset.append_ops_mcstep(mcstep=results,
+                                        add_states=self.train_states,
+                                        add_invalid=self.add_invalid_mcsteps)
         self.model.train_hook(self.trainset)
         if sim.storage is not None:
             if self.density_collection['enabled']:
