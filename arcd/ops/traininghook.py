@@ -46,12 +46,16 @@ class TrainingHook(PathSimulatorHook):
         density_collection - dict, contains parameters to control collection of
                              density of points on TPs,
                              'enabled' - bool, wheter to collect at all
-                             'update_interval' - int, interval in which we
-                                                 add new TPs to estimate
+                             'first_collection' - int, step at which we create
+                                                  the initial estimate
                              'recreate_interval' - int, interval in which we
                                                    recreate the estimate, i.e.
                                                    use newly predicted probs
                                                    for all points
+        train_states - int, number of (virtual) shots from the endpoints of
+                       each trial trajectory that lie inside the states,
+                       used to enrich the TrainingSet with commited SPs,
+                       use a value of 0 to deactivate, default is 10
         save_model_extension - str, the file extension to use when saving the
                                model, same as arcd.RCModel.save_model_extension
         save_model_suffix - str, suffix to append to OPS storage name when
@@ -73,23 +77,28 @@ class TrainingHook(PathSimulatorHook):
     # into sim.storage.tags as $save_trainset_prefix + '.after_step_{:d}'
     save_trainset_prefix = 'arcd.TrainSet.data'
     save_trainset_suffix = '.after_step_{:d}'
+    # whether we add invalid MCSteps to the TrainSet
+    # this is passed to TrainSet.add_ops_step() as add_invalid
+    add_invalid_mcsteps = False
 
     def __init__(self, model, trainset, save_model_interval=500,
                  density_collection={'enabled': True,
-                                     'update_interval': 250,
+                                     'first_collection': 500,
                                      'recreate_interval': 1000,
-                                     }
+                                     },
+                 train_states=10,
                  ):
         """Initialize an arcd.TrainingHook."""
         self.model = model
         self.trainset = trainset
         self.save_model_interval = save_model_interval
         density_collection_defaults = {'enabled': True,
-                                       'update_interval': 250,
+                                       'first_collection': 500,
                                        'recreate_interval': 1000,
                                        }
         density_collection_defaults.update(density_collection)
         self.density_collection = density_collection_defaults
+        self.train_states = train_states
 
     def _get_model_from_sim_storage(self, sim):
         if sim.storage is not None:
@@ -137,7 +146,10 @@ class TrainingHook(PathSimulatorHook):
                         + 'Recreating from storage.steps.')
             trainset = TrainSet(states, descriptor_transform)
             for step in sim.storage.steps:
-                trainset.append_ops_mcstep(step)
+                trainset.append_ops_mcstep(
+                                mcstep=step, add_states=self.train_states,
+                                add_invalid=self.add_invalid_mcsteps
+                                          )
             return trainset
         else:
             logger.error('Can not recreate TrainSet without storage')
@@ -155,6 +167,15 @@ class TrainingHook(PathSimulatorHook):
         # find the trainset data with the highest step number
         numbers = [int(k[strip:]) for k in keys]
         max_idx = np.argmax(numbers)
+        if keys[max_idx] == len(storage.steps):
+            # make sure this trainset is the one saved at last step!
+            # if the previous TPS simulation was killed it can happen that
+            # the trainset is not saved, we try to correct as good as possible
+            # this should at least warn now and will result in TS recreation
+            logger.warning('The TrainSet we found does not match the number of'
+                           + ' steps in storage. This could mean the'
+                           + ' simulation before did not terminate properly.')
+            return None, None
         descriptors, shot_results = storage.tags[keys[max_idx]]
         return descriptors, shot_results
 
@@ -201,34 +222,63 @@ class TrainingHook(PathSimulatorHook):
                    hook_state):
         """Will be called by OPS PathSimulator after every MCStep."""
         def iter_tps(storage, start=0):
-            for step in storage.steps[start:]:
+            # find the last accepted TP to be able to add it again
+            # instead of the rejects we could find
+            last_accept = start
+            found = False
+            while not found:
+                if storage.steps[last_accept].change.canonical.accepted:
+                    found = True
+                last_accept -= 1
+            # now actually iterate over the storage
+            for i, step in enumerate(storage.steps[start:]):
                 if step.change.canonical.accepted:
+                    last_accept = i + start
                     yield step.change.canonical.trials[0].trajectory
+                else:
+                    change = storage.steps[last_accept].change
+                    yield change.canonical.trials[0].trajectory
 
         # results is the MCStep
-        self.trainset.append_ops_mcstep(results)
+        self.trainset.append_ops_mcstep(mcstep=results,
+                                        add_states=self.train_states,
+                                        add_invalid=self.add_invalid_mcsteps)
         self.model.train_hook(self.trainset)
         if sim.storage is not None:
             if self.density_collection['enabled']:
                 # collect density of points on TPs in probability space
                 dc = self.model.density_collector
-                recreate_interval = self.density_collection['recreate_interval']
-                update_interval = self.density_collection['update_interval']
-                if step_number % recreate_interval == 0:
-                    dc.evaluate_density_on_trajectories(
-                                        model=self.model,
-                                        trajectories=iter_tps(sim.storage),
-                                        update=False
-                                                        )
-                elif step_number % update_interval == 0:
-                    dc.evaluate_density_on_trajectories(
-                                        model=self.model,
-                                        trajectories=iter_tps(
-                                                        sim.storage,
-                                                        start=-update_interval
-                                                                ),
-                                        update=True
-                                                        )
+                recreate = self.density_collection['recreate_interval']
+                first = self.density_collection['first_collection']
+                if step_number - first >= 0:
+                    if step_number % recreate == 0:
+                        # recreation time
+                        dc.evaluate_density_on_trajectories(
+                                            model=self.model,
+                                            trajectories=iter_tps(sim.storage),
+                                            update=False
+                                                            )
+                    elif step_number - first == 0:
+                        # first collection
+                        dc.evaluate_density_on_trajectories(
+                                            model=self.model,
+                                            trajectories=iter_tps(
+                                                            sim.storage,
+                                                            start=-first
+                                                                    ),
+                                            update=True
+                                                            )
+                    else:
+                        # only the last step
+                        dc.evaluate_density_on_trajectories(
+                                            model=self.model,
+                                            trajectories=iter_tps(
+                                                            sim.storage,
+                                                            start=step_number
+                                                                    ),
+                                            update=True
+                                                            )
+
             if step_number % self.save_model_interval == 0:
                 # save the model every save_model_interval MCSteps
                 spath = sim.storage.abspath

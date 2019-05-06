@@ -380,7 +380,12 @@ class TrajectoryDensityCollector:
                     at the given points in probability-space
 
         """
-        idxs = tuple(np.intp(np.floor(probabilities[:, i] * self.bins))
+        # we take the min to make sure we are always in the
+        # histogram range, even if p = 1
+        idxs = tuple(np.intp(
+                        np.minimum(np.floor(probabilities[:, i] * self.bins),
+                                   self.bins - 1)
+                             )
                      for i in range(self.n_dim)
                      )
         return self.density_histogram[idxs]
