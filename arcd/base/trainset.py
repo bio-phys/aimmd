@@ -112,8 +112,11 @@ class TrainSet(Iterable):
             start, stop, step = key.indices(len(self))
             descriptors = self._descriptors[start:stop:step]
             shots = self._shot_results[start:stop:step]
+        elif isinstance(key, np.ndarray):
+            descriptors = self._descriptors[key]
+            shots = self._shot_results[key]
         else:
-            raise KeyError('keys must be int or slice.')
+            raise KeyError('keys must be int, slice or np.ndarray.')
 
         return TrainSet(self.states,
                         descriptor_transform=self.descriptor_transform,
