@@ -120,7 +120,9 @@ class Test_keras:
                                                      'window': 100}
                                           )
         trainset = arcd.TrainSet(setup_dict['states'], setup_dict['descriptor_transform'])
-        trainhook = arcd.ops.TrainingHook(model, trainset)
+        trainhook = arcd.ops.TrainingHook(model, trainset,
+                                          # smoke test for density collection
+                                          density_collection={'first_collection': 3, 'recreate_interval': 5})
         if save_trainset == 'recreate_trainset':
             # we simply change the name under which the trainset is saved
             # this should result in the new trainhook not finding the saved data

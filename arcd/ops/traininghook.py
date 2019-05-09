@@ -228,7 +228,8 @@ class TrainingHook(PathSimulatorHook):
             found = False
             while not found:
                 if storage.steps[last_accept].change.canonical.accepted:
-                    found = True
+                    found = True  # since we use break this is not neccessary
+                    break
                 last_accept -= 1
             # now actually iterate over the storage
             for i, step in enumerate(storage.steps[start:]):
@@ -265,7 +266,7 @@ class TrainingHook(PathSimulatorHook):
                                             trajectories=iter_tps(
                                                             sim.storage,
                                                             start=-first
-                                                                    ),
+                                                                  ),
                                             update=True
                                                             )
                     else:

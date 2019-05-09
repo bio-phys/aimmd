@@ -189,7 +189,8 @@ class RCModel(ABC):
         # make sure there are enough points, otherwise take less
         # TODO: or should we return 1. in that case?
         n_points = min(len(trainset), len(self.expected_p), window)
-        n_tp_true = sum(trainset.transitions[-n_points:])
+        in_state = trainset.in_state_mask
+        n_tp_true = sum(trainset.transitions[~in_state][-n_points:])
         p_ex = np.asarray(self.expected_p[-n_points:])
         if self.n_out == 1:
             n_tp_ex = np.sum(2 * (1 - p_ex[:, 0]) * p_ex[:, 0])

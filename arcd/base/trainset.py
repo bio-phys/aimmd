@@ -33,7 +33,7 @@ class TrainSet(Iterable):
 
     # TODO: do we need weights for the points?
     def __init__(self, states, descriptor_transform=None,
-                 descriptors=None, shot_results=None):
+                 descriptors=None, shot_results=None, in_state_mask=None):
         """
         Create a TrainSet.
 
@@ -49,6 +49,11 @@ class TrainSet(Iterable):
                       if given trainset is initialized with these descriptors
         shot_results - None or numpy.ndarray [shape=(n_points, n_states)],
                        if given trainset is initialized with these shot_results
+        in_state_mask - None or numpy.ndarray [shape=(n_points, )],
+                        array of boolean values that indicate if a point lies
+                        inside any state, used as mask when separating SPs from
+                        additional training points in the states,
+                        NOTE: if not given we will assume all points are SPs
         """
         self.states = states
         n_states = len(states)
@@ -65,13 +70,28 @@ class TrainSet(Iterable):
                 raise ValueError('descriptors and shot_results must contain an'
                                  + ' equal number of points /have the same '
                                  + 'first dimension.')
+            if in_state_mask is not None:
+                in_state_mask = np.asarray(in_state_mask, dtype=np.bool_)
+                if in_state_mask.shape[0] != descriptors.shape[0]:
+                    raise ValueError('If given in_state_mask must contain an'
+                                     + ' equal number of points /have the same'
+                                     + ' first dimension as descriptors.')
         else:
             descriptors = np.empty((0, 0), dtype=np.float64)
             shot_results = np.empty((0, 0), dtype=np.float64)
+            in_state_mask = np.zeros((0,), dtype=np.bool_)
 
         self._descriptors = descriptors
         self._shot_results = shot_results
         self._fill_pointer = shot_results.shape[0]
+        # to be able to seperate the points inside of the states
+        # on which we optionally train
+        self._in_state_mask = in_state_mask
+
+    @property
+    def in_state_mask(self):
+        """Return boolean array indicating if a point lies inside any state."""
+        return self._in_state_mask[:self._fill_pointer]
 
     @property
     def shot_results(self):
@@ -108,19 +128,23 @@ class TrainSet(Iterable):
             # slice to preserve dimensionality
             descriptors = self._descriptors[:self._fill_pointer][key:key+1]
             shots = self._shot_results[:self._fill_pointer][key:key+1]
+            in_state = self._in_state_mask[:self._fill_pointer][key:key+1]
         elif isinstance(key, slice):
             start, stop, step = key.indices(len(self))
             descriptors = self._descriptors[start:stop:step]
             shots = self._shot_results[start:stop:step]
+            in_state = self._in_state_mask[start:stop:step]
         elif isinstance(key, np.ndarray):
-            descriptors = self._descriptors[key]
-            shots = self._shot_results[key]
+            descriptors = self._descriptors[:self._fill_pointer][key]
+            shots = self._shot_results[:self._fill_pointer][key]
+            in_state = self._in_state_mask[:self._fill_pointer][key]
         else:
             raise KeyError('keys must be int, slice or np.ndarray.')
 
         return TrainSet(self.states,
                         descriptor_transform=self.descriptor_transform,
-                        descriptors=descriptors, shot_results=shots)
+                        descriptors=descriptors, shot_results=shots,
+                        in_state_mask=in_state)
 
     def __setitem__(self, key):
         raise NotImplementedError
@@ -148,6 +172,7 @@ class TrainSet(Iterable):
                                           dtype=np.float64)
             self._descriptors = np.zeros((add_entries, descriptor_dim),
                                          dtype=np.float64)
+            self._in_state_mask = np.zeros((add_entries,), dtype=np.bool_)
         elif shadow_len <= self._fill_pointer + 1:
             # no space left for the next point, extend
             self._shot_results = np.concatenate(
@@ -160,6 +185,11 @@ class TrainSet(Iterable):
                  np.zeros((add_entries, descriptor_dim), dtype=np.float64)
                  )
                                                )
+            self._in_state_mask = np.concatenate(
+                (self._in_state_mask,
+                 np.zeros((add_entries,), dtype=np.bool_)
+                 )
+                                                )
 
     def append_ops_mcstep(self, mcstep, add_states=0, add_invalid=False):
         """
@@ -169,8 +199,8 @@ class TrainSet(Iterable):
         -----------
         mcstep - :class:`openpathsampling.MCStep`, the step from which we
                  extract the descriptors and shot_results
-        add_states - int, how many times to add the endpoints of the trial
-                     trajectories lying inside the states
+        add_states - int, how many (virtual) shots from the endpoints of the trial
+                     trajectories lying inside the states to add to the TrainSet
         add_invalid - bool, wheter invalid MCSteps should be added,
                       a MCStep is invalid if it contains uncommitted trials,
                       i.e. trajectories that did not reach any state
@@ -232,7 +262,7 @@ class TrainSet(Iterable):
                                + str(np.where(np.isnan(descriptors))))
                 descriptors = np.nan_to_num(descriptors)
             # add shooting results and transformed descriptors to training set
-            self.append_point(descriptors, shot_results)
+            self.append_point(descriptors, shot_results, in_state=False)
             if add_states:
                 for pt in test_points:
                     try:
@@ -247,18 +277,20 @@ class TrainSet(Iterable):
                     # the point is committed by definition so we use add_states
                     # as ad-hoc number how many times we reached the state
                     shot_results[s_num] = add_states
-                    self.append_point(descriptors, shot_results)
+                    self.append_point(descriptors, shot_results, in_state=True)
 
-    def append_point(self, descriptors, shot_results):
+    def append_point(self, descriptors, shot_results, in_state=False):
         """
         Append the given 1d-arrays of descriptors and shot_results.
 
         descriptors - np.ndarray with shape (descriptor_dim,)
         shot_results - np.ndarray with shape (n_states,)
+        in_state - bool, wheter the added point lies inside any state
         """
         self._extend_if_needed(descriptors.shape[0])
         self._shot_results[self._fill_pointer] = shot_results
         self._descriptors[self._fill_pointer] = descriptors
+        self._in_state_mask[self._fill_pointer] = in_state
         self._fill_pointer += 1
 
 
