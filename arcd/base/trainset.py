@@ -76,6 +76,11 @@ class TrainSet(Iterable):
                     raise ValueError('If given in_state_mask must contain an'
                                      + ' equal number of points /have the same'
                                      + ' first dimension as descriptors.')
+            else:
+                # only descriptors and shots given,
+                # assume all are outside of the states
+                in_state_mask = np.zeros((shot_results.shape[0],),
+                                         dtype=np.bool_)
         else:
             descriptors = np.empty((0, 0), dtype=np.float64)
             shot_results = np.empty((0, 0), dtype=np.float64)
