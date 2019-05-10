@@ -55,7 +55,7 @@ class TrainingHook(PathSimulatorHook):
         train_states - int, number of (virtual) shots from the endpoints of
                        each trial trajectory that lie inside the states,
                        used to enrich the TrainingSet with commited SPs,
-                       use a value of 0 to deactivate, default is 10
+                       use a value of 0 to deactivate, default is 0
         save_model_extension - str, the file extension to use when saving the
                                model, same as arcd.RCModel.save_model_extension
         save_model_suffix - str, suffix to append to OPS storage name when
@@ -86,7 +86,7 @@ class TrainingHook(PathSimulatorHook):
                                      'first_collection': 500,
                                      'recreate_interval': 1000,
                                      },
-                 train_states=10,
+                 train_states=0,
                  ):
         """Initialize an arcd.TrainingHook."""
         self.model = model
@@ -141,9 +141,12 @@ class TrainingHook(PathSimulatorHook):
             if descriptors is not None:
                 # we found a trainset in storage
                 logger.info('Found old TrainSet data in storage.tags')
-                return TrainSet(states, descriptor_transform=descriptor_transform,
-                                descriptors=descriptors, shot_results=shot_results,
-                                in_state_mask=in_state)
+                return TrainSet(states,
+                                descriptor_transform=descriptor_transform,
+                                descriptors=descriptors,
+                                shot_results=shot_results,
+                                in_state_mask=in_state
+                                )
             logger.info('Could not find old TrainSet data. '
                         + 'Recreating from storage.steps.')
             trainset = TrainSet(states, descriptor_transform)
