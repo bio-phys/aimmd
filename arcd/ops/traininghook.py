@@ -161,7 +161,7 @@ class TrainingHook(PathSimulatorHook):
         keys = [k for k in keys if self.save_trainset_prefix in k]
         if len(keys) < 1:
             # did not find anything
-            return None, None
+            return None, None, None
         strip = (len(self.save_trainset_prefix)
                  + len(self.save_trainset_suffix)
                  - 4  # we ignore the first characters up until the number
