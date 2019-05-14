@@ -51,7 +51,7 @@ def get_git_version():
     return git_revision
 
 
-base_version = "0.3"
+base_version = "0.4"
 git_version = get_git_version()
 if git_version is None:
     __version__ = base_version

@@ -52,10 +52,6 @@ class TrainingHook(PathSimulatorHook):
                                                    recreate the estimate, i.e.
                                                    use newly predicted probs
                                                    for all points
-        train_states - int, number of (virtual) shots from the endpoints of
-                       each trial trajectory that lie inside the states,
-                       used to enrich the TrainingSet with commited SPs,
-                       use a value of 0 to deactivate, default is 0
         save_model_extension - str, the file extension to use when saving the
                                model, same as arcd.RCModel.save_model_extension
         save_model_suffix - str, suffix to append to OPS storage name when
@@ -77,16 +73,12 @@ class TrainingHook(PathSimulatorHook):
     # into sim.storage.tags as $save_trainset_prefix + '.after_step_{:d}'
     save_trainset_prefix = 'arcd.TrainSet.data'
     save_trainset_suffix = '.after_step_{:d}'
-    # whether we add invalid MCSteps to the TrainSet
-    # this is passed to TrainSet.add_ops_step() as add_invalid
-    add_invalid_mcsteps = False
 
     def __init__(self, model, trainset, save_model_interval=500,
                  density_collection={'enabled': True,
                                      'first_collection': 500,
                                      'recreate_interval': 1000,
-                                     },
-                 train_states=0,
+                                     }
                  ):
         """Initialize an arcd.TrainingHook."""
         self.model = model
@@ -98,7 +90,6 @@ class TrainingHook(PathSimulatorHook):
                                        }
         density_collection_defaults.update(density_collection)
         self.density_collection = density_collection_defaults
-        self.train_states = train_states
 
     def _get_model_from_sim_storage(self, sim):
         if sim.storage is not None:
@@ -135,26 +126,18 @@ class TrainingHook(PathSimulatorHook):
     def _create_trainset_from_sim_storage(self, sim, states,
                                           descriptor_transform):
         if sim.storage is not None:
-            descriptors, shot_results, in_state = self._find_trainset_data(
-                                                                    sim.storage
-                                                                           )
+            descriptors, shot_results = self._find_trainset_data(sim.storage)
             if descriptors is not None:
                 # we found a trainset in storage
                 logger.info('Found old TrainSet data in storage.tags')
-                return TrainSet(states,
-                                descriptor_transform=descriptor_transform,
-                                descriptors=descriptors,
-                                shot_results=shot_results,
-                                in_state_mask=in_state
-                                )
+                return TrainSet(states, descriptor_transform,
+                                descriptors, shot_results)
+
             logger.info('Could not find old TrainSet data. '
                         + 'Recreating from storage.steps.')
             trainset = TrainSet(states, descriptor_transform)
             for step in sim.storage.steps:
-                trainset.append_ops_mcstep(
-                                mcstep=step, add_states=self.train_states,
-                                add_invalid=self.add_invalid_mcsteps
-                                          )
+                trainset.append_ops_mcstep(step)
             return trainset
         else:
             logger.error('Can not recreate TrainSet without storage')
@@ -164,7 +147,7 @@ class TrainingHook(PathSimulatorHook):
         keys = [k for k in keys if self.save_trainset_prefix in k]
         if len(keys) < 1:
             # did not find anything
-            return None, None, None
+            return None, None
         strip = (len(self.save_trainset_prefix)
                  + len(self.save_trainset_suffix)
                  - 4  # we ignore the first characters up until the number
@@ -176,19 +159,19 @@ class TrainingHook(PathSimulatorHook):
             # make sure this trainset is the one saved at last step!
             # if the previous TPS simulation was killed it can happen that
             # the trainset is not saved, we try to correct as good as possible
-            # this should at least warn now and will result in TS recreation
+            # and this should at least warn now
             logger.warning('The TrainSet we found does not match the number of'
                            + ' steps in storage. This could mean the'
                            + ' simulation before did not terminate properly.')
-            return None, None, None
+            return None, None
         data = storage.tags[keys[max_idx]]
         if len(data) == 2:
-            # backwards compability for old trainset without states
             descriptors, shot_results = data
-            in_state = None
         elif len(data) == 3:
-            descriptors, shot_results, in_state = data
-        return descriptors, shot_results, in_state
+            # make it possible to open/use storages created with TrainSets
+            # which contain in-state points
+            descriptors, shot_results, _ = data
+        return descriptors, shot_results
 
     def before_simulation(self, sim):
         """Will be called by OPS Pathsimulator once before the simulation."""
@@ -239,10 +222,10 @@ class TrainingHook(PathSimulatorHook):
             found = False
             while not found:
                 if storage.steps[last_accept].change.canonical.accepted:
-                    found = True  # since we use break this is not neccessary
+                    found = True  # not necessary since we use break
                     break
                 last_accept -= 1
-            # now actually iterate over the storage
+            # now iterate over the storage
             for i, step in enumerate(storage.steps[start:]):
                 if step.change.canonical.accepted:
                     last_accept = i + start
@@ -252,9 +235,7 @@ class TrainingHook(PathSimulatorHook):
                     yield change.canonical.trials[0].trajectory
 
         # results is the MCStep
-        self.trainset.append_ops_mcstep(mcstep=results,
-                                        add_states=self.train_states,
-                                        add_invalid=self.add_invalid_mcsteps)
+        self.trainset.append_ops_mcstep(results)
         self.model.train_hook(self.trainset)
         if sim.storage is not None:
             if self.density_collection['enabled']:
@@ -287,7 +268,7 @@ class TrainingHook(PathSimulatorHook):
                                             trajectories=iter_tps(
                                                             sim.storage,
                                                             start=step_number
-                                                                    ),
+                                                                  ),
                                             update=True
                                                             )
 
@@ -316,8 +297,7 @@ class TrainingHook(PathSimulatorHook):
                          + self.save_trainset_suffix.format(sim.step)
                          )
             sim.storage.tags[save_name] = [self.trainset.descriptors,
-                                           self.trainset.shot_results,
-                                           self.trainset.in_state_mask]
+                                           self.trainset.shot_results]
         else:
             logger.warn('Could not save model, as there is no storage '
                         + 'associated with the simulation.')
