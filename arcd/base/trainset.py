@@ -113,8 +113,8 @@ class TrainSet(Iterable):
             descriptors = self._descriptors[start:stop:step]
             shots = self._shot_results[start:stop:step]
         elif isinstance(key, np.ndarray):
-            descriptors = self._descriptors[key]
-            shots = self._shot_results[key]
+            descriptors = self._descriptors[:self._fill_pointer][key]
+            shots = self._shot_results[:self._fill_pointer][key]
         else:
             raise KeyError('keys must be int, slice or np.ndarray.')
 
@@ -162,8 +162,18 @@ class TrainSet(Iterable):
                  )
                                                )
 
-    def append_ops_mcstep(self, mcstep, ignore_invalid=False):
-        """Append the results and descriptors from given OPS MCStep."""
+    def append_ops_mcstep(self, mcstep, add_invalid=False):
+        """
+        Append the results and descriptors from given OPS MCStep.
+
+        Parameters:
+        -----------
+        mcstep - :class:`openpathsampling.MCStep`, the step from which we
+                 extract the descriptors and shot_results
+        add_invalid - bool, wheter invalid MCSteps should be added,
+                      a MCStep is invalid if it contains uncommitted trials,
+                      i.e. trajectories that did not reach any state
+        """
         try:
             details = mcstep.change.canonical.details
             shooting_snap = details.shooting_snapshot
@@ -201,23 +211,23 @@ class TrainSet(Iterable):
             # it makes no contribution to the loss since terms are 0,
             # this makes the 'harmonic loss' from multi-domain models blow up,
             # also some regularization schemes will overcount/overregularize
-            if total_count < 2 and not ignore_invalid:
-                logger.warning('Total states reached is < 2. This probably means '
-                            + 'there are uncommited trajectories. '
-                            + 'Will not add the point.')
+            if total_count < 2 and not add_invalid:
+                logger.warning('Total states reached is < 2. This probably '
+                               + 'means there are uncommited trajectories. '
+                               + 'Will not add the point.')
                 return
             # get and possibly transform descriptors
             # descriptors is a 1d-array, since we use a snap and no traj in CV
             descriptors = self.descriptor_transform(shooting_snap)
             if not np.all(np.isfinite(descriptors)):
                 logger.warning('There are NaNs or infinities in the training '
-                            + 'descriptors. \n We used numpy.nan_to_num() to'
-                            + ' proceed. You might still want to have '
-                            + '(and should have) a look @ \n'
-                            + 'np.where(np.isinf(descriptors): '
-                            + str(np.where(np.isinf(descriptors)))
-                            + 'and np.where(np.isnan(descriptors): '
-                            + str(np.where(np.isnan(descriptors))))
+                               + 'descriptors. \n We used numpy.nan_to_num() '
+                               + 'to proceed. You might still want to have '
+                               + '(and should have) a look @ \n'
+                               + 'np.where(np.isinf(descriptors): '
+                               + str(np.where(np.isinf(descriptors)))
+                               + 'and np.where(np.isnan(descriptors): '
+                               + str(np.where(np.isnan(descriptors))))
                 descriptors = np.nan_to_num(descriptors)
             # add shooting results and transformed descriptors to training set
             self.append_point(descriptors, shot_results)

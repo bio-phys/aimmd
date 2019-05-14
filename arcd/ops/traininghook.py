@@ -73,6 +73,9 @@ class TrainingHook(PathSimulatorHook):
     # into sim.storage.tags as $save_trainset_prefix + '.after_step_{:d}'
     save_trainset_prefix = 'arcd.TrainSet.data'
     save_trainset_suffix = '.after_step_{:d}'
+    # whether we add invalid MCSteps to the TrainSet
+    # this is passed to TrainSet.add_ops_step() as add_invalid
+    add_invalid_mcsteps = False
 
     def __init__(self, model, trainset, save_model_interval=500,
                  density_collection={'enabled': True,
@@ -137,7 +140,10 @@ class TrainingHook(PathSimulatorHook):
                         + 'Recreating from storage.steps.')
             trainset = TrainSet(states, descriptor_transform)
             for step in sim.storage.steps:
-                trainset.append_ops_mcstep(step)
+                trainset.append_ops_mcstep(
+                                        mcstep=step,
+                                        add_invalid=self.add_invalid_mcsteps
+                                           )
             return trainset
         else:
             logger.error('Can not recreate TrainSet without storage')
@@ -235,7 +241,10 @@ class TrainingHook(PathSimulatorHook):
                     yield change.canonical.trials[0].trajectory
 
         # results is the MCStep
-        self.trainset.append_ops_mcstep(results)
+        self.trainset.append_ops_mcstep(
+                                    mcstep=results,
+                                    add_invalid=self.add_invalid_mcsteps
+                                        )
         self.model.train_hook(self.trainset)
         if sim.storage is not None:
             if self.density_collection['enabled']:
