@@ -98,6 +98,7 @@ class Test_pytorch:
         assert np.allclose(predictions_before, predictions_after)
         assert np.allclose(test_loss_before, test_loss_after)
 
+
     @pytest.mark.parametrize("save_trainset, model_type",
                              [('load_trainset', 'EESingleDomain'),
                               ('recreate_trainset', 'EESingleDomain'),
@@ -173,8 +174,7 @@ class Test_pytorch:
         load_sampler.run(1)
         # check that the two trainsets are the same
         # at least except for the last step
-        # the last 'step' has 3 entries, since we add the two endstates
-        assert np.allclose(load_trainhook.trainset.descriptors[:-3],
+        assert np.allclose(load_trainhook.trainset.descriptors[:-1],
                            trainset.descriptors)
-        assert np.allclose(load_trainhook.trainset.shot_results[:-3],
+        assert np.allclose(load_trainhook.trainset.shot_results[:-1],
                            trainset.shot_results)
