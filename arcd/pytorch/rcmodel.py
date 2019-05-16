@@ -186,7 +186,6 @@ class PytorchRCModel(RCModel):
     @abstractmethod
     def train_decision(self, trainset):
         # this should decide if we train or not
-        # TODO: possibly return/set the learning rate?!
         # return tuple(train, new_lr, epochs)
         # train -> bool
         # new_lr -> float or None; if None: no change
@@ -301,6 +300,93 @@ class EEPytorchRCModel(PytorchRCModel):
                                                                         epochs)
                     )
         return train, lr, epochs
+
+
+# ensemble prediction RCModels
+class EnsemblePredictionPytorchRCModel(RCModel):
+    """
+    Wrapper for pytorch models that performs ensemble predictions.
+
+    Training uses a Hamiltonian Monte Carlo algorithm (see e.g. MacKay pp.492).
+    TODO: clarify what we actually do when we know it
+    TODO: we should give the different NN weights a weight to indicate the number of training points!
+    Predictions are done by averaging over the ensemble of NN weights.
+    """
+    def __init__(self, nnet, hmc_params={'epsilon': 0.1},
+                 descriptor_transform=None, loss=None):
+        self.nnet = nnet  # a pytorch.nn.Module
+        # any pytorch.optim optimizer, model parameters need to be registered already
+        self.log_train_decision = []
+        self.log_train_loss = []
+        self._count_train_hook = 0
+        # needed to create the tensors on the correct device
+        self._device = next(self.nnet.parameters()).device
+        self._dtype = next(self.nnet.parameters()).dtype
+        if loss is not None:
+            # if custom loss given we take that
+            self.loss = loss
+        else:
+            # otherwise we take the correct one for given n_out
+            if self.n_out == 1:
+                self.loss = binomial_loss
+            else:
+                self.loss = multinomial_loss
+        # as always: call super __init__ last such that it can use the fully
+        # initialized subclasses methods
+        super().__init__(descriptor_transform)
+
+    @property
+    def n_out(self):
+        # FIXME:TODO: only works if the last layer is a linear layer
+        # but it can have an activation func, just not an embedding etc
+        return list(self.nnet.modules())[-1].out_features
+
+    @classmethod
+    def set_state(cls, state):
+        obj = cls(nnet=state['nnet'])
+        obj.__dict__.update(state)
+        return obj
+
+    @classmethod
+    def fix_state(cls, state):
+        # restore the nnet
+        nnet = state['nnet_class'](**state['nnet_call_kwargs'])
+        del state['nnet_class']
+        del state['nnet_call_kwargs']
+        dev = _fix_pytorch_device(state['_device'])
+        nnet.to(dev)
+        nnet.load_state_dict(state['nnet'])
+        state['nnet'] = nnet
+        # TODO: restore the ensemble weights!
+        # TODO: but for this we need to know how we keep them in mem first
+
+    def save(self, fname, overwrite=False):
+        # keep a ref to nnet
+        nnet = self.nnet
+        # replace it in self.__dict__
+        self.nnet_class = nnet.__class__
+        self.nnet_call_kwargs = nnet.call_kwargs
+        self.nnet = nnet.state_dict()
+        # TODO: save ensemble of NN weights
+        super().save(fname, overwrite=overwrite)
+        # reset the network
+        self.nnet = nnet
+        # keep namespace clean
+        del self.nnet_class
+        del self.nnet_call_kwargs
+
+    @abstractmethod
+    def train_decision(self, trainset):
+        # this should decide if we train or not
+        # return tuple(train, new_lr, epochs)
+        # train -> bool
+        # new_lr -> float or None; if None: no change
+        # epochs -> number of passes over the training set
+        pass
+
+    def train_hook(self, trainset):
+        # called by TrainingHook after every TPS MCStep
+        # TODO!
 
 
 # MULTIDOMAIN RCModels
