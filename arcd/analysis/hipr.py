@@ -156,3 +156,56 @@ class HIPRanalysis:
                                                     )
         self.hipr_losses_plus = hipr_losses_plus
         return hipr_losses_plus
+
+    def do_hipr_plus_correlations(self, indices, n_redraw=None):
+        """
+        Perform correlation HIPR analysis plus for given index combinations.
+
+        Permutes the descriptor values for the given indices together first
+        using different permutations for each input and second using the same
+        permutation order for all indices in one group. This can be used to
+        quantify the correlations between them. Correlated descriptors will
+        result in a higher loss when permuted in the same permutation order.
+
+        Parameters
+        ----------
+        indices - list of list or list of 1d arrays, Each entry in the outer
+                  list represents a group of indices for which correlations
+                  should be calculated,
+                  Note that although a group will usually contain two indices
+                  any number of indices (>1) is supported
+
+        """
+        if n_redraw is None:
+            n_redraw = self.n_redraw
+
+        losses = np.zeros((len(indices), 2))
+        for i, idxs in enumerate(indices):
+            for _ in range(n_redraw):
+                # permute idxs in parallel, but using different permutations
+                descriptors = self.trainset.descriptors.copy()
+                for idx in idxs:
+                    permut_idxs = np.random.permutation(len(self.trainset))
+                    descriptors[:, idx] = descriptors[:, idx][permut_idxs]
+                ts = TrainSet(
+                    self.trainset.states,
+                    descriptor_transform=self.trainset.descriptor_transform,
+                    descriptors=descriptors,
+                    shot_results=self.trainset.shot_results
+                             )
+                losses[i, 0] += self.model.test_loss(ts, **self.call_kwargs)
+                # now permute all idxs together
+                descriptors = self.trainset.descriptors.copy()
+                permut_idxs = np.random.permutation(len(self.trainset))
+                for idx in idxs:
+                    descriptors[:, idx] = descriptors[:, idx][permut_idxs]
+                ts = TrainSet(
+                    self.trainset.states,
+                    descriptor_transform=self.trainset.descriptor_transform,
+                    descriptors=descriptors,
+                    shot_results=self.trainset.shot_results
+                             )
+                losses[i, 1] += self.model.test_loss(ts, **self.call_kwargs)
+        # take the mean over n_redraw realizations
+        losses /= n_redraw
+        return losses
