@@ -31,11 +31,11 @@ def binomial_loss(input, target):
     input is the predicted log likelihood,
     target are the true event counts, i.e. states reached for TPS
 
-    NOTE: This is NOT normalized in any way.
+    NOTE: This is normalized per shot.
     """
     return torch.sum(target[:, 0] * torch.log(1. + torch.exp(input[:, 0]))
                      + target[:, 1] * torch.log(1. + torch.exp(-input[:, 0]))
-                     )
+                     ) / torch.sum(target)
 
 
 def binomial_loss_vect(input, target):
@@ -49,7 +49,7 @@ def binomial_loss_vect(input, target):
     """
     return (target[:, 0] * torch.log(1. + torch.exp(input[:, 0]))
             + target[:, 1] * torch.log(1. + torch.exp(-input[:, 0]))
-            )
+            ) / torch.sum(target, dim=1)
 
 
 def multinomial_loss(input, target):
@@ -58,10 +58,10 @@ def multinomial_loss(input, target):
     input are the predicted unnormalized loglikeliehoods,
     target the corresponding true event counts
 
-    NOTE: This is NOT normalized in any way.
+    NOTE: This is normalized per shot.
     """
     ln_Z = torch.log(torch.sum(torch.exp(input), dim=1, keepdim=True))
-    return torch.sum((ln_Z - input) * target)
+    return torch.sum((ln_Z - input) * target) / torch.sum(target)
 
 
 def multinomial_loss_vect(input, target):
@@ -74,7 +74,7 @@ def multinomial_loss_vect(input, target):
     Needed for multidomain RCModels to train the classifier.
     """
     ln_Z = torch.log(torch.sum(torch.exp(input), dim=1, keepdim=True))
-    return torch.sum((ln_Z - input) * target, dim=1)
+    return torch.sum((ln_Z - input) * target, dim=1) / torch.sum(target, dim=1)
 
 
 def _fix_pytorch_device(location):
@@ -186,22 +186,25 @@ class PytorchRCModel(RCModel):
     @abstractmethod
     def train_decision(self, trainset):
         # this should decide if we train or not
-        # return tuple(train, new_lr, epochs)
+        # return tuple(train, new_lr, epochs, batch_size)
         # train -> bool
         # new_lr -> float or None; if None: no change
         # epochs -> number of passes over the training set
+        # batch_size -> size of the chunks of the trainset to use for training
         pass
 
     def train_hook(self, trainset):
         self._count_train_hook += 1
-        train, new_lr, epochs = self.train_decision(trainset)
-        self.log_train_decision.append([train, new_lr, epochs])
+        train, new_lr, epochs, batch_size = self.train_decision(trainset)
+        self.log_train_decision.append([train, new_lr, epochs, batch_size])
         if new_lr is not None:
             logger.info('Setting learning rate to {:.3e}'.format(new_lr))
             self.set_lr(new_lr)
         if train:
             logger.info('Training for {:d} epochs'.format(epochs))
-            self.log_train_loss.append([self.train_epoch(trainset)
+            self.log_train_loss.append([self.train_epoch(trainset,
+                                                         batch_size=batch_size
+                                                         )
                                         for _ in range(epochs)])
 
     def test_loss(self, trainset, batch_size=128):
@@ -216,9 +219,9 @@ class PytorchRCModel(RCModel):
                                                dtype=self._dtype)
                 q_pred = self.nnet(descriptors)
                 loss = self.loss(q_pred, shot_results)
-                total_loss += float(loss)
+                total_loss += float(loss) * len(shot_results)
         self.nnet.train()  # and back to train mode
-        return total_loss / np.sum(trainset.shot_results)
+        return total_loss / len(trainset)
 
     def set_lr(self, new_lr):
         # TODO: new_lr could be a list of different values if we have more parametersets...
@@ -230,18 +233,22 @@ class PytorchRCModel(RCModel):
         # returns loss per shot averaged over whole training set
         total_loss = 0.
         for descriptors, shot_results in trainset.iter_batch(batch_size, shuffle):
-            self.optimizer.zero_grad()
-            # create descriptors and results tensors where the model lives
-            descriptors = torch.as_tensor(descriptors, device=self._device,
+            # define closure func so we can use conjugate gradient or LBFGS
+            def closure():
+                self.optimizer.zero_grad()
+                # create descriptors and results tensors where the model lives
+                descrip = torch.as_tensor(descriptors, device=self._device,
                                           dtype=self._dtype)
-            shot_results = torch.as_tensor(shot_results, device=self._device,
-                                           dtype=self._dtype)
-            q_pred = self.nnet(descriptors)
-            loss = self.loss(q_pred, shot_results)
-            total_loss += float(loss)
-            loss.backward()
-            self.optimizer.step()
-        return total_loss / np.sum(trainset.shot_results)
+                s_res = torch.as_tensor(shot_results, device=self._device,
+                                        dtype=self._dtype)
+                q_pred = self.nnet(descrip)
+                loss = self.loss(q_pred, s_res)
+                loss.backward()
+                return loss
+
+            loss = self.optimizer.step(closure)
+            total_loss += float(loss) * len(descriptors)
+        return total_loss / len(trainset)
 
     def _log_prob(self, descriptors):
         self.nnet.eval()  # put model in evaluation mode
@@ -268,12 +275,16 @@ class EEPytorchRCModel(PytorchRCModel):
         interval - int, we attempt to train every interval MCStep,
                    measured by self.train_hook() calls
         window - int, size of the smoothing window used for expected efficiency
+        batch_size - int or None, size of chunks of trainset for training,
+                     NOTE: if None, we will use len(trainset), this is needed
+                     for using some optimizers, e.g. LBFGS
     """
     def __init__(self, nnet, optimizer, ee_params={'lr_0': 1e-3,
                                                    'lr_min': 1e-4,
                                                    'epochs_per_train': 5,
                                                    'interval': 3,
-                                                   'window': 100},
+                                                   'window': 100,
+                                                   'batch_size': None},
                  descriptor_transform=None, loss=None):
         super().__init__(nnet, optimizer, descriptor_transform, loss)
         # make it possible to pass only the altered values in dictionary
@@ -281,12 +292,12 @@ class EEPytorchRCModel(PytorchRCModel):
                               'lr_min': 1e-4,
                               'epochs_per_train': 5,
                               'interval': 3,
-                              'window': 100}
+                              'window': 100,
+                              'batch_size': None}
         ee_params_defaults.update(ee_params)
         self.ee_params = ee_params_defaults
 
     def train_decision(self, trainset):
-        # TODO: atm this is the same as for EEMDRCModel, but EEMDRCmodel will probably diverge?
         train = False
         lr = self.ee_params['lr_0']
         lr *= self.train_expected_efficiency_factor(trainset,
@@ -295,11 +306,14 @@ class EEPytorchRCModel(PytorchRCModel):
             if lr >= self.ee_params['lr_min']:
                 train = True
         epochs = self.ee_params['epochs_per_train']
-        logger.info('Decided train={:d}, lr={:.3e}, epochs={:d}'.format(train,
-                                                                        lr,
-                                                                        epochs)
+        batch_size = self.ee_params['batch_size']
+        if batch_size is None:
+            batch_size = len(trainset)
+        logger.info('Decided train=' + str(train) + ', lr=' + str(lr)
+                    + ', epochs=' + str(epochs)
+                    + ', batch_size=' + str(batch_size)
                     )
-        return train, lr, epochs
+        return train, lr, epochs, batch_size
 
 
 # ensemble prediction RCModels
@@ -382,11 +396,12 @@ class EnsemblePredictionPytorchRCModel(RCModel):
         # train -> bool
         # new_lr -> float or None; if None: no change
         # epochs -> number of passes over the training set
-        pass
+        raise NotImplementedError
 
     def train_hook(self, trainset):
         # called by TrainingHook after every TPS MCStep
         # TODO!
+        raise NotImplementedError
 
 
 # MULTIDOMAIN RCModels
@@ -599,8 +614,7 @@ class MultiDomainPytorchRCModel(RCModel):
         # calculate the test loss for the combined weighted prediction
         # p_i = \sum_m p_c(m) * p_i(m)
         # i.e. the loss the model would suffer when used as a whole
-        # FIXME: we normalize per shot assuming TwoWayShooting as always
-        # self.__call__() puts the model in evaluation mode
+        # Note that self.__call__() puts the model in evaluation mode
         p = self(trainset.descriptors, use_transform=False)
         if self.n_out == 1:
             p = p[:, 0]  # make it a 1d array
@@ -628,6 +642,7 @@ class MultiDomainPytorchRCModel(RCModel):
         # very similiar to _train_epoch_pnets but without gradient collection
         with torch.no_grad():
             for descriptors, shot_results in trainset.iter_batch(batch_size, False):
+                batch_len = len(shot_results)
                 if self._pnets_same_device:
                     # create descriptors and results tensors where the models live
                     descriptors = torch.as_tensor(descriptors,
@@ -650,18 +665,16 @@ class MultiDomainPytorchRCModel(RCModel):
                                                        dtype=self._pdtypes[i])
                     q_pred = pnet(descriptors)
                     l_m = self.loss(q_pred, shot_results)
-                    loss_by_model[i] += float(torch.sum(l_m))
+                    loss_by_model[i] += float(torch.sum(l_m)) * batch_len
                     l_m_sum += torch.pow(l_m, self.gamma).to(l_m_sum.device)
                 # end models loop
                 L_gamma = torch.sum(torch.pow(l_m_sum / len(self.pnets), 1/self.gamma))
-                total_loss += float(L_gamma)
+                total_loss += float(L_gamma) * batch_len
             # end trainset loop
         # end torch.no_grad()
         # back to training mode for all pnets
         self.pnets = [pn.train() for pn in self.pnets]
-        return (np.asarray(loss_by_model + [total_loss])
-                / np.sum(trainset.shot_results)
-                )
+        return np.asarray(loss_by_model + [total_loss]) / len(trainset)
 
     def _test_loss_cnet(self, trainset, batch_size):
         cnet_targets = self.create_cnet_targets(trainset, batch_size)
@@ -699,6 +712,7 @@ class MultiDomainPytorchRCModel(RCModel):
         total_loss = 0.
         loss_by_model = [0. for _ in self.pnets]
         for descriptors, shot_results in trainset.iter_batch(batch_size, shuffle):
+            batch_len = len(shot_results)
             self.poptimizer.zero_grad()
             if self._pnets_same_device:
                 # create descriptors and results tensors where the models live
@@ -722,17 +736,15 @@ class MultiDomainPytorchRCModel(RCModel):
                                                    dtype=self._pdtypes[i])
                 q_pred = pnet(descriptors)
                 l_m = self.loss(q_pred, shot_results)
-                loss_by_model[i] += float(torch.sum(l_m))
+                loss_by_model[i] += float(torch.sum(l_m)) * batch_len
                 l_m_sum += torch.pow(l_m, self.gamma).to(l_m_sum.device)
             # end models loop
             L_gamma = torch.sum(torch.pow(l_m_sum / len(self.pnets), 1/self.gamma))
-            total_loss += float(L_gamma)
+            total_loss += float(L_gamma) * batch_len
             L_gamma.backward()
             self.poptimizer.step()
         # end trainset loop
-        return (np.asarray(loss_by_model + [total_loss])
-                / np.sum(trainset.shot_results)
-                )
+        return np.asarray(loss_by_model + [total_loss]) / len(trainset)
 
     def create_cnet_targets(self, trainset, batch_size=128):
         # build the trainset for classifier,
@@ -768,10 +780,7 @@ class MultiDomainPytorchRCModel(RCModel):
                                                        device=self._pdevices[i],
                                                        dtype=self._pdtypes[i])
                     q_pred = pnet(descriptors)
-                    # normalize per shot
-                    l_m = (self.loss(q_pred, shot_results)
-                           / torch.sum(shot_results, dim=1)
-                           )
+                    l_m = self.loss(q_pred, shot_results)
                     l_m_arr[:, i] = l_m.to(l_m_arr.device)
                 # end models loop
                 # find minimum loss value model indexes for each point
