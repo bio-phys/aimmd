@@ -15,5 +15,5 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 from . import networks
-from .rcmodel import (PytorchRCModel, EEPytorchRCModel,
+from .rcmodel import (PytorchRCModel, EEPytorchRCModel, EERandPytorchRCModel,
                       MultiDomainPytorchRCModel, EEMDPytorchRCModel)
