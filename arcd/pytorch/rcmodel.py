@@ -388,12 +388,16 @@ class EnsemblePredictionPytorchRCModel(RCModel):
     Predictions are done by averaging over the ensemble of NN weights.
     """
     def __init__(self, nnet, optimizer,
-                 descriptor_transform=None, loss=None):
+                 descriptor_transform=None, param_ensemble=None, loss=None):
         self.nnet = nnet  # a pytorch.nn.Module
         # any pytorch.optim optimizer, model parameters need to be registered already
+        self.optimizer = optimizer
+        if param_ensemble is None:
+            self.param_ensemble = ParameterEnsembleStore()
         self.log_train_decision = []
         self.log_train_loss = []
         self._count_train_hook = 0
+        self._count_train_epochs = 0
         # needed to create the tensors on the correct device
         self._device = next(self.nnet.parameters()).device
         self._dtype = next(self.nnet.parameters()).dtype
@@ -418,7 +422,7 @@ class EnsemblePredictionPytorchRCModel(RCModel):
 
     @classmethod
     def set_state(cls, state):
-        obj = cls(nnet=state['nnet'])
+        obj = cls(nnet=state['nnet'], optimizer=state['optimizer'])
         obj.__dict__.update(state)
         return obj
 
@@ -434,6 +438,11 @@ class EnsemblePredictionPytorchRCModel(RCModel):
         state['nnet'] = nnet
         # TODO: restore the ensemble weights!
         # TODO: but for this we need to know how we keep them in mem first
+        optimizer = state['optimizer_class'](nnet.parameters())
+        del state['optimizer_class']
+        optimizer.load_state_dict(state['optimizer'])
+        state['optimizer'] = optimizer
+        return state
 
     def save(self, fname, overwrite=False):
         # keep a ref to nnet
@@ -442,13 +451,20 @@ class EnsemblePredictionPytorchRCModel(RCModel):
         self.nnet_class = nnet.__class__
         self.nnet_call_kwargs = nnet.call_kwargs
         self.nnet = nnet.state_dict()
+        # same for optimizer
+        optimizer = self.optimizer
+        self.optimizer_class = optimizer.__class__
+        self.optimizer = optimizer.state_dict()
         # TODO: save ensemble of NN weights
+        # TODO: check that it works, if we just pickle
         super().save(fname, overwrite=overwrite)
         # reset the network
         self.nnet = nnet
+        self.optimizer = optimizer
         # keep namespace clean
         del self.nnet_class
         del self.nnet_call_kwargs
+        del self.optimizer_class
 
     @abstractmethod
     def train_decision(self, trainset):
@@ -461,24 +477,57 @@ class EnsemblePredictionPytorchRCModel(RCModel):
 
     def train_hook(self, trainset):
         # called by TrainingHook after every TPS MCStep
-        pass
+        self._count_train_hook += 1
+        train, new_lr, epochs, batch_size = self.train_decision(trainset)
+        self.log_train_decision.append([train, new_lr, epochs, batch_size])
+        if new_lr is not None:
+            logger.info('Setting learning rate to {:.3e}'.format(new_lr))
+            self.set_lr(new_lr)
+        if train:
+            logger.info('Training for {:d} epochs'.format(epochs))
+            self.log_train_loss.append([self.train_epoch(trainset,
+                                                         batch_size=batch_size
+                                                         )
+                                        for _ in range(epochs)])
+
+    def _set_nnet_params(self, params):
+        for op, p in zip(self.nnet.parameters(), params):
+            op.data.copy_(p.data)
+
+    def test_loss(self, trainset, batch_size=None):
+        self.nnet.eval()
+        # store current params
+        cur_params = [torch.empty_like(p.data).copy_(p.data)
+                      for p in self.nnet.parameters()]
+        
+
 
 class ParameterEnsembleStore:
     """
     Store an ensemble of neural network weights with associated weights
 
     """
-    def __init__(self, n_max, keep_device=True):
+    def __init__(self, n_max=10, keep_device=True, params=None, weights=None):
         """
         n_max - int, maximal number of parmeter samples to store
         on_device - bool, wheter the parameters should be stored on the same
                     device as the Network they belong to,
                     If False we will always move to CPU
+        params - None or list of lists, each of which contains NN parameters
+        weights - None or list of float, weights for given params
         """
         self.n_max = n_max
-        self.keep_device = True
+        self.keep_device = keep_device
         self._params = []  # the network parameters
         self._weights = []  # the corresponding ensemble weight
+        # use our checks for max_len by appending
+        if params is not None:
+            if weights is not None:
+                for p, w in zip(params, weights):
+                    self.append(p, w)
+            else:
+                for p in params:
+                    self.append(p)
 
     def __len__(self):
         return len(self._weights)
