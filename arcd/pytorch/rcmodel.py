@@ -336,29 +336,38 @@ class EERandPytorchRCModel(PytorchRCModel):
     """
 
     def __init__(self, nnet, optimizer, ee_params={'epochs_per_train': 1,
-                                                   'interval': 3,
+                                                   'interval': 2,
+                                                   'max_interval': 10,
                                                    'window': 100,
                                                    'batch_size': None},
                  descriptor_transform=None, loss=None):
         super().__init__(nnet, optimizer, descriptor_transform, loss)
         # make it possible to pass only the altered values in dictionary
         ee_params_defaults = {'epochs_per_train': 1,
-                              'interval': 3,
+                              'interval': 2,
+                              'max_interval': 10,
                               'window': 100,
                               'batch_size': None}
         ee_params_defaults.update(ee_params)
         self.ee_params = ee_params_defaults
+        self._decisions_since_last_train = 0
 
     def train_decision(self, trainset):
         train = False
-        lr = None  # will never change lr
-        if self._count_train_hook % self.ee_params['interval'] == 0:
+        self._decisions_since_last_train += 1
+        if self._decisions_since_last_train >= self.ee_params['max_interval']:
+            train = True
+            self._decisions_since_last_train = 0
+        elif self._count_train_hook % self.ee_params['interval'] == 0:
             ee_fact = self.train_expected_efficiency_factor(
                                                 trainset=trainset,
                                                 window=self.ee_params['window']
                                                             )
             if np.random.ranf() < ee_fact:
                 train = True
+                self._decisions_since_last_train = 0
+
+        lr = None  # will not change the lr
         epochs = self.ee_params['epochs_per_train']
         batch_size = self.ee_params['batch_size']
         logger.info('Decided train=' + str(train) + ', lr=' + str(lr)
@@ -378,7 +387,7 @@ class EnsemblePredictionPytorchRCModel(RCModel):
     TODO: we should give the different NN weights a weight to indicate the number of training points!
     Predictions are done by averaging over the ensemble of NN weights.
     """
-    def __init__(self, nnet, hmc_params={'epsilon': 0.1},
+    def __init__(self, nnet, optimizer,
                  descriptor_transform=None, loss=None):
         self.nnet = nnet  # a pytorch.nn.Module
         # any pytorch.optim optimizer, model parameters need to be registered already
@@ -404,7 +413,7 @@ class EnsemblePredictionPytorchRCModel(RCModel):
     @property
     def n_out(self):
         # FIXME:TODO: only works if the last layer is a linear layer
-        # but it can have an activation func, just not an embedding etc
+        # but it can have any activation func, just not an embedding etc
         return list(self.nnet.modules())[-1].out_features
 
     @classmethod
@@ -452,8 +461,49 @@ class EnsemblePredictionPytorchRCModel(RCModel):
 
     def train_hook(self, trainset):
         # called by TrainingHook after every TPS MCStep
-        # TODO!
-        raise NotImplementedError
+        pass
+
+class ParameterEnsembleStore:
+    """
+    Store an ensemble of neural network weights with associated weights
+
+    """
+    def __init__(self, n_max, keep_device=True):
+        """
+        n_max - int, maximal number of parmeter samples to store
+        on_device - bool, wheter the parameters should be stored on the same
+                    device as the Network they belong to,
+                    If False we will always move to CPU
+        """
+        self.n_max = n_max
+        self.keep_device = True
+        self._params = []  # the network parameters
+        self._weights = []  # the corresponding ensemble weight
+
+    def __len__(self):
+        return len(self._weights)
+
+    def append(self, params, weight=1.):
+        if len(self) >= self.n_max:
+            # remove a random sample
+            idx = np.random.randint(len(self))
+            self._params.pop(idx)
+            self._weights.pop(idx)
+        if self.keep_device:
+            self._params.append([torch.empty_like(p.data).copy_(p.data)
+                                 for p in params])
+        else:
+            self._params.append([torch.empty_like(p.data,
+                                                  device='cpu').copy_(p.data)
+                                 for p in params])
+        self._weights.append(weight)
+
+    def __iter__(self):
+        for p, w in zip(self._params, self._weights):
+            yield (p, w)
+
+    def __getitem__(self, idx):
+        return self._params[idx], self._weights[idx]
 
 
 # MULTIDOMAIN RCModels
