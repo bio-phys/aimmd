@@ -596,7 +596,7 @@ class EnsemblePredictionPytorchRCModel(RCModel):
         self._count_train_epochs += 1
         n_shots = np.sum(trainset.shot_results)
         self._cur_params_weight = n_shots
-        if self.sample_params_interval % self._count_train_epochs == 0:
+        if self._count_train_epochs % self.sample_params_interval == 0:
             self.param_ensemble.append(self.nnet.parameters(), n_shots)
         return total_loss / n_shots
 
