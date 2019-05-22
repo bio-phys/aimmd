@@ -16,4 +16,6 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 from . import networks
 from .rcmodel import (PytorchRCModel, EEPytorchRCModel, EERandPytorchRCModel,
+                      EnsemblePredictionPytorchRCModel,
+                      EERandEnsPytorchRCModel,
                       MultiDomainPytorchRCModel, EEMDPytorchRCModel)

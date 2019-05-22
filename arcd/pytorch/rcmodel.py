@@ -387,6 +387,12 @@ class EnsemblePredictionPytorchRCModel(RCModel):
     TODO: we should give the different NN weights a weight to indicate the number of training points!
     Predictions are done by averaging over the ensemble of NN weights.
     """
+    # TODO: not so clean...
+    sample_params_interval = 10
+    #TODO/FIXME: this only differs from PytorchRCModel marginally:
+    # 1. it contains an additional ParamStore + a bit of additional state
+    # 2. functionwise only __call__, _log_prob, train_hook and test_loss differ from PytochRCModel
+    # -> we should probably think about deduplicating code by subclassing...
     def __init__(self, nnet, optimizer,
                  descriptor_transform=None, param_ensemble=None, loss=None):
         self.nnet = nnet  # a pytorch.nn.Module
@@ -398,6 +404,9 @@ class EnsemblePredictionPytorchRCModel(RCModel):
         self.log_train_loss = []
         self._count_train_hook = 0
         self._count_train_epochs = 0
+        # number of shots in trainset for current params
+        # must initialize to 1 because it is the first weight
+        self._cur_params_weight = 1
         # needed to create the tensors on the correct device
         self._device = next(self.nnet.parameters()).device
         self._dtype = next(self.nnet.parameters()).dtype
@@ -494,12 +503,169 @@ class EnsemblePredictionPytorchRCModel(RCModel):
         for op, p in zip(self.nnet.parameters(), params):
             op.data.copy_(p.data)
 
-    def test_loss(self, trainset, batch_size=None):
+    def log_prob(self, descriptors, use_transform=True):
+        return self._log_prob(descriptors, use_transform)
+
+    def _log_prob(self, descriptors, use_transform=False):
+        p = self(descriptors, use_transform)
+        if p.shape[1] == 1:
+            return np.log(1. / p - 1.)
+        return np.log(p)
+
+    # NOTE: prediction happens in here,
+    # since we have to do the weighting in probability space
+    def __call__(self, descriptors, use_transform=True, detailed_predictions=False):
+        if self.n_out == 1:
+            def p_func(q):
+                return 1. / (1. + torch.exp(-q))
+        else:
+            def p_func(q):
+                exp_q = torch.exp(q)
+                return exp_q / torch.sum(exp_q, dim=1, keepdim=True)
+
+        if use_transform:
+            descriptors = self._apply_descriptor_transform(descriptors)
+
         self.nnet.eval()
-        # store current params
         cur_params = [torch.empty_like(p.data).copy_(p.data)
                       for p in self.nnet.parameters()]
-        
+        # TODO: do we need no_grad? or is eval and no_grad redundant?
+        with torch.no_grad():
+            descriptors = torch.as_tensor(descriptors, device=self._device,
+                                          dtype=self._dtype)
+            plist = []
+            wlist = []
+            plist.append(p_func(self.nnet(descriptors)).cpu().numpy())
+            wlist.append(self._cur_params_weight)
+            for p, w in self.param_ensemble:
+                self._set_nnet_params(p)
+                plist.append(p_func(self.nnet(descriptors)).cpu().numpy())
+                wlist.append(w)
+        p_weighted = 0
+        for p, w in zip(plist, wlist):
+            p_weighted = p_weighted + p * w
+        p_weighted /= sum(wlist)
+        # reset nnet params
+        self._set_nnet_params(cur_params)
+        self.nnet.train()
+        if detailed_predictions:
+            return p_weighted, plist
+        return p_weighted
+
+    def test_loss(self, trainset):
+        # calculate the test loss for the combined weighted prediction
+        # i.e. the loss the model suffers when used as a whole
+        # Note that self.__call__() puts the model in evaluation mode
+        p = self(trainset.descriptors, use_transform=False)
+        if self.n_out == 1:
+            p = p[:, 0]  # make it a 1d array
+            loss = - (np.sum(trainset.shot_results[:, 0] * np.log(1 - p)
+                             + trainset.shot_results[:, 1] * np.log(p)
+                             )
+                      / np.sum(trainset.shot_results)
+                      )
+        else:
+            log_p = np.log(p)
+            loss = - (np.sum([n * lp
+                              for n, lp in zip(trainset.shot_results, log_p)]
+                             )
+                      / np.sum(trainset.shot_results)
+                      )
+        return loss
+
+    def train_epoch(self, trainset, batch_size=None, shuffle=True):
+        # one pass over the whole trainset
+        # returns loss per shot averaged over whole training set
+        total_loss = 0.
+        for descriptors, shot_results in trainset.iter_batch(batch_size, shuffle):
+            # define closure func so we can use conjugate gradient or LBFGS
+            def closure():
+                self.optimizer.zero_grad()
+                # create descriptors and results tensors where the model lives
+                descrip = torch.as_tensor(descriptors, device=self._device,
+                                          dtype=self._dtype)
+                s_res = torch.as_tensor(shot_results, device=self._device,
+                                        dtype=self._dtype)
+                q_pred = self.nnet(descrip)
+                loss = self.loss(q_pred, s_res)
+                loss.backward()
+                return loss
+
+            loss = self.optimizer.step(closure)
+            total_loss += float(loss)
+        self._count_train_epochs += 1
+        n_shots = np.sum(trainset.shot_results)
+        self._cur_params_weight = n_shots
+        if self.sample_params_interval % self._count_train_epochs == 0:
+            self.param_ensemble.append(self.nnet.parameters(), n_shots)
+        return total_loss / n_shots
+
+    def set_lr(self, new_lr):
+        # TODO: new_lr could be a list of different values if we have more parametersets...
+        for i, param_group in enumerate(self.optimizer.param_groups):
+            param_group['lr'] = new_lr
+
+
+# TODO: this is exactly the same as EEPytorchRCModel except for the __init__ signatures
+# -> we should probably externalise the train_decision function,
+# set it as self.train_decision here and leave only the __init__s
+class EERandEnsPytorchRCModel(EnsemblePredictionPytorchRCModel):
+    """
+    Expected efficiency randomized EnsembelePredictionPytorchRCModel.
+
+    Do not change learning rate, instead train with frequency given by expected
+    efficiency factor, i.e. we train only if np.randoom.ranf() < EE-factor.
+
+    ee_params - dict, 'expected efficiency parameters'
+        epochs_per_train - int, if we train we train for this many epochs
+        interval - int, we attempt to train every interval MCStep,
+                   measured by self.train_hook() calls
+        window - int, size of the smoothing window used for expected efficiency
+        batch_size - int or None, size of chunks of trainset for training,
+                     NOTE: if None, we will use len(trainset), this is needed
+                     for using some optimizers, e.g. LBFGS
+    """
+
+    def __init__(self, nnet, optimizer, ee_params={'epochs_per_train': 1,
+                                                   'interval': 2,
+                                                   'max_interval': 10,
+                                                   'window': 100,
+                                                   'batch_size': None},
+                 descriptor_transform=None, param_ensemble=None, loss=None):
+        super().__init__(nnet, optimizer, descriptor_transform, param_ensemble, loss)
+        # make it possible to pass only the altered values in dictionary
+        ee_params_defaults = {'epochs_per_train': 1,
+                              'interval': 2,
+                              'max_interval': 10,
+                              'window': 100,
+                              'batch_size': None}
+        ee_params_defaults.update(ee_params)
+        self.ee_params = ee_params_defaults
+        self._decisions_since_last_train = 0
+
+    def train_decision(self, trainset):
+        train = False
+        self._decisions_since_last_train += 1
+        if self._decisions_since_last_train >= self.ee_params['max_interval']:
+            train = True
+            self._decisions_since_last_train = 0
+        elif self._count_train_hook % self.ee_params['interval'] == 0:
+            ee_fact = self.train_expected_efficiency_factor(
+                                                trainset=trainset,
+                                                window=self.ee_params['window']
+                                                            )
+            if np.random.ranf() < ee_fact:
+                train = True
+                self._decisions_since_last_train = 0
+
+        lr = None  # will not change the lr
+        epochs = self.ee_params['epochs_per_train']
+        batch_size = self.ee_params['batch_size']
+        logger.info('Decided train=' + str(train) + ', lr=' + str(lr)
+                    + ', epochs=' + str(epochs)
+                    + ', batch_size=' + str(batch_size)
+                    )
+        return train, lr, epochs, batch_size
 
 
 class ParameterEnsembleStore:
@@ -1001,6 +1167,7 @@ class MultiDomainPytorchRCModel(RCModel):
     # where we can choose Z freely and set it to 1, such that ln(z) = 0
     # using self.q() will then fix Z such that q 'feels' like an RC
     def _log_prob(self, descriptors):
+        # TODO/FIXME: this is never called...?
         return self.q(descriptors, use_transform=False)
 
     def log_prob(self, descriptors, use_transform=True):
