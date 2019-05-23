@@ -15,6 +15,7 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
+import copy
 import torch
 import numpy as np
 from abc import abstractmethod
@@ -24,10 +25,11 @@ from ..base.rcmodel import RCModel
 logger = logging.getLogger(__name__)
 
 
-# LOSS FUNCTIONS
+## LOSS FUNCTIONS
 def binomial_loss(input, target):
     """
     Loss for a binomial process.
+
     input is the predicted log likelihood,
     target are the true event counts, i.e. states reached for TPS
 
@@ -41,6 +43,7 @@ def binomial_loss(input, target):
 def binomial_loss_vect(input, target):
     """
     Loss for a binomial process.
+
     input is the predicted log likelihood,
     target are the true event counts, i.e. states reached for TPS
 
@@ -57,6 +60,7 @@ def binomial_loss_vect(input, target):
 def multinomial_loss(input, target):
     """
     Loss for multinomial process.
+
     input are the predicted unnormalized loglikeliehoods,
     target the corresponding true event counts
 
@@ -69,6 +73,7 @@ def multinomial_loss(input, target):
 def multinomial_loss_vect(input, target):
     """
     Loss for multinomial process.
+
     input are the predicted unnormalized loglikeliehoods,
     target the corresponding true event counts
 
@@ -81,6 +86,105 @@ def multinomial_loss_vect(input, target):
     return torch.sum((ln_Z - input) * target, dim=1)
 
 
+## train_decision functions, their defaults and their docstrings
+# NOTE: they are externalised because they are the same for all PytorchRCModels
+# but these models all have different __init__ signatures so we need to rewrite __init__
+# since we also want to write the class docstring only once we have it here too
+_train_decision_docs = {}
+_train_decision_defaults = {}
+_train_decision_funcs = {}
+
+
+def _train_decision_EEscale(self, trainset):
+    """
+    scales learning rate by EE-factor and trains only if lr > lr_min
+    """
+    train = False
+    lr = self.ee_params['lr_0']
+    lr *= self.train_expected_efficiency_factor(trainset,
+                                                self.ee_params['window'])
+    if self._count_train_hook % self.ee_params['interval'] == 0:
+        if lr >= self.ee_params['lr_min']:
+            train = True
+    epochs = self.ee_params['epochs_per_train']
+    batch_size = self.ee_params['batch_size']
+    logger.info('Decided train=' + str(train) + ', lr=' + str(lr)
+                + ', epochs=' + str(epochs)
+                + ', batch_size=' + str(batch_size)
+                )
+    return train, lr, epochs, batch_size
+
+_train_decision_funcs['EEscale'] = _train_decision_EEscale
+_train_decision_docs['EEscale'] = """
+    Controls training by multiplying lr with expected efficiency factor
+
+    ee_params - dict, 'expected efficiency parameters', containing
+        lr_0 - float, base learning rate
+        lr_min - float, minimal learning rate we still train with
+        epochs_per_train - int, if we train we train for this many epochs
+        interval - int, we attempt to train every interval MCStep,
+                   measured by self.train_hook() calls
+        window - int, size of the smoothing window used for expected efficiency
+        batch_size - int or None, size of chunks of trainset for training,
+                     NOTE: if None, we will use len(trainset), this is needed
+                     for using some optimizers, e.g. LBFGS
+                                  """
+_train_decision_defaults['EEscale'] = {'lr_0': 1e-3,
+                                       'lr_min': 1e-4,
+                                       'epochs_per_train': 5,
+                                       'interval': 3,
+                                       'window': 100,
+                                       'batch_size': None
+                                       }
+
+
+def _train_decision_EErand(self, trainset):
+    train = False
+    self._decisions_since_last_train += 1
+    if self._decisions_since_last_train >= self.ee_params['max_interval']:
+        train = True
+        self._decisions_since_last_train = 0
+    elif self._count_train_hook % self.ee_params['interval'] == 0:
+        ee_fact = self.train_expected_efficiency_factor(
+                                            trainset=trainset,
+                                            window=self.ee_params['window']
+                                                        )
+        if np.random.ranf() < ee_fact:
+            train = True
+            self._decisions_since_last_train = 0
+
+    lr = None  # will not change the lr
+    epochs = self.ee_params['epochs_per_train']
+    batch_size = self.ee_params['batch_size']
+    logger.info('Decided train=' + str(train) + ', lr=' + str(lr)
+                + ', epochs=' + str(epochs)
+                + ', batch_size=' + str(batch_size)
+                )
+    return train, lr, epochs, batch_size
+
+_train_decision_funcs['EErand'] = _train_decision_EErand
+_train_decision_docs['EErand'] = """
+    Do not change learning rate, instead train with frequency given by expected
+    efficiency factor, i.e. we train only if np.randoom.ranf() < EE-factor.
+
+    ee_params - dict, 'expected efficiency parameters'
+        epochs_per_train - int, if we train we train for this many epochs
+        interval - int, we attempt to train every interval MCStep,
+                   measured by self.train_hook() calls
+        window - int, size of the smoothing window used for expected efficiency
+        batch_size - int or None, size of chunks of trainset for training,
+                     NOTE: if None, we will use len(trainset), this is needed
+                     for using some optimizers, e.g. LBFGS
+                              """
+_train_decision_defaults['EErand'] = {'epochs_per_train': 1,
+                                      'interval': 2,
+                                      'max_interval': 10,
+                                      'window': 100,
+                                      'batch_size': None
+                                      }
+
+
+## Utility functions
 def _fix_pytorch_device(location):
     """
     Checks if location is an available pytorch.device, else
@@ -108,7 +212,7 @@ def _fix_pytorch_device(location):
     return device
 
 
-# RCModels using one ANN
+## RCModels using one ANN
 class PytorchRCModel(RCModel):
     """
     Wraps pytorch neural networks for use with arcd
@@ -268,116 +372,92 @@ class PytorchRCModel(RCModel):
 
 
 class EEPytorchRCModel(PytorchRCModel):
-    """
-    Expected efficiency PytorchRCModel.
-    Controls training by multiplying lr with expected efficiency factor
+    """Expected efficiency scale PytorchRCModel."""
+    __doc__ += _train_decision_docs['EEscale']
 
-    ee_params - dict, 'expected efficiency parameters'
-        lr_0 - float, base learning rate
-        lr_min - float, minimal learning rate we still train with
-        epochs_per_train - int, if we train we train for this many epochs
-        interval - int, we attempt to train every interval MCStep,
-                   measured by self.train_hook() calls
-        window - int, size of the smoothing window used for expected efficiency
-        batch_size - int or None, size of chunks of trainset for training,
-                     NOTE: if None, we will use len(trainset), this is needed
-                     for using some optimizers, e.g. LBFGS
-    """
-    def __init__(self, nnet, optimizer, ee_params={'lr_0': 1e-3,
-                                                   'lr_min': 1e-4,
-                                                   'epochs_per_train': 5,
-                                                   'interval': 3,
-                                                   'window': 100,
-                                                   'batch_size': None},
+    def __init__(self, nnet, optimizer,
+                 ee_params=_train_decision_defaults['EEscale'],
                  descriptor_transform=None, loss=None):
         super().__init__(nnet, optimizer, descriptor_transform, loss)
         # make it possible to pass only the altered values in dictionary
-        ee_params_defaults = {'lr_0': 1e-3,
-                              'lr_min': 1e-4,
-                              'epochs_per_train': 5,
-                              'interval': 3,
-                              'window': 100,
-                              'batch_size': None}
-        ee_params_defaults.update(ee_params)
-        self.ee_params = ee_params_defaults
+        defaults = copy.deepcopy(_train_decision_defaults['EEscale'])
+        defaults.update(ee_params)
+        self.ee_params = defaults
 
-    def train_decision(self, trainset):
-        train = False
-        lr = self.ee_params['lr_0']
-        lr *= self.train_expected_efficiency_factor(trainset,
-                                                    self.ee_params['window'])
-        if self._count_train_hook % self.ee_params['interval'] == 0:
-            if lr >= self.ee_params['lr_min']:
-                train = True
-        epochs = self.ee_params['epochs_per_train']
-        batch_size = self.ee_params['batch_size']
-        logger.info('Decided train=' + str(train) + ', lr=' + str(lr)
-                    + ', epochs=' + str(epochs)
-                    + ', batch_size=' + str(batch_size)
-                    )
-        return train, lr, epochs, batch_size
+    train_decision = _train_decision_funcs['EEscale']
 
 
 class EERandPytorchRCModel(PytorchRCModel):
-    """
-    Expected efficiency randomized PytorchRCModel.
+    """Expected efficiency randomized PytorchRCModel."""
+    __doc__ += _train_decision_docs['EErand']
 
-    Do not change learning rate, instead train with frequency given by expected
-    efficiency factor, i.e. we train only if np.randoom.ranf() < EE-factor.
-
-    ee_params - dict, 'expected efficiency parameters'
-        epochs_per_train - int, if we train we train for this many epochs
-        interval - int, we attempt to train every interval MCStep,
-                   measured by self.train_hook() calls
-        window - int, size of the smoothing window used for expected efficiency
-        batch_size - int or None, size of chunks of trainset for training,
-                     NOTE: if None, we will use len(trainset), this is needed
-                     for using some optimizers, e.g. LBFGS
-    """
-
-    def __init__(self, nnet, optimizer, ee_params={'epochs_per_train': 1,
-                                                   'interval': 2,
-                                                   'max_interval': 10,
-                                                   'window': 100,
-                                                   'batch_size': None},
+    def __init__(self, nnet, optimizer,
+                 ee_params=_train_decision_defaults['EErand'],
                  descriptor_transform=None, loss=None):
         super().__init__(nnet, optimizer, descriptor_transform, loss)
         # make it possible to pass only the altered values in dictionary
-        ee_params_defaults = {'epochs_per_train': 1,
-                              'interval': 2,
-                              'max_interval': 10,
-                              'window': 100,
-                              'batch_size': None}
-        ee_params_defaults.update(ee_params)
-        self.ee_params = ee_params_defaults
+        defaults = copy.deepcopy(_train_decision_defaults['EErand'])
+        defaults.update(ee_params)
+        self.ee_params = defaults
         self._decisions_since_last_train = 0
 
-    def train_decision(self, trainset):
-        train = False
-        self._decisions_since_last_train += 1
-        if self._decisions_since_last_train >= self.ee_params['max_interval']:
-            train = True
-            self._decisions_since_last_train = 0
-        elif self._count_train_hook % self.ee_params['interval'] == 0:
-            ee_fact = self.train_expected_efficiency_factor(
-                                                trainset=trainset,
-                                                window=self.ee_params['window']
-                                                            )
-            if np.random.ranf() < ee_fact:
-                train = True
-                self._decisions_since_last_train = 0
-
-        lr = None  # will not change the lr
-        epochs = self.ee_params['epochs_per_train']
-        batch_size = self.ee_params['batch_size']
-        logger.info('Decided train=' + str(train) + ', lr=' + str(lr)
-                    + ', epochs=' + str(epochs)
-                    + ', batch_size=' + str(batch_size)
-                    )
-        return train, lr, epochs, batch_size
+    train_decision = _train_decision_funcs['EErand']
 
 
-# ensemble prediction RCModels
+## ensemble prediction RCModels and friends
+class ParameterEnsembleStore:
+    """
+    Store an ensemble of neural network weights with associated weights
+
+    """
+    def __init__(self, n_max=10, keep_device=True, params=None, weights=None):
+        """
+        n_max - int, maximal number of parmeter samples to store
+        on_device - bool, wheter the parameters should be stored on the same
+                    device as the Network they belong to,
+                    If False we will always move to CPU
+        params - None or list of lists, each of which contains NN parameters
+        weights - None or list of float, weights for given params
+        """
+        self.n_max = n_max
+        self.keep_device = keep_device
+        self._params = []  # the network parameters
+        self._weights = []  # the corresponding ensemble weight
+        # use our checks for max_len by appending
+        if params is not None:
+            if weights is not None:
+                for p, w in zip(params, weights):
+                    self.append(p, w)
+            else:
+                for p in params:
+                    self.append(p)
+
+    def __len__(self):
+        return len(self._weights)
+
+    def append(self, params, weight=1.):
+        if len(self) >= self.n_max:
+            # remove a random sample
+            idx = np.random.randint(len(self))
+            self._params.pop(idx)
+            self._weights.pop(idx)
+        if self.keep_device:
+            self._params.append([torch.empty_like(p.data).copy_(p.data)
+                                 for p in params])
+        else:
+            self._params.append([torch.empty_like(p.data,
+                                                  device='cpu').copy_(p.data)
+                                 for p in params])
+        self._weights.append(weight)
+
+    def __iter__(self):
+        for p, w in zip(self._params, self._weights):
+            yield (p, w)
+
+    def __getitem__(self, idx):
+        return self._params[idx], self._weights[idx]
+
+
 class EnsemblePredictionPytorchRCModel(RCModel):
     """
     Wrapper for pytorch models that performs ensemble predictions.
@@ -387,19 +467,17 @@ class EnsemblePredictionPytorchRCModel(RCModel):
     TODO: we should give the different NN weights a weight to indicate the number of training points!
     Predictions are done by averaging over the ensemble of NN weights.
     """
-    # TODO: not so clean...
-    sample_params_interval = 10
     #TODO/FIXME: this only differs from PytorchRCModel marginally:
     # 1. it contains an additional ParamStore + a bit of additional state
-    # 2. functionwise only __call__, _log_prob, train_hook and test_loss differ from PytochRCModel
+    # 2. functionwise __call__, _log_prob, log_prob, train_hook and test_loss differ from PytochRCModel
     # -> we should probably think about deduplicating code by subclassing...
-    def __init__(self, nnet, optimizer,
-                 descriptor_transform=None, param_ensemble=None, loss=None):
+    def __init__(self, nnet, optimizer, descriptor_transform=None,
+                 sample_params_interval=10, loss=None):
         self.nnet = nnet  # a pytorch.nn.Module
         # any pytorch.optim optimizer, model parameters need to be registered already
         self.optimizer = optimizer
-        if param_ensemble is None:
-            self.param_ensemble = ParameterEnsembleStore()
+        self.sample_params_interval = sample_params_interval
+        self.param_ensemble = ParameterEnsembleStore()
         self.log_train_decision = []
         self.log_train_loss = []
         self._count_train_hook = 0
@@ -593,6 +671,7 @@ class EnsemblePredictionPytorchRCModel(RCModel):
 
             loss = self.optimizer.step(closure)
             total_loss += float(loss)
+        # (possibly) sample the current NN parameters
         self._count_train_epochs += 1
         n_shots = np.sum(trainset.shot_results)
         self._cur_params_weight = n_shots
@@ -606,119 +685,43 @@ class EnsemblePredictionPytorchRCModel(RCModel):
             param_group['lr'] = new_lr
 
 
-# TODO: this is exactly the same as EEPytorchRCModel except for the __init__ signatures
-# -> we should probably externalise the train_decision function,
-# set it as self.train_decision here and leave only the __init__s
-class EERandEnsPytorchRCModel(EnsemblePredictionPytorchRCModel):
-    """
-    Expected efficiency randomized EnsembelePredictionPytorchRCModel.
+class EEScaleEnsPredPytorchRCModel(EnsemblePredictionPytorchRCModel):
+    """Expected efficiency scaling EnsemblePredictionPytorchRCModel."""
+    __doc__ += _train_decision_docs['EEscale']
 
-    Do not change learning rate, instead train with frequency given by expected
-    efficiency factor, i.e. we train only if np.randoom.ranf() < EE-factor.
+    def __init__(self, nnet, optimizer,
+                 ee_params=_train_decision_defaults['EEscale'],
+                 descriptor_transform=None, sample_param_interval=10, loss=None):
+        super().__init__(nnet=nnet, optimizer=optimizer,
+                         descriptor_transform=descriptor_transform,
+                         sample_params_interval=sample_param_interval,
+                         loss=loss)
+        defaults = copy.deepcopy(_train_decision_defaults['EEscale'])
+        defaults.update(ee_params)
+        self.ee_params = defaults
 
-    ee_params - dict, 'expected efficiency parameters'
-        epochs_per_train - int, if we train we train for this many epochs
-        interval - int, we attempt to train every interval MCStep,
-                   measured by self.train_hook() calls
-        window - int, size of the smoothing window used for expected efficiency
-        batch_size - int or None, size of chunks of trainset for training,
-                     NOTE: if None, we will use len(trainset), this is needed
-                     for using some optimizers, e.g. LBFGS
-    """
+    train_decision = _train_decision_funcs['EEscale']
 
-    def __init__(self, nnet, optimizer, ee_params={'epochs_per_train': 1,
-                                                   'interval': 2,
-                                                   'max_interval': 10,
-                                                   'window': 100,
-                                                   'batch_size': None},
-                 descriptor_transform=None, param_ensemble=None, loss=None):
-        super().__init__(nnet, optimizer, descriptor_transform, param_ensemble, loss)
+
+class EERandEnsPredPytorchRCModel(EnsemblePredictionPytorchRCModel):
+    """Expected efficiency randomized EnsemblePredictionPytorchRCModel."""
+    __doc__ += _train_decision_docs['EErand']
+
+    def __init__(self, nnet, optimizer,
+                 ee_params=_train_decision_defaults['EErand'],
+                 descriptor_transform=None, sample_param_interval=10, loss=None):
+        super().__init__(nnet=nnet, optimizer=optimizer,
+                         descriptor_transform=descriptor_transform,
+                         sample_params_interval=sample_param_interval,
+                         loss=loss
+                         )
         # make it possible to pass only the altered values in dictionary
-        ee_params_defaults = {'epochs_per_train': 1,
-                              'interval': 2,
-                              'max_interval': 10,
-                              'window': 100,
-                              'batch_size': None}
-        ee_params_defaults.update(ee_params)
-        self.ee_params = ee_params_defaults
+        defaults = copy.deepcopy(_train_decision_defaults['EErand'])
+        defaults.update(ee_params)
+        self.ee_params = defaults
         self._decisions_since_last_train = 0
 
-    def train_decision(self, trainset):
-        train = False
-        self._decisions_since_last_train += 1
-        if self._decisions_since_last_train >= self.ee_params['max_interval']:
-            train = True
-            self._decisions_since_last_train = 0
-        elif self._count_train_hook % self.ee_params['interval'] == 0:
-            ee_fact = self.train_expected_efficiency_factor(
-                                                trainset=trainset,
-                                                window=self.ee_params['window']
-                                                            )
-            if np.random.ranf() < ee_fact:
-                train = True
-                self._decisions_since_last_train = 0
-
-        lr = None  # will not change the lr
-        epochs = self.ee_params['epochs_per_train']
-        batch_size = self.ee_params['batch_size']
-        logger.info('Decided train=' + str(train) + ', lr=' + str(lr)
-                    + ', epochs=' + str(epochs)
-                    + ', batch_size=' + str(batch_size)
-                    )
-        return train, lr, epochs, batch_size
-
-
-class ParameterEnsembleStore:
-    """
-    Store an ensemble of neural network weights with associated weights
-
-    """
-    def __init__(self, n_max=10, keep_device=True, params=None, weights=None):
-        """
-        n_max - int, maximal number of parmeter samples to store
-        on_device - bool, wheter the parameters should be stored on the same
-                    device as the Network they belong to,
-                    If False we will always move to CPU
-        params - None or list of lists, each of which contains NN parameters
-        weights - None or list of float, weights for given params
-        """
-        self.n_max = n_max
-        self.keep_device = keep_device
-        self._params = []  # the network parameters
-        self._weights = []  # the corresponding ensemble weight
-        # use our checks for max_len by appending
-        if params is not None:
-            if weights is not None:
-                for p, w in zip(params, weights):
-                    self.append(p, w)
-            else:
-                for p in params:
-                    self.append(p)
-
-    def __len__(self):
-        return len(self._weights)
-
-    def append(self, params, weight=1.):
-        if len(self) >= self.n_max:
-            # remove a random sample
-            idx = np.random.randint(len(self))
-            self._params.pop(idx)
-            self._weights.pop(idx)
-        if self.keep_device:
-            self._params.append([torch.empty_like(p.data).copy_(p.data)
-                                 for p in params])
-        else:
-            self._params.append([torch.empty_like(p.data,
-                                                  device='cpu').copy_(p.data)
-                                 for p in params])
-        self._weights.append(weight)
-
-    def __iter__(self):
-        for p, w in zip(self._params, self._weights):
-            yield (p, w)
-
-    def __getitem__(self, idx):
-        return self._params[idx], self._weights[idx]
+    train_decision = _train_decision_funcs['EErand']
 
 
 # MULTIDOMAIN RCModels
