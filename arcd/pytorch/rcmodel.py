@@ -371,7 +371,7 @@ class PytorchRCModel(RCModel):
         return pred
 
 
-class EEPytorchRCModel(PytorchRCModel):
+class EEScalePytorchRCModel(PytorchRCModel):
     """Expected efficiency scale PytorchRCModel."""
     __doc__ += _train_decision_docs['EEscale']
 
