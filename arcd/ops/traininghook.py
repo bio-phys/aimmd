@@ -247,6 +247,7 @@ class TrainingHook(PathSimulatorHook):
                         # no accepts yet
                         change = storage.steps[last_accept].change
                         tras.append(change.canonical.trials[0].trajectory)
+                        counts.append(1)
             return tras, counts
 
         # results is the MCStep

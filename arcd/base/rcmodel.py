@@ -359,7 +359,7 @@ class TrajectoryDensityCollector:
         for tra, c in zip(trajectories, counts):
             pred = model(tra)
             for i in range(self.n_dim):
-                p_list[i] = c * [pred[:, i]]
+                p_list[i] += c * [pred[:, i]]
         histo, edges = np.histogramdd(
                             [np.concatenate(p, axis=0)
                              for p in p_list],
