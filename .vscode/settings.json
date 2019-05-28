@@ -6,5 +6,7 @@
     "python.linting.pep8Enabled": false,
     //"python.linting.pep8Args": ["--ignore=W503"]
     "python.linting.flake8Enabled": true,
-    "python.linting.flake8Args": ["--verbose"]
+    "python.linting.flake8Args": ["--verbose"],
+    // vertical line to indicate max line lengths
+    "editor.rulers": [79, 119]
 }
