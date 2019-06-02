@@ -42,12 +42,13 @@ class HMC(torch.optim.Optimizer):
 
     """
 
-    def __init__(self, params, lr=1e-8, tau=500, mass_est=False,
+    def __init__(self, params, lr=1e-3, tau=500, weight_decay=0, mass_est=False,
                  mass_est_min_samples=10, mass_est_sample_interval=1,
                  lr_func=None, tau_func=None):
         # NOTE: lr is actually epsilon, i.e. the leapfrog step-size, the corresponding lr in a simple gradient descent setting is lr=0.5 * epsilon**2
         # TODO: param reasonability checks?
-        defaults = dict(lr=lr, tau=tau, mass_est=mass_est,
+        defaults = dict(lr=lr, tau=tau, weight_decay=weight_decay,
+                        mass_est=mass_est,
                         mass_est_min_samples=mass_est_min_samples,
                         mass_est_sample_interval=mass_est_sample_interval,
                         lr_func=lr_func, tau_func=tau_func
@@ -76,7 +77,7 @@ class HMC(torch.optim.Optimizer):
             views.append(view)
         return torch.cat(views, 0)
 
-    # for variance estimation
+    # for variance estimation and weight decay
     def _gather_flat_params(self):
         # using .data breaks autograd (which is intended)
         views = []
@@ -148,13 +149,23 @@ class HMC(torch.optim.Optimizer):
 
     def step(self, closure):
         assert len(self.param_groups) == 1
-        # TODO: random epsilon/ keep track of epsilons + rejects and adopt epsilon accordingly for a good acceptance
-        # TODO: random number of hamilton steps per MCstep
-        epsilon = self.param_groups[0]['lr']
-        eps_half = epsilon / 2.
-        tau = self.param_groups[0]['tau']
+        # TODO/FIXME: changing the masses on the fly violates detailed balance
+        # at least if we do not account for it in the accept/reject
         mass_est = self.param_groups[0]['mass_est']
-        
+        weight_decay = self.param_groups[0]['weight_decay']
+
+        eps_func = self.param_groups[0]['lr_func']
+        tau_func = self.param_groups[0]['tau_func']
+        if eps_func is not None:
+            epsilon = eps_func()
+        else:
+            epsilon = self.param_groups[0]['lr']
+        eps_half = epsilon / 2.
+        if tau_func is not None:
+            tau = tau_func()
+        else:
+            tau = self.param_groups[0]['tau']
+
         # register global state as state for first param
         # the reasoning is the same as for LBFGS: it helps load_state_dict
         state = self.state[self._params[0]]
@@ -172,6 +183,9 @@ class HMC(torch.optim.Optimizer):
         # get initial loss and gradients
         initial_loss = closure()
         flat_grad = self._gather_flat_grad()
+        if weight_decay != 0:
+            flat_params = self._gather_flat_params()
+            flat_grad.add_(weight_decay, flat_params)
         if mass_est:
             # get current mass estimate
             mass_est_min_samples = self.param_groups[0]['mass_est_min_samples']
@@ -180,7 +194,7 @@ class HMC(torch.optim.Optimizer):
             if inv_mass_mat is None:
                 # make sure we always have masses, even without an estimate
                 inv_mass_mat = torch.diagflat(torch.ones(self._numel(), dtype=flat_grad.dtype, device=flat_grad.device))
-                state['inv_mass_mat'] = inv_mass_mat    
+                state['inv_mass_mat'] = inv_mass_mat
 
         # initialize momenta and calculate initial H
         momenta = torch.empty_like(flat_grad).normal_(mean=0, std=1)
@@ -192,6 +206,9 @@ class HMC(torch.optim.Optimizer):
             T = float(momenta.dot(momenta)) / 2.
         
         V = float(initial_loss)
+        if weight_decay != 0:
+            V += weight_decay * float(flat_params.dot(flat_params)) / 2
+
         H = T + V
         for t in range(tau):
             # leap-frog algorithm in phase space
@@ -206,6 +223,9 @@ class HMC(torch.optim.Optimizer):
             # get new gradients
             loss = closure()
             flat_grad = self._gather_flat_grad()
+            if weight_decay != 0:
+                flat_params = self._gather_flat_params()
+                flat_grad.add_(weight_decay, flat_params)
             # other half-step in momenta
             momenta.sub_(eps_half, flat_grad)
         
@@ -215,6 +235,9 @@ class HMC(torch.optim.Optimizer):
         else:
             T_new = float(momenta.dot(momenta)) / 2.
         V_new = float(loss)
+        if weight_decay != 0:
+            V_new += weight_decay * float(flat_params.dot(flat_params)) / 2
+
         H_new = T_new + V_new
         dH = H_new - H
         if dH <= 0:
@@ -253,7 +276,7 @@ class HMC(torch.optim.Optimizer):
                     me_mean = torch.zeros_like(flat_grad)
                     me_COV_mat = torch.zeros_like(inv_mass_mat)
                     #me_sig2 = torch.zeros_like(flat_grad)
-                me_count, me_mean, me_COV_mat = self._update_mass_estimate_cov(me_count, me_mean, me_COV_mat)
+                me_count, me_mean, me_COV_mat = self._update_covariance_estimate(me_count, me_mean, me_COV_mat)
                 #me_count, me_mean, me_sig2 = self._update_mass_estimate(me_count, me_mean, me_sig2)
                 if me_count >= mass_est_min_samples:
                     # TODO/FIXME:

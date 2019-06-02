@@ -482,9 +482,6 @@ class EnsemblePredictionPytorchRCModel(RCModel):
         self.log_train_loss = []
         self._count_train_hook = 0
         self._count_train_epochs = 0
-        # number of shots in trainset for current params
-        # must initialize to 1 because it is the first weight
-        self._cur_params_weight = 1
         # needed to create the tensors on the correct device
         self._device = next(self.nnet.parameters()).device
         self._dtype = next(self.nnet.parameters()).dtype
@@ -613,8 +610,15 @@ class EnsemblePredictionPytorchRCModel(RCModel):
                                           dtype=self._dtype)
             plist = []
             wlist = []
-            plist.append(p_func(self.nnet(descriptors)).cpu().numpy())
-            wlist.append(self._cur_params_weight)
+            # NOTE:
+            # using the current state/weights biases towards the current state
+            # since if we have sampled/drawn those weights they are in paramstore
+            # otherwise we would not have sampled them because they lie between
+            # two samples and then they should not influence the prediction
+            # -> we use them only if we have not sampled any parameters yet
+            if len(self.param_ensemble) == 0:
+                plist.append(p_func(self.nnet(descriptors)).cpu().numpy())
+                wlist.append(1.)
             for p, w in self.param_ensemble:
                 self._set_nnet_params(p)
                 plist.append(p_func(self.nnet(descriptors)).cpu().numpy())
@@ -674,7 +678,6 @@ class EnsemblePredictionPytorchRCModel(RCModel):
         # (possibly) sample the current NN parameters
         self._count_train_epochs += 1
         n_shots = np.sum(trainset.shot_results)
-        self._cur_params_weight = n_shots
         if self._count_train_epochs % self.sample_params_interval == 0:
             self.param_ensemble.append(self.nnet.parameters(), n_shots)
         return total_loss / n_shots
