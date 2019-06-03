@@ -727,6 +727,264 @@ class EERandEnsPredPytorchRCModel(EnsemblePredictionPytorchRCModel):
     train_decision = _train_decision_funcs['EErand']
 
 
+class EnsemblePytorchRCModel(RCModel):
+    """
+    Wrapper for an ensemble of N pytorch models.
+
+    We initialize and train every model independently, such that the parameters
+    should be decorrelated and stay that way. In fact we are doing N Markov chains
+    in NN weight space.
+
+    Training uses a Hamiltonian Monte Carlo algorithm (see e.g. MacKay pp.492).
+    TODO: clarify what we actually do when we know it
+    TODO: we should give the different NN weights a weight to indicate the number of training points!
+    Predictions are done by averaging over the ensemble of NN weights.
+    """
+    def __init__(self, nnets, optimizers, descriptor_transform=None, loss=None):
+        assert len(nnets) == len(optimizers)  # one optimizer per model!
+        self.nnets = nnets  # list of pytorch.nn.Modules
+        # list of pytorch optimizers, one per model
+        # any pytorch.optim optimizer, model parameters need to be registered already
+        self.optimizers = optimizers
+        self.log_train_decision = []
+        self.log_train_loss = []
+        self._count_train_hook = 0
+        self._count_train_epochs = 0
+        # needed to create the tensors on the correct device
+        self._devices = [next(nnet.parameters()).device for nnet in self.nnets]
+        self._dtypes = [next(nnet.parameters()).dtype for nnet in self.nnets]
+        self._nnets_same_device = all(self._devices[0] == dev
+                                      for dev in self._devices)
+        if loss is not None:
+            # if custom loss given we take that
+            self.loss = loss
+        else:
+            # otherwise we take the correct one for given n_out
+            if self.n_out == 1:
+                self.loss = binomial_loss
+            else:
+                self.loss = multinomial_loss
+        # as always: call super __init__ last such that it can use the fully
+        # initialized subclasses methods
+        super().__init__(descriptor_transform)
+
+    @property
+    def n_out(self):
+        # FIXME:TODO: only works if the last layer is a linear layer
+        # but it can have any activation func, just not an embedding etc
+        # FIXME: we assume all nnets have the same number of outputs
+        return list(self.nnets[0].modules())[-1].out_features
+
+    @classmethod
+    def set_state(cls, state):
+        obj = cls(nnets=state['nnets'], optimizers=state['optimizers'])
+        obj.__dict__.update(state)
+        return obj
+
+    @classmethod
+    def fix_state(cls, state):
+        # restore the nnets
+        nnets = [clas(**kwargs)
+                 for clas, kwargs in zip(state['nnets_classes'],
+                                         state['nnets_call_kwargs'])
+                 ]
+        del state['nnets_classes']
+        del state['nnets_call_kwargs']
+        devs = [_fix_pytorch_device(d) for d in state['_devices']]
+        for nnet, d, s in zip(nnets, devs, state['nnets']):
+            nnet.to(d)
+            nnet.load_state_dict(s)
+        state['nnets'] = nnets
+        # and the optimizers
+        optimizers = [clas(nnet.parameters())
+                      for clas, nnet in zip(state['optimizers_classes'],
+                                            nnets)
+                      ]
+        del state['optimizers_classes']
+        for opt, s in zip(optimizers, state['optimizers']):
+            opt.load_state_dict(s)
+        state['optimizers'] = optimizers
+        return state
+
+    def save(self, fname, overwrite=False):
+        # keep a ref to the nnets
+        nnets = self.nnets
+        # replace it in self.__dict__
+        self.nnets_classes = [nnet.__class__ for nnet in nnets]
+        self.nnets_call_kwargs = [nnet.call_kwargs for nnet in nnets]
+        self.nnets = [nnet.state_dict() for nnet in nnets]
+        # same for optimizers
+        optimizers = self.optimizers
+        self.optimizers_classes = [opt.__class__ for opt in optimizers]
+        self.optimizers = [opt.state_dict() for opt in optimizers]
+        super().save(fname, overwrite=overwrite)
+        # reset the network
+        self.nnets = nnets
+        self.optimizers = optimizers
+        # keep namespace clean
+        del self.nnets_classes
+        del self.nnets_call_kwargs
+        del self.optimizers_classes
+
+    @abstractmethod
+    def train_decision(self, trainset):
+        # this should decide if we train or not
+        # return tuple(train, new_lr, epochs)
+        # train -> bool
+        # new_lr -> float or None; if None: no change
+        # epochs -> number of passes over the training set
+        raise NotImplementedError
+
+    def train_hook(self, trainset):
+        # called by TrainingHook after every TPS MCStep
+        self._count_train_hook += 1
+        train, new_lr, epochs, batch_size = self.train_decision(trainset)
+        self.log_train_decision.append([train, new_lr, epochs, batch_size])
+        if new_lr is not None:
+            logger.info('Setting learning rate to {:.3e}'.format(new_lr))
+            self.set_lr(new_lr)
+        if train:
+            logger.info('Training for {:d} epochs'.format(epochs))
+            self.log_train_loss.append([self.train_epoch(trainset,
+                                                         batch_size=batch_size
+                                                         )
+                                        for _ in range(epochs)])
+
+    def log_prob(self, descriptors, use_transform=True):
+        return self._log_prob(descriptors, use_transform)
+
+    def _log_prob(self, descriptors, use_transform=False):
+        p = self(descriptors, use_transform)
+        if p.shape[1] == 1:
+            return np.log(1. / p - 1.)
+        return np.log(p)
+
+    # NOTE: prediction happens in here,
+    # since we have to do the weighting in probability space
+    def __call__(self, descriptors, use_transform=True, detailed_predictions=False):
+        if self.n_out == 1:
+            def p_func(q):
+                return 1. / (1. + torch.exp(-q))
+        else:
+            def p_func(q):
+                exp_q = torch.exp(q)
+                return exp_q / torch.sum(exp_q, dim=1, keepdim=True)
+
+        if use_transform:
+            descriptors = self._apply_descriptor_transform(descriptors)
+
+        [nnet.eval() for nnet in self.nnets]
+        # TODO: do we need no_grad? or is eval and no_grad redundant?
+        plist = []
+        with torch.no_grad():
+            if self._nnets_same_device:
+                descriptors = torch.as_tensor(descriptors,
+                                              device=self._devices[0],
+                                              dtype=self._dtypes[0]
+                                              )
+            for i, nnet in enumerate(self.nnets):
+                if not self._nnets_same_device:
+                    descriptors = torch.as_tensor(descriptors,
+                                                  device=self._devices[i],
+                                                  dtype=self._dtypes[i]
+                                                  )
+                plist.append(p_func(nnet(descriptors)).cpu().numpy())
+        p_mean = sum(plist)
+        p_mean /= len(plist)
+        [nnet.train() for nnet in self.nnets]
+        if detailed_predictions:
+            return p_mean, plist
+        return p_mean
+
+    def test_loss(self, trainset):
+        # calculate the test loss for the combined weighted prediction
+        # i.e. the loss the model suffers when used as a whole
+        # Note that self.__call__() puts the model in evaluation mode
+        p = self(trainset.descriptors, use_transform=False)
+        if self.n_out == 1:
+            p = p[:, 0]  # make it a 1d array
+            loss = - (np.sum(trainset.shot_results[:, 0] * np.log(1 - p)
+                             + trainset.shot_results[:, 1] * np.log(p)
+                             )
+                      / np.sum(trainset.shot_results)
+                      )
+        else:
+            log_p = np.log(p)
+            loss = - (np.sum([n * lp
+                              for n, lp in zip(trainset.shot_results, log_p)]
+                             )
+                      / np.sum(trainset.shot_results)
+                      )
+        return loss
+
+    def train_epoch(self, trainset, batch_size=None, shuffle=True):
+        # one pass over the whole trainset
+        # returns loss per shot averaged over whole training set
+        total_loss = np.zeros((len(self.nnets),))
+        for i, (nnet, optimizer) in enumerate(zip(self.nnets, self.optimizers)):
+            dev = self._devices[i]
+            dtype = self._dtypes[i]
+            for descriptors, shot_results in trainset.iter_batch(batch_size, shuffle):
+                # define closure func so we can use conjugate gradient or LBFGS
+                def closure():
+                    optimizer.zero_grad()
+                    # create descriptors and results tensors where the model lives
+                    descrip = torch.as_tensor(descriptors, device=dev, dtype=dtype)
+                    s_res = torch.as_tensor(shot_results, device=dev, dtype=dtype)
+                    q_pred = nnet(descrip)
+                    loss = self.loss(q_pred, s_res)
+                    loss.backward()
+                    return loss
+
+                loss = optimizer.step(closure)
+                total_loss[i] += float(loss)
+        self._count_train_epochs += 1
+        n_shots = np.sum(trainset.shot_results)
+        return total_loss / n_shots
+
+    def set_lr(self, new_lr):
+        # TODO: new_lr could be a list of different values if we have more parametersets...
+        for optimizer in self.optimizers:
+            for i, param_group in enumerate(optimizer.param_groups):
+                param_group['lr'] = new_lr
+
+
+class EEScaleEnsPytorchRCModel(EnsemblePytorchRCModel):
+    """Expected efficiency scaling EnsemblePytorchRCModel."""
+    __doc__ += _train_decision_docs['EEscale']
+
+    def __init__(self, nnets, optimizers,
+                 ee_params=_train_decision_defaults['EEscale'],
+                 descriptor_transform=None, loss=None):
+        super().__init__(nnets=nnets, optimizers=optimizers,
+                         descriptor_transform=descriptor_transform,
+                         loss=loss)
+        defaults = copy.deepcopy(_train_decision_defaults['EEscale'])
+        defaults.update(ee_params)
+        self.ee_params = defaults
+
+    train_decision = _train_decision_funcs['EEscale']
+
+
+class EERandEnsPytorchRCModel(EnsemblePytorchRCModel):
+    """Expected efficiency randomized EnsemblePytorchRCModel."""
+    __doc__ += _train_decision_docs['EErand']
+
+    def __init__(self, nnets, optimizers,
+                 ee_params=_train_decision_defaults['EErand'],
+                 descriptor_transform=None, loss=None):
+        super().__init__(nnets=nnets, optimizers=optimizers,
+                         descriptor_transform=descriptor_transform,
+                         loss=loss)
+        # make it possible to pass only the altered values in dictionary
+        defaults = copy.deepcopy(_train_decision_defaults['EErand'])
+        defaults.update(ee_params)
+        self.ee_params = defaults
+        self._decisions_since_last_train = 0
+
+    train_decision = _train_decision_funcs['EErand']
+
+
 # MULTIDOMAIN RCModels
 class MultiDomainPytorchRCModel(RCModel):
     """

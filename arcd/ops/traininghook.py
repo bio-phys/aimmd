@@ -257,6 +257,15 @@ class TrainingHook(PathSimulatorHook):
                                         )
         self.model.train_hook(self.trainset)
         if sim.storage is not None:
+            if step_number % self.save_model_interval == 0:
+                # save the model every save_model_interval MCSteps
+                spath = sim.storage.abspath
+                fname = (spath + self.save_model_suffix
+                         + '_at_step{:d}'.format(step_number)
+                         )
+                self.model.save(fname)
+                logger.info('Saved intermediate RCModel as ' + fname)
+
             if self.density_collection['enabled']:
                 # collect density of points on TPs in probability space
                 dc = self.model.density_collector
@@ -291,14 +300,6 @@ class TrainingHook(PathSimulatorHook):
                                             update=True
                                                             )
 
-            if step_number % self.save_model_interval == 0:
-                # save the model every save_model_interval MCSteps
-                spath = sim.storage.abspath
-                fname = (spath + self.save_model_suffix
-                         + '_at_step{:d}'.format(step_number)
-                         )
-                self.model.save(fname)
-                logger.info('Saved intermediate RCModel as ' + fname)
 
     def after_simulation(self, sim):
         """Will be called by OPS PathSimulator once after the simulation."""
