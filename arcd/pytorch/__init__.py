@@ -18,7 +18,7 @@ from . import networks
 from .rcmodel import (PytorchRCModel,
                       EEScalePytorchRCModel,
                       EERandPytorchRCModel,
-                      EnsemblePredictionPytorchRCModel,
-                      EEScaleEnsPredPytorchRCModel,
-                      EERandEnsPredPytorchRCModel,
+                      EnsemblePytorchRCModel,
+                      EEScaleEnsemblePytorchRCModel,
+                      EERandEnsemblePytorchRCModel,
                       MultiDomainPytorchRCModel, EEMDPytorchRCModel)

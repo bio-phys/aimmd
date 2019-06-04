@@ -413,342 +413,22 @@ class EERandPytorchRCModel(PytorchRCModel):
     train_decision = _train_decision_funcs['EErand']
 
 
-## ensemble prediction RCModels and friends
-class ParameterEnsembleStore:
-    """
-    Store an ensemble of neural network weights with associated weights
-
-    """
-    def __init__(self, n_max=10, keep_device=True, params=None, weights=None):
-        """
-        n_max - int, maximal number of parmeter samples to store
-        on_device - bool, wheter the parameters should be stored on the same
-                    device as the Network they belong to,
-                    If False we will always move to CPU
-        params - None or list of lists, each of which contains NN parameters
-        weights - None or list of float, weights for given params
-        """
-        self.n_max = n_max
-        self.keep_device = keep_device
-        self._params = []  # the network parameters
-        self._weights = []  # the corresponding ensemble weight
-        # use our checks for max_len by appending
-        if params is not None:
-            if weights is not None:
-                for p, w in zip(params, weights):
-                    self.append(p, w)
-            else:
-                for p in params:
-                    self.append(p)
-
-    def __len__(self):
-        return len(self._weights)
-
-    def append(self, params, weight=1.):
-        if len(self) >= self.n_max:
-            # remove a random sample
-            idx = np.random.randint(len(self))
-            self._params.pop(idx)
-            self._weights.pop(idx)
-        if self.keep_device:
-            self._params.append([torch.empty_like(p.data).copy_(p.data)
-                                 for p in params])
-        else:
-            self._params.append([torch.empty_like(p.data,
-                                                  device='cpu').copy_(p.data)
-                                 for p in params])
-        self._weights.append(weight)
-
-    def __iter__(self):
-        for p, w in zip(self._params, self._weights):
-            yield (p, w)
-
-    def __getitem__(self, idx):
-        return self._params[idx], self._weights[idx]
-
-
-class EnsemblePredictionPytorchRCModel(RCModel):
-    """
-    Wrapper for pytorch models that performs ensemble predictions.
-
-    Training uses a Hamiltonian Monte Carlo algorithm (see e.g. MacKay pp.492).
-    TODO: clarify what we actually do when we know it
-    TODO: we should give the different NN weights a weight to indicate the number of training points!
-    Predictions are done by averaging over the ensemble of NN weights.
-    """
-    #TODO/FIXME: this only differs from PytorchRCModel marginally:
-    # 1. it contains an additional ParamStore + a bit of additional state
-    # 2. functionwise __call__, _log_prob, log_prob, train_hook and test_loss differ from PytochRCModel
-    # -> we should probably think about deduplicating code by subclassing...
-    def __init__(self, nnet, optimizer, descriptor_transform=None,
-                 sample_params_interval=10, loss=None):
-        self.nnet = nnet  # a pytorch.nn.Module
-        # any pytorch.optim optimizer, model parameters need to be registered already
-        self.optimizer = optimizer
-        self.sample_params_interval = sample_params_interval
-        self.param_ensemble = ParameterEnsembleStore()
-        self.log_train_decision = []
-        self.log_train_loss = []
-        self._count_train_hook = 0
-        self._count_train_epochs = 0
-        # needed to create the tensors on the correct device
-        self._device = next(self.nnet.parameters()).device
-        self._dtype = next(self.nnet.parameters()).dtype
-        if loss is not None:
-            # if custom loss given we take that
-            self.loss = loss
-        else:
-            # otherwise we take the correct one for given n_out
-            if self.n_out == 1:
-                self.loss = binomial_loss
-            else:
-                self.loss = multinomial_loss
-        # as always: call super __init__ last such that it can use the fully
-        # initialized subclasses methods
-        super().__init__(descriptor_transform)
-
-    @property
-    def n_out(self):
-        # FIXME:TODO: only works if the last layer is a linear layer
-        # but it can have any activation func, just not an embedding etc
-        return list(self.nnet.modules())[-1].out_features
-
-    @classmethod
-    def set_state(cls, state):
-        obj = cls(nnet=state['nnet'], optimizer=state['optimizer'])
-        obj.__dict__.update(state)
-        return obj
-
-    @classmethod
-    def fix_state(cls, state):
-        # restore the nnet
-        nnet = state['nnet_class'](**state['nnet_call_kwargs'])
-        del state['nnet_class']
-        del state['nnet_call_kwargs']
-        dev = _fix_pytorch_device(state['_device'])
-        nnet.to(dev)
-        nnet.load_state_dict(state['nnet'])
-        state['nnet'] = nnet
-        # TODO: restore the ensemble weights!
-        # TODO: but for this we need to know how we keep them in mem first
-        optimizer = state['optimizer_class'](nnet.parameters())
-        del state['optimizer_class']
-        optimizer.load_state_dict(state['optimizer'])
-        state['optimizer'] = optimizer
-        return state
-
-    def save(self, fname, overwrite=False):
-        # keep a ref to nnet
-        nnet = self.nnet
-        # replace it in self.__dict__
-        self.nnet_class = nnet.__class__
-        self.nnet_call_kwargs = nnet.call_kwargs
-        self.nnet = nnet.state_dict()
-        # same for optimizer
-        optimizer = self.optimizer
-        self.optimizer_class = optimizer.__class__
-        self.optimizer = optimizer.state_dict()
-        # TODO: save ensemble of NN weights
-        # TODO: check that it works, if we just pickle
-        super().save(fname, overwrite=overwrite)
-        # reset the network
-        self.nnet = nnet
-        self.optimizer = optimizer
-        # keep namespace clean
-        del self.nnet_class
-        del self.nnet_call_kwargs
-        del self.optimizer_class
-
-    @abstractmethod
-    def train_decision(self, trainset):
-        # this should decide if we train or not
-        # return tuple(train, new_lr, epochs)
-        # train -> bool
-        # new_lr -> float or None; if None: no change
-        # epochs -> number of passes over the training set
-        raise NotImplementedError
-
-    def train_hook(self, trainset):
-        # called by TrainingHook after every TPS MCStep
-        self._count_train_hook += 1
-        train, new_lr, epochs, batch_size = self.train_decision(trainset)
-        self.log_train_decision.append([train, new_lr, epochs, batch_size])
-        if new_lr is not None:
-            logger.info('Setting learning rate to {:.3e}'.format(new_lr))
-            self.set_lr(new_lr)
-        if train:
-            logger.info('Training for {:d} epochs'.format(epochs))
-            self.log_train_loss.append([self.train_epoch(trainset,
-                                                         batch_size=batch_size
-                                                         )
-                                        for _ in range(epochs)])
-
-    def _set_nnet_params(self, params):
-        for op, p in zip(self.nnet.parameters(), params):
-            op.data.copy_(p.data)
-
-    def log_prob(self, descriptors, use_transform=True):
-        return self._log_prob(descriptors, use_transform)
-
-    def _log_prob(self, descriptors, use_transform=False):
-        p = self(descriptors, use_transform)
-        if p.shape[1] == 1:
-            return np.log(1. / p - 1.)
-        return np.log(p)
-
-    # NOTE: prediction happens in here,
-    # since we have to do the weighting in probability space
-    def __call__(self, descriptors, use_transform=True, detailed_predictions=False):
-        if self.n_out == 1:
-            def p_func(q):
-                return 1. / (1. + torch.exp(-q))
-        else:
-            def p_func(q):
-                exp_q = torch.exp(q)
-                return exp_q / torch.sum(exp_q, dim=1, keepdim=True)
-
-        if use_transform:
-            descriptors = self._apply_descriptor_transform(descriptors)
-
-        self.nnet.eval()
-        cur_params = [torch.empty_like(p.data).copy_(p.data)
-                      for p in self.nnet.parameters()]
-        # TODO: do we need no_grad? or is eval and no_grad redundant?
-        with torch.no_grad():
-            descriptors = torch.as_tensor(descriptors, device=self._device,
-                                          dtype=self._dtype)
-            plist = []
-            wlist = []
-            # NOTE:
-            # using the current state/weights biases towards the current state
-            # since if we have sampled/drawn those weights they are in paramstore
-            # otherwise we would not have sampled them because they lie between
-            # two samples and then they should not influence the prediction
-            # -> we use them only if we have not sampled any parameters yet
-            if len(self.param_ensemble) == 0:
-                plist.append(p_func(self.nnet(descriptors)).cpu().numpy())
-                wlist.append(1.)
-            for p, w in self.param_ensemble:
-                self._set_nnet_params(p)
-                plist.append(p_func(self.nnet(descriptors)).cpu().numpy())
-                wlist.append(w)
-        p_weighted = 0
-        for p, w in zip(plist, wlist):
-            p_weighted = p_weighted + p * w
-        p_weighted /= sum(wlist)
-        # reset nnet params
-        self._set_nnet_params(cur_params)
-        self.nnet.train()
-        if detailed_predictions:
-            return p_weighted, plist
-        return p_weighted
-
-    def test_loss(self, trainset):
-        # calculate the test loss for the combined weighted prediction
-        # i.e. the loss the model suffers when used as a whole
-        # Note that self.__call__() puts the model in evaluation mode
-        p = self(trainset.descriptors, use_transform=False)
-        if self.n_out == 1:
-            p = p[:, 0]  # make it a 1d array
-            loss = - (np.sum(trainset.shot_results[:, 0] * np.log(1 - p)
-                             + trainset.shot_results[:, 1] * np.log(p)
-                             )
-                      / np.sum(trainset.shot_results)
-                      )
-        else:
-            log_p = np.log(p)
-            loss = - (np.sum([n * lp
-                              for n, lp in zip(trainset.shot_results, log_p)]
-                             )
-                      / np.sum(trainset.shot_results)
-                      )
-        return loss
-
-    def train_epoch(self, trainset, batch_size=None, shuffle=True):
-        # one pass over the whole trainset
-        # returns loss per shot averaged over whole training set
-        total_loss = 0.
-        for descriptors, shot_results in trainset.iter_batch(batch_size, shuffle):
-            # define closure func so we can use conjugate gradient or LBFGS
-            def closure():
-                self.optimizer.zero_grad()
-                # create descriptors and results tensors where the model lives
-                descrip = torch.as_tensor(descriptors, device=self._device,
-                                          dtype=self._dtype)
-                s_res = torch.as_tensor(shot_results, device=self._device,
-                                        dtype=self._dtype)
-                q_pred = self.nnet(descrip)
-                loss = self.loss(q_pred, s_res)
-                loss.backward()
-                return loss
-
-            loss = self.optimizer.step(closure)
-            total_loss += float(loss)
-        # (possibly) sample the current NN parameters
-        self._count_train_epochs += 1
-        n_shots = np.sum(trainset.shot_results)
-        if self._count_train_epochs % self.sample_params_interval == 0:
-            self.param_ensemble.append(self.nnet.parameters(), n_shots)
-        return total_loss / n_shots
-
-    def set_lr(self, new_lr):
-        # TODO: new_lr could be a list of different values if we have more parametersets...
-        for i, param_group in enumerate(self.optimizer.param_groups):
-            param_group['lr'] = new_lr
-
-
-class EEScaleEnsPredPytorchRCModel(EnsemblePredictionPytorchRCModel):
-    """Expected efficiency scaling EnsemblePredictionPytorchRCModel."""
-    __doc__ += _train_decision_docs['EEscale']
-
-    def __init__(self, nnet, optimizer,
-                 ee_params=_train_decision_defaults['EEscale'],
-                 descriptor_transform=None, sample_param_interval=10, loss=None):
-        super().__init__(nnet=nnet, optimizer=optimizer,
-                         descriptor_transform=descriptor_transform,
-                         sample_params_interval=sample_param_interval,
-                         loss=loss)
-        defaults = copy.deepcopy(_train_decision_defaults['EEscale'])
-        defaults.update(ee_params)
-        self.ee_params = defaults
-
-    train_decision = _train_decision_funcs['EEscale']
-
-
-class EERandEnsPredPytorchRCModel(EnsemblePredictionPytorchRCModel):
-    """Expected efficiency randomized EnsemblePredictionPytorchRCModel."""
-    __doc__ += _train_decision_docs['EErand']
-
-    def __init__(self, nnet, optimizer,
-                 ee_params=_train_decision_defaults['EErand'],
-                 descriptor_transform=None, sample_param_interval=10, loss=None):
-        super().__init__(nnet=nnet, optimizer=optimizer,
-                         descriptor_transform=descriptor_transform,
-                         sample_params_interval=sample_param_interval,
-                         loss=loss
-                         )
-        # make it possible to pass only the altered values in dictionary
-        defaults = copy.deepcopy(_train_decision_defaults['EErand'])
-        defaults.update(ee_params)
-        self.ee_params = defaults
-        self._decisions_since_last_train = 0
-
-    train_decision = _train_decision_funcs['EErand']
-
-
+## (Bayesian) ensemble RCModel
 class EnsemblePytorchRCModel(RCModel):
     """
     Wrapper for an ensemble of N pytorch models.
 
+    Should be trained using a Hamiltonian Monte Carlo optimizer to get draws
+    from the posterior distribution and not just the maximum a posteriori estimate.
     We initialize and train every model independently, such that the parameters
     should be decorrelated and stay that way. In fact we are doing N Markov chains
     in NN weight space.
 
     Training uses a Hamiltonian Monte Carlo algorithm (see e.g. MacKay pp.492).
     TODO: clarify what we actually do when we know it
-    TODO: we should give the different NN weights a weight to indicate the number of training points!
-    Predictions are done by averaging over the ensemble of NN weights.
+    Predictions are done by averaging over the ensemble of NNs.
     """
+
     def __init__(self, nnets, optimizers, descriptor_transform=None, loss=None):
         assert len(nnets) == len(optimizers)  # one optimizer per model!
         self.nnets = nnets  # list of pytorch.nn.Modules
@@ -964,7 +644,7 @@ class EnsemblePytorchRCModel(RCModel):
                 param_group['lr'] = new_lr
 
 
-class EEScaleEnsPytorchRCModel(EnsemblePytorchRCModel):
+class EEScaleEnsemblePytorchRCModel(EnsemblePytorchRCModel):
     """Expected efficiency scaling EnsemblePytorchRCModel."""
     __doc__ += _train_decision_docs['EEscale']
 
@@ -981,7 +661,7 @@ class EEScaleEnsPytorchRCModel(EnsemblePytorchRCModel):
     train_decision = _train_decision_funcs['EEscale']
 
 
-class EERandEnsPytorchRCModel(EnsemblePytorchRCModel):
+class EERandEnsemblePytorchRCModel(EnsemblePytorchRCModel):
     """Expected efficiency randomized EnsemblePytorchRCModel."""
     __doc__ += _train_decision_docs['EErand']
 
