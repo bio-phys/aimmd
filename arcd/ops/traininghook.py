@@ -221,7 +221,7 @@ class TrainingHook(PathSimulatorHook):
     def after_step(self, sim, step_number, step_info, state, results,
                    hook_state):
         """Will be called by OPS PathSimulator after every MCStep."""
-        def iter_tps(storage, start=0):
+        def get_tps(storage, start=0):
             # find the last accepted TP to be able to add it again
             # instead of the rejects we could find
             last_accept = start
@@ -232,13 +232,22 @@ class TrainingHook(PathSimulatorHook):
                     break
                 last_accept -= 1
             # now iterate over the storage
+            tras = []
+            counts = []
             for i, step in enumerate(storage.steps[start:]):
                 if step.change.canonical.accepted:
                     last_accept = i + start
-                    yield step.change.canonical.trials[0].trajectory
+                    tras.append(step.change.canonical.trials[0].trajectory)
+                    counts.append(1)
                 else:
-                    change = storage.steps[last_accept].change
-                    yield change.canonical.trials[0].trajectory
+                    try:
+                        counts[-1] += 1
+                    except IndexError:
+                        # no accepts yet
+                        change = storage.steps[last_accept].change
+                        tras.append(change.canonical.trials[0].trajectory)
+                        counts.append(1)
+            return tras, counts
 
         # results is the MCStep
         self.trainset.append_ops_mcstep(
@@ -247,40 +256,6 @@ class TrainingHook(PathSimulatorHook):
                                         )
         self.model.train_hook(self.trainset)
         if sim.storage is not None:
-            if self.density_collection['enabled']:
-                # collect density of points on TPs in probability space
-                dc = self.model.density_collector
-                recreate = self.density_collection['recreate_interval']
-                first = self.density_collection['first_collection']
-                if step_number - first >= 0:
-                    if step_number % recreate == 0:
-                        # recreation time
-                        dc.evaluate_density_on_trajectories(
-                                            model=self.model,
-                                            trajectories=iter_tps(sim.storage),
-                                            update=False
-                                                            )
-                    elif step_number - first == 0:
-                        # first collection
-                        dc.evaluate_density_on_trajectories(
-                                            model=self.model,
-                                            trajectories=iter_tps(
-                                                            sim.storage,
-                                                            start=-first
-                                                                  ),
-                                            update=True
-                                                            )
-                    else:
-                        # only the last step
-                        dc.evaluate_density_on_trajectories(
-                                            model=self.model,
-                                            trajectories=iter_tps(
-                                                            sim.storage,
-                                                            start=step_number
-                                                                  ),
-                                            update=True
-                                                            )
-
             if step_number % self.save_model_interval == 0:
                 # save the model every save_model_interval MCSteps
                 spath = sim.storage.abspath
@@ -289,6 +264,41 @@ class TrainingHook(PathSimulatorHook):
                          )
                 self.model.save(fname)
                 logger.info('Saved intermediate RCModel as ' + fname)
+
+            if self.density_collection['enabled']:
+                # collect density of points on TPs in probability space
+                dc = self.model.density_collector
+                recreate = self.density_collection['recreate_interval']
+                first = self.density_collection['first_collection']
+                if step_number - first >= 0:
+                    if step_number % recreate == 0:
+                        # recreation time
+                        tps, counts = get_tps(sim.storage, start=0)
+                        dc.evaluate_density_on_trajectories(
+                                            model=self.model,
+                                            trajectories=tps,
+                                            counts=counts,
+                                            update=False
+                                                            )
+                    elif step_number - first == 0:
+                        # first collection
+                        tps, counts = get_tps(sim.storage, start=-first)
+                        dc.evaluate_density_on_trajectories(
+                                            model=self.model,
+                                            trajectories=tps,
+                                            counts=counts,
+                                            update=True
+                                                            )
+                    else:
+                        # only the last step
+                        tps, counts = get_tps(sim.storage, start=step_number)
+                        dc.evaluate_density_on_trajectories(
+                                            model=self.model,
+                                            trajectories=tps,
+                                            counts=counts,
+                                            update=True
+                                                            )
+
 
     def after_simulation(self, sim):
         """Will be called by OPS PathSimulator once after the simulation."""

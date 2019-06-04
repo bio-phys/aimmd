@@ -32,9 +32,9 @@ from .base.utils import (emulate_production_from_trainset,
 try:
     from . import pytorch
 except ImportError:
-    logger.warning("pytorch not available")
+    logger.warning("Pytorch not available")
 
 try:
     from . import keras
 except ImportError:
-    logger.warning("keras not available")
+    logger.warning("Keras/Tensorflow not available")

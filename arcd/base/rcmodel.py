@@ -335,7 +335,8 @@ class TrajectoryDensityCollector:
         n_forbidden_bins = len(np.where(sums > 1)[0])
         self._n_allowed_bins = bins**self.n_dim - n_forbidden_bins
 
-    def evaluate_density_on_trajectories(self, model, trajectories, update=True):
+    def evaluate_density_on_trajectories(self, model, trajectories,
+                                         counts=None, update=True):
         """
         Evaluate the density on the given trajectories.
 
@@ -344,16 +345,21 @@ class TrajectoryDensityCollector:
         model - any callable returning values to histogram for trajectories,
                 e.g. an arcd.base.RCModel predicting commitment probabilities
         trajectories - iterator/iterable of trajectories to evaluate
+        counts - None or list of weights for the trajectories,
+                 i.e. we will add every trajectory count times to the histo,
+                 if None, every trajectory is added once
         update - bool, if True we will add the density to the current estimate,
                  if False we will overwrite the current estimate,
                  default is True
 
         """
+        if counts is None:
+            counts = len(trajectories) * [1.]
         p_list = [[] for _ in range(self.n_dim)]
-        for tra in trajectories:
+        for tra, c in zip(trajectories, counts):
             pred = model(tra)
             for i in range(self.n_dim):
-                p_list[i].append(pred[:, i])
+                p_list[i] += c * [pred[:, i]]
         histo, edges = np.histogramdd(
                             [np.concatenate(p, axis=0)
                              for p in p_list],

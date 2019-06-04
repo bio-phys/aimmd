@@ -52,7 +52,7 @@ class Test_pytorch:
             if torch.cuda.is_available():
                 torch_model = torch_model.to('cuda')
             optimizer = torch.optim.Adam(torch_model.parameters(), lr=1e-3)
-            model = arcd.pytorch.EEPytorchRCModel(torch_model, optimizer,
+            model = arcd.pytorch.EEScalePytorchRCModel(torch_model, optimizer,
                                                   descriptor_transform=None)
         elif model_type == 'EEMultiDomain':
             pnets = [arcd.pytorch.networks.FFNet(n_in=cv_ndim, n_out=n_out)
@@ -118,7 +118,7 @@ class Test_pytorch:
             if torch.cuda.is_available():
                 torch_model = torch_model.to('cuda')
             optimizer = torch.optim.Adam(torch_model.parameters(), lr=1e-3)
-            model = arcd.pytorch.EEPytorchRCModel(torch_model, optimizer,
+            model = arcd.pytorch.EEScalePytorchRCModel(torch_model, optimizer,
                                                   descriptor_transform=setup_dict['descriptor_transform'])
         elif model_type == 'EEMultiDomain':
             pnets = [arcd.pytorch.networks.FFNet(n_in=setup_dict['cv_ndim'], n_out=1)

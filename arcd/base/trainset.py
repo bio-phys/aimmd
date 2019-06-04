@@ -126,17 +126,17 @@ class TrainSet(Iterable):
     def __setitem__(self, key):
         raise NotImplementedError
 
-    def iter_batch(self, batch_size=64, shuffle=True):
+    def iter_batch(self, batch_size=None, shuffle=True):
         """Iterate over the (shuffled) TrainSet in chunks of batch_size."""
         return TrainSetIterator(self, batch_size, shuffle)
 
     def __iter__(self):
         """
-        Iterate over the shuffled TrainSet in chunks of 64 points.
+        Iterate over the shuffled TrainSet in chunks of 128 points.
 
         Use self.iter_batch() if you want to control batch_size or shuffle.
         """
-        return TrainSetIterator(self, 64, True)
+        return TrainSetIterator(self, 128, True)
 
     def _extend_if_needed(self, descriptor_dim, add_entries=100):
         """Extend internal storage arrays if next step would not fit."""
@@ -251,6 +251,8 @@ class TrainSetIterator(Iterator):
     def __init__(self, trainset, batch_size, shuffle):
         self.i = 0
         self.max_i = len(trainset)
+        if batch_size is None:
+            batch_size = len(trainset)
         self.batch_size = batch_size
         if shuffle:
             # shuffle before iterating
@@ -273,7 +275,7 @@ class TrainSetIterator(Iterator):
             start = self.i
             stop = self.max_i
         else:
-            # more than a full batch remaining
+            # more than or exactly a full batch remaining
             start = self.i
             stop = self.i + self.batch_size
 
