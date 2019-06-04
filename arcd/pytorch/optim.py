@@ -34,6 +34,7 @@ class HMC(torch.optim.Optimizer):
              NOTE: there can only be one parameter group
     lr - float, actually epsilon, the leap-frog stepsize
     tau - int, number of leap-frog steps
+    weight_decay - float, strength of L2 normalization
 
 
     lr_func - function that returns epsilon for this MCstep when called
@@ -42,15 +43,11 @@ class HMC(torch.optim.Optimizer):
 
     """
 
-    def __init__(self, params, lr=1e-3, tau=500, weight_decay=0, mass_est=False,
-                 mass_est_min_samples=10, mass_est_sample_interval=1,
+    def __init__(self, params, lr=1e-3, tau=500, weight_decay=0,
                  lr_func=None, tau_func=None):
         # NOTE: lr is actually epsilon, i.e. the leapfrog step-size, the corresponding lr in a simple gradient descent setting is lr=0.5 * epsilon**2
         # TODO: param reasonability checks?
         defaults = dict(lr=lr, tau=tau, weight_decay=weight_decay,
-                        mass_est=mass_est,
-                        mass_est_min_samples=mass_est_min_samples,
-                        mass_est_sample_interval=mass_est_sample_interval,
                         lr_func=lr_func, tau_func=tau_func
                         )
         super(HMC, self).__init__(params, defaults)
@@ -89,6 +86,10 @@ class HMC(torch.optim.Optimizer):
             views.append(view)
         return torch.cat(views, 0)
 
+    # TODO: atm this is obsolete,
+    # as changing the mass matrix on the fly violates detailed balance...
+    # maybe we can use this to estimate in a preliminary run,
+    # store the estimate and then change the optimizer for production?
     def _update_variance_estimate(self, count, mean, sig2):
         """
         Online variance estimation.
@@ -110,6 +111,7 @@ class HMC(torch.optim.Optimizer):
         sig2.add_(delta.mul(delta2))
         return count, mean, sig2
 
+    # TODO: also obsolete atm, see above!
     def _update_covariance_estimate(self, count, means, COV_mat):
         """
         Online covariance estimation.
@@ -148,12 +150,8 @@ class HMC(torch.optim.Optimizer):
         assert offset == self._numel()
 
     def step(self, closure):
-        assert len(self.param_groups) == 1
-        # TODO/FIXME: changing the masses on the fly violates detailed balance
-        # at least if we do not account for it in the accept/reject
-        mass_est = self.param_groups[0]['mass_est']
+        assert len(self.param_groups) == 1  # only one param group!
         weight_decay = self.param_groups[0]['weight_decay']
-
         eps_func = self.param_groups[0]['lr_func']
         tau_func = self.param_groups[0]['tau_func']
         if eps_func is not None:
@@ -165,7 +163,6 @@ class HMC(torch.optim.Optimizer):
             tau = tau_func()
         else:
             tau = self.param_groups[0]['tau']
-
         # register global state as state for first param
         # the reasoning is the same as for LBFGS: it helps load_state_dict
         state = self.state[self._params[0]]
@@ -186,54 +183,35 @@ class HMC(torch.optim.Optimizer):
         if weight_decay != 0:
             flat_params = self._gather_flat_params()
             flat_grad.add_(weight_decay, flat_params)
-        if mass_est:
-            # get current mass estimate
-            mass_est_min_samples = self.param_groups[0]['mass_est_min_samples']
-            mass_est_sample_interval = self.param_groups[0]['mass_est_sample_interval']
-            inv_mass_mat = state.get('inv_mass_mat', None)
-            if inv_mass_mat is None:
-                # make sure we always have masses, even without an estimate
-                inv_mass_mat = torch.diagflat(torch.ones(self._numel(), dtype=flat_grad.dtype, device=flat_grad.device))
-                state['inv_mass_mat'] = inv_mass_mat
 
         # initialize momenta and calculate initial H
         momenta = torch.empty_like(flat_grad).normal_(mean=0, std=1)
-        # TODO/FIXME: it seems that without the correction it works better?
-        # -> the issue here were probably the non positive definite covariance/mass matrices
-        if mass_est:
-            T = float(momenta.dot(inv_mass_mat.matmul(momenta))) / 2.
-        else:
-            T = float(momenta.dot(momenta)) / 2.
-        
+        T = float(momenta.dot(momenta)) / 2.
         V = float(initial_loss)
         if weight_decay != 0:
             V += weight_decay * float(flat_params.dot(flat_params)) / 2
-
         H = T + V
-        for t in range(tau):
-            # leap-frog algorithm in phase space
-            # half-step in momenta
-            momenta.sub_(eps_half, flat_grad)
+        # simple leap-frog algorithm in phase space
+        # one half step in momenta before loop,
+        # such that we can make full steps in the loop
+        momenta.sub_(eps_half, flat_grad)
+        for t in range(1, tau+1):
             # full step in weights
-            if mass_est:
-                self._weight_step(epsilon, inv_mass_mat.matmul(momenta))
-            else:
-                # unit masses -> momenta = velocities
-                self._weight_step(epsilon, momenta)
+            # unit masses -> momenta = velocities
+            self._weight_step(epsilon, momenta)
             # get new gradients
             loss = closure()
             flat_grad = self._gather_flat_grad()
             if weight_decay != 0:
                 flat_params = self._gather_flat_params()
                 flat_grad.add_(weight_decay, flat_params)
-            # other half-step in momenta
-            momenta.sub_(eps_half, flat_grad)
-        
+            if t < tau:
+                # full step in momenta except if in last iteration
+                momenta.sub_(epsilon, flat_grad)
+        # do half step in momenta at the end
+        momenta.sub_(eps_half, flat_grad)
         # reevaluate H: accept/reject
-        if mass_est:
-            T_new = float(momenta.dot(inv_mass_mat.matmul(momenta))) / 2.
-        else:
-            T_new = float(momenta.dot(momenta)) / 2.
+        T_new = float(momenta.dot(momenta)) / 2.
         V_new = float(loss)
         if weight_decay != 0:
             V_new += weight_decay * float(flat_params.dot(flat_params)) / 2
@@ -256,44 +234,13 @@ class HMC(torch.optim.Optimizer):
         if accept:
             # accept
             state['hamilton_steps_tot'] += tau
-            out = loss
+            loss_out = loss
         else:
             # reject
             # reset weights
             with torch.no_grad():
                 for ip, p in zip(initial_params, self._params):
                     p.copy_(ip)
-            out = initial_loss
-        # estimate weight covariance/mass matrix at the end of each HMC step, should give a better sample for the first round?!
-        if mass_est:
-            if steps_tot % mass_est_sample_interval == 0:
-                # on the fly estimate of variance of weights to set as inverse masses
-                me_count = state.get('mass_est_count', 0)
-                me_mean = state.get('mass_est_mean', None)
-                me_COV_mat = state.get('mass_est_COV_mat', None)
-                #me_sig2 = state.get('mass_est_sig2', None)
-                if me_mean is None:
-                    me_mean = torch.zeros_like(flat_grad)
-                    me_COV_mat = torch.zeros_like(inv_mass_mat)
-                    #me_sig2 = torch.zeros_like(flat_grad)
-                me_count, me_mean, me_COV_mat = self._update_covariance_estimate(me_count, me_mean, me_COV_mat)
-                #me_count, me_mean, me_sig2 = self._update_mass_estimate(me_count, me_mean, me_sig2)
-                if me_count >= mass_est_min_samples:
-                    # TODO/FIXME:
-                    # actually mass matrices are positive semi-definite!
-                    # covariance matrices should be so too, but ours are not exactly, because of numerics? a bug?
-                    # for now we impose positive semi-definititeness by decomposition, setting alls lambda < 0 to 0 and then recomposition
-                    #lambdas, Q = torch.symeig(me_COV_mat / (me_count - 1), eigenvectors=True)
-                    #lambdas[lambdas < 0.] = 0.
-                    # update mass estimate inplace
-                    #inv_mass_mat.copy_(Q.matmul(torch.diag(lambdas).matmul(Q.t())))
-                    inv_mass_mat.copy_(me_COV_mat / (me_count - 1))
-                    #inv_mass_mat = me_sig2.diagflat() / (me_count - 1)
-                    state['inv_mass_mat'] = inv_mass_mat
-                # store current estimates
-                state['mass_est_count'] = me_count
-                state['mass_est_mean'] = me_mean
-                #tate['mass_est_sig2'] = me_sig2        
-                state['mass_est_COV_mat'] = me_COV_mat
-        
-        return out
+            loss_out = initial_loss
+
+        return loss_out
