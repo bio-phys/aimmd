@@ -234,7 +234,6 @@ class TrainingHook(PathSimulatorHook):
             # now iterate over the storage
             tras = []
             counts = []
-            # TODO: need to get last accept in case the first is reject...!
             for i, step in enumerate(storage.steps[start:]):
                 if step.change.canonical.accepted:
                     last_accept = i + start
