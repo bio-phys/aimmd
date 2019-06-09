@@ -273,7 +273,7 @@ class TrainingHook(PathSimulatorHook):
                 if step_number - first >= 0:
                     if step_number % recreate == 0:
                         # recreation time
-                        tps, counts = get_tps(sim.storage, start=0)
+                        tps, counts = get_tps(sim.storage, start=-step_number)
                         dc.evaluate_density_on_trajectories(
                                             model=self.model,
                                             trajectories=tps,
@@ -298,7 +298,6 @@ class TrainingHook(PathSimulatorHook):
                                             counts=counts,
                                             update=True
                                                             )
-
 
     def after_simulation(self, sim):
         """Will be called by OPS PathSimulator once after the simulation."""
