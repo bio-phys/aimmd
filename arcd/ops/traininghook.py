@@ -46,6 +46,8 @@ class TrainingHook(PathSimulatorHook):
         density_collection - dict, contains parameters to control collection of
                              density of points on TPs,
                              'enabled' - bool, wheter to collect at all
+                             'interval' - interval at which we add TPs to the
+                                          estimate
                              'first_collection' - int, step at which we create
                                                   the initial estimate
                              'recreate_interval' - int, interval in which we
@@ -79,6 +81,7 @@ class TrainingHook(PathSimulatorHook):
 
     def __init__(self, model, trainset, save_model_interval=500,
                  density_collection={'enabled': True,
+                                     'interval': 20,
                                      'first_collection': 500,
                                      'recreate_interval': 1000,
                                      }
@@ -88,6 +91,7 @@ class TrainingHook(PathSimulatorHook):
         self.trainset = trainset
         self.save_model_interval = save_model_interval
         density_collection_defaults = {'enabled': True,
+                                       'interval': 20,
                                        'first_collection': 500,
                                        'recreate_interval': 1000,
                                        }
@@ -268,36 +272,31 @@ class TrainingHook(PathSimulatorHook):
             if self.density_collection['enabled']:
                 # collect density of points on TPs in probability space
                 dc = self.model.density_collector
+                interval = self.density_collection['interval']
                 recreate = self.density_collection['recreate_interval']
                 first = self.density_collection['first_collection']
                 if step_number - first >= 0:
-                    if step_number % recreate == 0:
-                        # recreation time
-                        tps, counts = get_tps(sim.storage, start=-step_number)
-                        dc.evaluate_density_on_trajectories(
-                                            model=self.model,
-                                            trajectories=tps,
-                                            counts=counts,
-                                            update=False
-                                                            )
-                    elif step_number - first == 0:
+                    if step_number - first == 0:
                         # first collection
                         tps, counts = get_tps(sim.storage, start=-first)
                         dc.evaluate_density_on_trajectories(
                                             model=self.model,
                                             trajectories=tps,
-                                            counts=counts,
-                                            update=True
+                                            counts=counts
                                                             )
-                    else:
-                        # only the last step
-                        tps, counts = get_tps(sim.storage, start=step_number)
+                    elif step_number % interval == 0:
+                        # add only the last interval steps
+                        tps, counts = get_tps(sim.storage, start=-interval)
                         dc.evaluate_density_on_trajectories(
                                             model=self.model,
                                             trajectories=tps,
-                                            counts=counts,
-                                            update=True
+                                            counts=counts
                                                             )
+                    # Note that this is an if because reevaluation should be
+                    # independent of adding new TPs in the same MCStep
+                    if step_number % recreate == 0:
+                        # reevaluation time
+                        dc.reevaluate_density(model=self.model)
 
     def after_simulation(self, sim):
         """Will be called by OPS PathSimulator once after the simulation."""

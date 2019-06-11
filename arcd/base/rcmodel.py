@@ -325,6 +325,8 @@ class TrajectoryDensityCollector:
         self.n_dim = n_dim
         self.bins = bins
         self.density_histogram = np.zeros(tuple(bins for _ in range(n_dim)))
+        self._counts = []
+        self._descriptors = []
         # need to know the number of forbidden bins, i.e. where sum_prob > 1
         bounds = np.arange(0., 1., 1./bins)
         # this magic line creates all possible combinations of probs
@@ -335,15 +337,15 @@ class TrajectoryDensityCollector:
         n_forbidden_bins = len(np.where(sums > 1)[0])
         self._n_allowed_bins = bins**self.n_dim - n_forbidden_bins
 
-    def evaluate_density_on_trajectories(self, model, trajectories,
-                                         counts=None, update=True):
+    def evaluate_density_on_trajectories(self, model, trajectories, counts=None):
         """
         Evaluate the density on the given trajectories.
 
+        Additionally store trajectories/descriptors for later reevaluation.
+
         Parameters:
         -----------
-        model - any callable returning values to histogram for trajectories,
-                e.g. an arcd.base.RCModel predicting commitment probabilities
+        model - arcd.base.RCModel predicting commitment probabilities
         trajectories - iterator/iterable of trajectories to evaluate
         counts - None or list of weights for the trajectories,
                  i.e. we will add every trajectory count times to the histo,
@@ -357,7 +359,10 @@ class TrajectoryDensityCollector:
             counts = len(trajectories) * [1.]
         p_list = [[] for _ in range(self.n_dim)]
         for tra, c in zip(trajectories, counts):
-            pred = model(tra)
+            descriptors = model.descriptor_transform(tra)
+            self._descriptors.append(descriptors)
+            self._counts.append(c)
+            pred = model(descriptors, use_transform=False)
             for i in range(self.n_dim):
                 p_list[i] += c * [pred[:, i]]
         histo, edges = np.histogramdd(
@@ -367,10 +372,32 @@ class TrajectoryDensityCollector:
                             range=[[0., 1.]
                                    for _ in range(self.n_dim)]
                                       )
-        if update:
-            self.density_histogram += histo
-        else:
-            self.density_histogram = histo
+        self.density_histogram += histo
+
+    def reevaluate_density(self, model):
+        """
+        Reevaluate the density for all stored trajectories.
+
+        Will replace the density histogram with a new density estimate for all
+        trajectories from current models prediction.
+
+        Parameters:
+        -----------
+        model - arcd.base.RCModel predicting commitment probabilities
+        """
+        p_list = [[] for _ in range(self.n_dim)]
+        for desc, c in zip(self._descriptors, self._counts):
+            pred = model(desc, use_transform=False)
+            for i in range(self.n_dim):
+                p_list[i] += c * [pred[:, i]]
+        histo, edges = np.histogramdd(
+                            [np.concatenate(p, axis=0)
+                             for p in p_list],
+                            bins=self.bins,
+                            range=[[0., 1.]
+                                   for _ in range(self.n_dim)]
+                                      )
+        self.density_histogram = histo
 
     def get_density(self, probabilities):
         """
