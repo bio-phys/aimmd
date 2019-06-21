@@ -14,7 +14,16 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
+import os
+import logging
+import numpy as np
+import openpathsampling as paths
+from .rcmodel import RCModel
 from .trainset import TrainSet
+from ..ops import TrainingHook
+
+
+logger = logging.getLogger(__name__)
 
 
 def emulate_production_from_trainset(model, trainset):
@@ -107,3 +116,166 @@ def emulate_production_from_storage(model, storage, states):
         model.train_hook(new_ts)
 
     return model, new_ts
+
+
+def load_model_with_storage(fname, mode='r', storage_endswith='.nc', sname=None):
+    """
+    Load an arcd.RCModel from file.
+
+    Additionally open and return the corresponding ops storage file if it is
+    found in the same folder.
+
+    Parameters
+    ----------
+    fname - str, the name of the model file
+    mode - str, mode to open the ops storage file in,
+           should be either 'r' or 'a'
+    storage_endswith - str, filename extension of the ops storage,
+                       used to scan for potential matching storages
+    sname - str or None, name of the ops storage file to use,
+            if None, we will try to identify the storage by filename extension,
+            if given we will ignore storage_endswith and load $sname
+
+    Returns
+    -------
+    model, storage
+
+    """
+    if mode not in ['a', 'r']:
+        raise ValueError("mode must be either 'a' or 'r'.")
+    if sname is None:
+        topdir = os.path.dirname(os.path.abspath(fname))
+        files = [f for f in os.listdir(topdir)
+                 if not os.path.isdir(os.path.join(topdir, f))]
+        sFiles = [f for f in files if f.endswith('.nc')]
+        if len(sFiles) > 1:
+            raise ValueError('More than one file matches storage filename '
+                             + 'extension. Please pass sname to avoid ambiguity.')
+        if len(sFiles) == 1:
+            # one storage, take it
+            sFile = sFiles[0]
+            storage = paths.Storage(os.path.join(topdir, sFile), mode)
+        else:
+            # no storage found, warn but load anyway
+            logger.warning('No matching storage found. Proceeding without. '
+                           + 'Consider passing sname or storage_endswith if '
+                           + 'this is unexpected.')
+            storage = None
+    else:
+        storage = paths.Storage(sname, mode)
+
+    # no that we sorted if and which storage to use: load the model
+    state, cls = RCModel.load_state(fname, storage)
+    state = cls.fix_state(state)
+    model = cls.set_state(state)
+
+    return model, storage
+
+
+def load_model(fname, storage=None, descriptor_transform=None):
+    """
+    Load an arcd.RCModel from file. Do not open or load an ops storage.
+
+    You can pass any open ops storage object to read out the
+    descriptor_transform or pass the descriptor_transform directly.
+
+    NOTE:
+    This is much faster and consumes less memory than load_model_with_storage
+    as this does not open any additional ops storages. It is therefore the
+    preferred way of loading additional models for comparisson.
+
+    Parameters
+    ----------
+    fname - str, model filename
+    storage - None or open ops storage object,
+              if not None we ignore descriptor_transform
+    descriptor_transform - None or some callable that takes snapshots/trajectories,
+                           the descriptor_transform to set for the model,
+                           only has an effect if storage is None
+
+    """
+    state, cls = RCModel.load_state(fname, storage)
+    state = cls.fix_state(state)
+    model = cls.set_state(state)
+    if storage is None:
+        model.descriptor_transform = descriptor_transform
+    return model
+
+
+def load_trainset(storage, descriptor_transform, states):
+    """
+    Load the most recent TrainSet from an ops storage.
+
+    Parameters
+    ----------
+    storage - an open ops storage object
+    descriptor_transform - str or callable that takes snapshots/trajectories,
+                           if str we will try to retrieve the cv with that name
+                           from the ops storage
+    states - list of str or list of callables/ops-volumes that take snapshots,
+             if list of str, we will try to load the volumes from storage
+
+    Returns
+    -------
+    arcd.TrainSet
+
+    """
+    descriptors, shot_results, delta = _find_latest_trainset_data(storage)
+    if descriptors is not None:
+        # we found a trainset in storage
+        trainset = TrainSet(states=states,
+                            descriptor_transform=descriptor_transform,
+                            descriptors=descriptors,
+                            shot_results=shot_results
+                            )
+        if delta > 0:
+            # add missing steps if any
+            for step in storage.steps[-delta:]:
+                trainset.append_ops_mcstep(step)
+    else:
+        # recreate the trainset from scratch
+        trainset = TrainSet(states=states,
+                            descriptor_transform=descriptor_transform)
+        for step in storage.steps:
+            trainset.append_ops_mcstep(
+                                       mcstep=step,
+                                       add_invalid=False
+                                      )
+    return trainset
+
+
+def _find_latest_trainset_data(storage):
+    # returns descriptors, shot_results, delta_complete
+    # here delta_complete is the number of steps missing at the end of the TS
+    save_trainset_prefix = TrainingHook.save_trainset_prefix
+    save_trainset_suffix = TrainingHook.save_trainset_suffix
+    keys = list(storage.tags.keys())
+    keys = [k for k in keys if save_trainset_prefix in k]
+    if len(keys) < 1:
+        # did not find anything
+        return None, None, 0
+    strip = (len(save_trainset_prefix)
+             + len(save_trainset_suffix)
+             - 4  # we ignore the first characters up until the number
+             )
+    # find the trainset data with the highest step number
+    numbers = [int(k[strip:]) for k in keys]
+    max_idx = np.argmax(numbers)
+    last_mccycle = storage.steps[-1].mccycle
+    # make sure this trainset is the one saved at last step!
+    # if the previous TPS simulation was killed it can happen that
+    # the trainset is not saved, we try to correct as good as possible
+    delta_complete = last_mccycle - keys[max_idx]
+    if delta_complete != 0:
+        logger.warning('The TrainSet we found does not match the number of'
+                       + ' steps in storage. This could mean the'
+                       + ' simulation before did not terminate properly.'
+                       + ' We will try to add the missing steps to continue.')
+    data = storage.tags[keys[max_idx]]
+    if len(data) == 2:
+        descriptors, shot_results = data
+    elif len(data) == 3:
+        # make it possible to open/use storages created with TrainSets
+        # which contain in-state points
+        descriptors, shot_results, _ = data
+    return descriptors, shot_results, delta_complete
