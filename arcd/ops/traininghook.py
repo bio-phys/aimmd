@@ -28,117 +28,6 @@ from ..base.trainset import TrainSet
 logger = logging.getLogger(__name__)
 
 
-def _load_trainset(storage, descriptor_transform=None, states=None):
-    """
-    Load the most recent TrainSet data from an ops storage.
-
-    Create the TrainSet from steps if no TrainSet data is found in storage.
-    Passing descriptor_transform and/or states explicitly will set those in the
-    returned TrainSet (instead of the initial values it was saved with).
-
-    Parameters
-    ----------
-    storage - an open ops storage object
-    descriptor_transform - None, str or callable that takes snapshots/trajectories,
-                           if str we will try to retrieve the cv with that name
-                           from the ops storage,
-                           if None we will get the descriptor_transform from
-                           storage.tags
-    states - None, list of str or list of callables/ops-volumes that take snapshots,
-             if list of str, we will try to load the volumes from storage,
-             if None we will get the states from storage.tags
-
-    Returns
-    -------
-    arcd.TrainSet
-
-    """
-    save_trainset_states = TrainingHook.save_trainset_states
-    save_trainset_descriptor_transform = TrainingHook.save_trainset_descriptor_transform
-    # first try to load the saved states and descriptor_transform if None given
-    if descriptor_transform is None:
-        descriptor_transform = storage.tags[save_trainset_descriptor_transform]
-    if states is None:
-        states = storage.tags[save_trainset_states]
-    # try to find the stuff with the same names as what we were passed
-    if isinstance(descriptor_transform, str):
-        descriptor_transform = storage.cvs.find(descriptor_transform)
-    if all(isinstance(s, str) for s in states):
-        states = [storage.volumes.find(s) for s in states]
-    descriptors, shot_results, delta = _find_latest_trainset_data(storage)
-    if descriptors is not None:
-        logger.info('Found a TrainSet in storage.tags')
-        # we found a trainset in storage
-        trainset = TrainSet(states=states,
-                            descriptor_transform=descriptor_transform,
-                            descriptors=descriptors,
-                            shot_results=shot_results
-                            )
-        if delta > 0:
-            logger.info('Adding {:d} missing steps to the Trainset.'.format(delta))
-            # add missing steps if any
-            for step in storage.steps[-delta:]:
-                trainset.append_ops_mcstep(step)
-    else:
-        logger.info('No TrainSet found. Recreating completely.')
-        # recreate the trainset from scratch
-        trainset = TrainSet(states=states,
-                            descriptor_transform=descriptor_transform)
-        for step in storage.steps:
-            trainset.append_ops_mcstep(
-                                       mcstep=step,
-                                       add_invalid=False
-                                      )
-    return trainset
-
-
-def _find_latest_trainset_data(storage):
-    # returns descriptors, shot_results, delta_complete
-    # here delta_complete is the number of steps missing at the end of the TS
-    save_trainset_prefix = TrainingHook.save_trainset_prefix
-    save_trainset_suffix = TrainingHook.save_trainset_suffix
-    keys = list(storage.tags.keys())
-    keys = [k for k in keys if save_trainset_prefix in k]
-    if len(keys) < 1:
-        # did not find anything
-        return None, None, 0
-    strip = (len(save_trainset_prefix)
-             + len(save_trainset_suffix)
-             - 4  # we ignore the first characters up until the number
-             )
-    # find the trainset data with the highest step number
-    numbers = [int(k[strip:]) for k in keys]
-    max_idx = np.argmax(numbers)
-    last_mccycle = storage.steps[-1].mccycle
-    # make sure this trainset is the one saved at last step!
-    # if the previous TPS simulation was killed it can happen that
-    # the trainset is not saved, we try to correct as good as possible
-    delta_complete = last_mccycle - numbers[max_idx]
-    if delta_complete != 0:
-        logger.warning('The TrainSet we found does not match the number of'
-                       + ' steps in storage. This could mean the'
-                       + ' simulation before did not terminate properly.'
-                       + ' We will try to add the missing steps to continue.')
-    data = storage.tags[keys[max_idx]]
-    if len(data) == 2:
-        descriptors, shot_results = data
-    elif len(data) == 3:
-        # TODO: this feature was last used in v0.3, I think we can deprecate?!
-        # make it possible to open/use storages created with TrainSets
-        # which contain in-state points
-        descriptors, shot_results, _ = data
-    return descriptors, shot_results, delta_complete
-
-
-def _match_model_to_trainset(model, trainset):
-    """Update predicted p and q lists if they are shorter than the trainset."""
-    if len(model.expected_p) < len(trainset):
-        for idx in range(len(model.expexted_p), len(trainset)):
-            p = trainset.descriptors[idx:idx+1]  # slice to get a 2d array
-            model.register_sp(p, use_transform=False)
-    return model
-
-
 class TrainingHook(PathSimulatorHook):
     """
     OPS PathSimulatorHook to train arcd.RCModels on shooting data.
@@ -214,6 +103,117 @@ class TrainingHook(PathSimulatorHook):
         density_collection_defaults.update(density_collection)
         self.density_collection = density_collection_defaults
 
+    @classmethod
+    def load_trainset(cls, storage, descriptor_transform=None, states=None):
+        """
+        Load the most recent TrainSet data from an ops storage.
+
+        Create the TrainSet from steps if no TrainSet data is found in storage.
+        Passing descriptor_transform and/or states explicitly will set those in the
+        returned TrainSet (instead of the initial values it was saved with).
+
+        Parameters
+        ----------
+        storage - an open ops storage object
+        descriptor_transform - None, str or callable that takes snapshots/trajectories,
+                               if str we will try to retrieve the cv with that name
+                               from the ops storage,
+                               if None we will get the descriptor_transform from
+                               storage.tags
+        states - None, list of str or list of callables/ops-volumes that take snapshots,
+                 if list of str, we will try to load the volumes from storage,
+                 if None we will get the states from storage.tags
+
+        Returns
+        -------
+        arcd.TrainSet
+
+        """
+        save_trainset_states = cls.save_trainset_states
+        save_trainset_descriptor_transform = cls.save_trainset_descriptor_transform
+        # first try to load the saved states and descriptor_transform if None given
+        if descriptor_transform is None:
+            descriptor_transform = storage.tags[save_trainset_descriptor_transform]
+        if states is None:
+            states = storage.tags[save_trainset_states]
+        # try to find the stuff with the same names as what we were passed
+        if isinstance(descriptor_transform, str):
+            descriptor_transform = storage.cvs.find(descriptor_transform)
+        if all(isinstance(s, str) for s in states):
+            states = [storage.volumes.find(s) for s in states]
+        descriptors, shot_results, delta = cls._find_latest_trainset_data(storage)
+        if descriptors is not None:
+            logger.info('Found a TrainSet in storage.tags')
+            # we found a trainset in storage
+            trainset = TrainSet(states=states,
+                                descriptor_transform=descriptor_transform,
+                                descriptors=descriptors,
+                                shot_results=shot_results
+                                )
+            if delta > 0:
+                logger.info('Adding {:d} missing steps to the Trainset.'.format(delta))
+                # add missing steps if any
+                for step in storage.steps[-delta:]:
+                    trainset.append_ops_mcstep(step)
+        else:
+            logger.info('No TrainSet found. Recreating completely.')
+            # recreate the trainset from scratch
+            trainset = TrainSet(states=states,
+                                descriptor_transform=descriptor_transform)
+            for step in storage.steps:
+                trainset.append_ops_mcstep(
+                                           mcstep=step,
+                                           add_invalid=False
+                                          )
+        return trainset
+
+    @classmethod
+    def _find_latest_trainset_data(cls, storage):
+        # returns descriptors, shot_results, delta_complete
+        # here delta_complete is the number of steps missing at the end of the TS
+        save_trainset_prefix = cls.save_trainset_prefix
+        save_trainset_suffix = cls.save_trainset_suffix
+        keys = list(storage.tags.keys())
+        keys = [k for k in keys if save_trainset_prefix in k]
+        if len(keys) < 1:
+            # did not find anything
+            return None, None, 0
+        strip = (len(save_trainset_prefix)
+                 + len(save_trainset_suffix)
+                 - 4  # we ignore the first characters up until the number
+                 )
+        # find the trainset data with the highest step number
+        numbers = [int(k[strip:]) for k in keys]
+        max_idx = np.argmax(numbers)
+        last_mccycle = storage.steps[-1].mccycle
+        # make sure this trainset is the one saved at last step!
+        # if the previous TPS simulation was killed it can happen that
+        # the trainset is not saved, we try to correct as good as possible
+        delta_complete = last_mccycle - numbers[max_idx]
+        if delta_complete != 0:
+            logger.warning('The TrainSet we found does not match the number of'
+                           + ' steps in storage. This could mean the'
+                           + ' simulation before did not terminate properly.'
+                           + ' We will try to add the missing steps to continue.')
+        data = storage.tags[keys[max_idx]]
+        if len(data) == 2:
+            descriptors, shot_results = data
+        elif len(data) == 3:
+            # TODO: this feature was last used in v0.3, I think we can deprecate?!
+            # make it possible to open/use storages created with TrainSets
+            # which contain in-state points
+            descriptors, shot_results, _ = data
+        return descriptors, shot_results, delta_complete
+
+    @staticmethod
+    def _match_model_to_trainset(model, trainset):
+        """Update predicted p and q lists if they are shorter than the trainset."""
+        if len(model.expected_p) < len(trainset):
+            for idx in range(len(model.expexted_p), len(trainset)):
+                p = trainset.descriptors[idx:idx+1]  # slice to get a 2d array
+                model.register_sp(p, use_transform=False)
+        return model
+
     def _get_model_from_sim(self, sim):
         if sim.storage is not None:
             spath = sim.storage.abspath
@@ -258,7 +258,7 @@ class TrainingHook(PathSimulatorHook):
             if states is None:
                 raise RuntimeError('Could not reconstruct states for TrainSet'
                                    + '. Please pass a TrainSet with states.')
-            self.trainset = _load_trainset(storage=sim.storage)
+            self.trainset = self.load_trainset(storage=sim.storage)
             logger.info('Successfully recreated TrainSet from storage.')
 
         # if we have no model we will try to reload it
@@ -269,8 +269,8 @@ class TrainingHook(PathSimulatorHook):
                                    + ' model from file.')
             # this is to potentially fix simulations that got killed prematurely
             # and should not do anything if everything went well
-            self.model = _match_model_to_trainset(model=model,
-                                                  trainset=self.trainset)
+            self.model = self._match_model_to_trainset(model=model,
+                                                       trainset=self.trainset)
             # TODO: this might not always be what we want!
             # we put the loaded model in all RCmodelSelectors...?
             # save the model possibly a second time, but with every Selector?!
