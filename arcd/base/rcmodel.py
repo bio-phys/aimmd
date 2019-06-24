@@ -384,6 +384,7 @@ class TrajectoryDensityCollector:
         Parameters:
         -----------
         model - arcd.base.RCModel predicting commitment probabilities
+
         """
         p_list = [[] for _ in range(self.n_dim)]
         for desc, c in zip(self._descriptors, self._counts):

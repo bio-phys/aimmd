@@ -16,11 +16,10 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import os
 import logging
-import numpy as np
 import openpathsampling as paths
 from .rcmodel import RCModel
 from .trainset import TrainSet
-from ..ops import TrainingHook
+from ..ops.traininghook import _load_trainset as load_trainset
 
 
 logger = logging.getLogger(__name__)
@@ -200,82 +199,3 @@ def load_model(fname, storage=None, descriptor_transform=None):
     if storage is None:
         model.descriptor_transform = descriptor_transform
     return model
-
-
-def load_trainset(storage, descriptor_transform, states):
-    """
-    Load the most recent TrainSet from an ops storage.
-
-    Parameters
-    ----------
-    storage - an open ops storage object
-    descriptor_transform - str or callable that takes snapshots/trajectories,
-                           if str we will try to retrieve the cv with that name
-                           from the ops storage
-    states - list of str or list of callables/ops-volumes that take snapshots,
-             if list of str, we will try to load the volumes from storage
-
-    Returns
-    -------
-    arcd.TrainSet
-
-    """
-    descriptors, shot_results, delta = _find_latest_trainset_data(storage)
-    if descriptors is not None:
-        # we found a trainset in storage
-        trainset = TrainSet(states=states,
-                            descriptor_transform=descriptor_transform,
-                            descriptors=descriptors,
-                            shot_results=shot_results
-                            )
-        if delta > 0:
-            # add missing steps if any
-            for step in storage.steps[-delta:]:
-                trainset.append_ops_mcstep(step)
-    else:
-        # recreate the trainset from scratch
-        trainset = TrainSet(states=states,
-                            descriptor_transform=descriptor_transform)
-        for step in storage.steps:
-            trainset.append_ops_mcstep(
-                                       mcstep=step,
-                                       add_invalid=False
-                                      )
-    return trainset
-
-
-def _find_latest_trainset_data(storage):
-    # returns descriptors, shot_results, delta_complete
-    # here delta_complete is the number of steps missing at the end of the TS
-    save_trainset_prefix = TrainingHook.save_trainset_prefix
-    save_trainset_suffix = TrainingHook.save_trainset_suffix
-    keys = list(storage.tags.keys())
-    keys = [k for k in keys if save_trainset_prefix in k]
-    if len(keys) < 1:
-        # did not find anything
-        return None, None, 0
-    strip = (len(save_trainset_prefix)
-             + len(save_trainset_suffix)
-             - 4  # we ignore the first characters up until the number
-             )
-    # find the trainset data with the highest step number
-    numbers = [int(k[strip:]) for k in keys]
-    max_idx = np.argmax(numbers)
-    last_mccycle = storage.steps[-1].mccycle
-    # make sure this trainset is the one saved at last step!
-    # if the previous TPS simulation was killed it can happen that
-    # the trainset is not saved, we try to correct as good as possible
-    delta_complete = last_mccycle - keys[max_idx]
-    if delta_complete != 0:
-        logger.warning('The TrainSet we found does not match the number of'
-                       + ' steps in storage. This could mean the'
-                       + ' simulation before did not terminate properly.'
-                       + ' We will try to add the missing steps to continue.')
-    data = storage.tags[keys[max_idx]]
-    if len(data) == 2:
-        descriptors, shot_results = data
-    elif len(data) == 3:
-        # make it possible to open/use storages created with TrainSets
-        # which contain in-state points
-        descriptors, shot_results, _ = data
-    return descriptors, shot_results, delta_complete
