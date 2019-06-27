@@ -209,8 +209,9 @@ class TrainingHook(PathSimulatorHook):
     def _match_model_to_trainset(model, trainset):
         """Update predicted p and q lists if they are shorter than the trainset."""
         if len(model.expected_p) < len(trainset):
-            for idx in range(len(model.expexted_p), len(trainset)):
-                p = trainset.descriptors[idx:idx+1]  # slice to get a 2d array
+            delta = len(model.expected_p) - len(trainset)
+            ps = trainset.descriptors[delta:]
+            for p in ps:
                 model.register_sp(p, use_transform=False)
         return model
 
