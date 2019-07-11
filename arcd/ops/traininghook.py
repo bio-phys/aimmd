@@ -32,7 +32,16 @@ class TrainingHook(PathSimulatorHook):
     """
     OPS PathSimulatorHook to train arcd.RCModels on shooting data.
 
-    Note that the training itself is left to the model, this simply calls
+    NOTE on continuing simulations, possibly with a new/different RCmodel:
+    If model or trainset are None we will try to load them before the
+    simulation, however this can obviously only work if continuing an existing
+    simulation.
+    If replace_model is True (and a model is passed) we will replace all
+    references to the old model with the newly passed RCmodel. This can be
+    usefull for continuing a TPS simulation with an optimized model
+    architecture.
+
+    NOTE that the training itself is left to the model, TrainingHook only calls
     the models train_hook() function after every MCStep and keeps the
     trainingset up to date.
 
@@ -44,6 +53,8 @@ class TrainingHook(PathSimulatorHook):
                               save_model_interval MCStep with a suffix
                               indicating the step,
                               Note: can be inifnity to never save
+        replace_model - bool, wheter we should set/replace the RCModel in all
+                        associated OPS-selectors
         density_collection - dict, contains parameters to control collection of
                              density of points on TPs,
                              'enabled' - bool, wheter to collect at all
@@ -84,7 +95,8 @@ class TrainingHook(PathSimulatorHook):
     # this is passed to TrainSet.add_ops_step() as add_invalid
     add_invalid_mcsteps = False
 
-    def __init__(self, model, trainset, save_model_interval=500,
+    def __init__(self, model=None, trainset=None, save_model_interval=500,
+                 replace_model=False,
                  density_collection={'enabled': True,
                                      'interval': 20,
                                      'first_collection': 500,
@@ -95,6 +107,7 @@ class TrainingHook(PathSimulatorHook):
         self.model = model
         self.trainset = trainset
         self.save_model_interval = save_model_interval
+        self._replace_model = replace_model
         density_collection_defaults = {'enabled': True,
                                        'interval': 20,
                                        'first_collection': 500,
@@ -263,6 +276,7 @@ class TrainingHook(PathSimulatorHook):
             logger.info('Successfully recreated TrainSet from storage.')
 
         # if we have no model we will try to reload it
+        replace_model = False
         if self.model is None:
             model = self._get_model_from_sim(sim)
             if model is None:
@@ -272,14 +286,20 @@ class TrainingHook(PathSimulatorHook):
             # and should not do anything if everything went well
             self.model = self._match_model_to_trainset(model=model,
                                                        trainset=self.trainset)
+            replace_model = True  # need to set the loaded model in the selector
+            logger.info('Successfully loaded the RCModel.')
+
+        # set model in SP-Selector, either the one we just loaded
+        # or a new one that was passed if self._replace_model=True
+        if self._replace_model or replace_model:
             # TODO: this might not always be what we want!
-            # we put the loaded model in all RCmodelSelectors...?
+            # we put the (loaded) model in all RCmodelSelectors...?
             # save the model possibly a second time, but with every Selector?!
             for move_group in sim.move_scheme.movers.values():
                 for mover in move_group:
                     if isinstance(mover.selector, RCModelSelector):
                         mover.selector.model = self.model
-            logger.info('Restored saved model into TrainingHook and Selector')
+            logger.info('Registered model in the SP-Selector')
 
         # save stuff if not already in storage
         # save the trainset states
