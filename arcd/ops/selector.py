@@ -146,14 +146,16 @@ class RCModelSelector(ShootingPointSelector):
 
     def probability(self, snapshot, trajectory):
         """Return proposal probability of the snapshot for this trajectory."""
-        # only evaluate costly symmetry functions if needed,
-        # if trajectory is no TP it has weight 0 and p_pick = 0 for all points
-        self_transitions = [1 < sum(s(p)
-                                    for p in [trajectory[0], trajectory[-1]])
-                            for s in self.states]
-        if any(self_transitions):
-            return 0.
-        # trajectory is a TP since it is no self-transition, calculate p_pick
+        if self.states is not None:
+            # only evaluate costly symmetry functions if needed,
+            # if trajectory is no TP it has weight 0 and p_pick = 0 for all points
+            self_transitions = [1 < sum(s(p)
+                                        for p in [trajectory[0], trajectory[-1]])
+                                for s in self.states]
+            # trajectory is a TP if it has no self-transitions -> calculate p_pick
+            if any(self_transitions):
+                return 0.
+
         sum_bias = self.sum_bias(trajectory)
         if sum_bias == 0.:
             return 1./len(trajectory)
