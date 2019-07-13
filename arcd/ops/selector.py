@@ -123,11 +123,10 @@ class RCModelSelector(ShootingPointSelector):
     def f(self, snapshot, trajectory):
         """Return the unnormalized proposal probability of a snapshot."""
         z_sel = self.model.z_sel(snapshot)
-        any_nan = False
-        if np.any(np.isnan(z_sel)):
+        any_nan = np.any(np.isnan(z_sel))
+        if any_nan:
             logger.warning('The model predicts NaNs. '
                            + 'We used np.nan_to_num to proceed')
-            any_nan = True
             z_sel = np.nan_to_num(z_sel)
         # casting to python float solves the problem that
         # metropolis_acceptance is not saved !
@@ -170,17 +169,16 @@ class RCModelSelector(ShootingPointSelector):
 
     def _biases(self, trajectory):
         z_sels = self.model.z_sel(trajectory)
-        any_nan = False
-        if np.any(np.isnan(z_sels)):
+        any_nan = np.any(np.isnan(z_sels))
+        if any_nan:
             logger.warning('The model predicts NaNs. '
                            + 'We used np.nan_to_num to proceed')
-            any_nan = True
             z_sels = np.nan_to_num(z_sels)
         ret = self._f_sel(z_sels)
         if self.density_adaptation:
             committor_probs = self.model(trajectory)
             if any_nan:
-                committor_probs = np.nan_to_num(any_nan)
+                committor_probs = np.nan_to_num(committor_probs)
             density_fact = self.model.density_collector.get_correction(
                                                             committor_probs
                                                                        )
