@@ -164,8 +164,14 @@ class GradientMovieMaker:
     def anchor_mols_from_atom_indices(self, atom_indices):
         """Get the set of molecules containing atom_indices."""
         molecules = self.topology.find_molecules()
-        anchor_mols = [mol for idx in atom_indices for mol in molecules
-                       if self.topology.atom(idx) in mol]
+        anchor_mols = []
+        for mol in molecules:
+            for idx in atom_indices:
+                if self.topology.atom(idx) in mol:
+                    anchor_mols.append(mol)
+                    # no need to go through all the other atoms
+                    # if one is already part of the molecule
+                    break
         return anchor_mols
 
     def movie_around_xyz(self, xyz, outfile, unitcell_vectors,
@@ -284,15 +290,23 @@ class GradientMovieMaker:
                 f.save_pdb(outname, force_overwrite=overwrite,
                            bfactors=Bfactors[i])
 
-        if (anchor_mols is None) and (atom_indices is not None):
-            anchor_mols = self.anchor_mols_from_atom_indices(atom_indices)
         if isinstance(traj, paths.BaseSnapshot):
             traj = paths.Trajectory([traj])
         if isinstance(traj, paths.Trajectory):
             traj = traj.to_mdtraj()
-        if isinstance(atom_indices[0], int):
-            # make it possible to pass atom_indices for each frame
-            atom_indices = [atom_indices for _ in range(len(traj))]
+        if atom_indices is not None:
+            atom_indices = np.asarray(atom_indices, dtype=np.int_)
+            if isinstance(atom_indices[0], np.int_):
+                # make it possible to pass separate atom_indices for each frame
+                # or just one array and the ntake it for the whole tra
+                atom_indices = [atom_indices for _ in range(len(traj))]
+            if anchor_mols is None:
+                # our best guess at the anchor molecules is taking all molecules
+                # any of the atom indices for any frame points to
+                at_idx_set = set(np.concatenate([idxs for idxs in atom_indices],
+                                                axis=0)
+                                 )
+                anchor_mols = self.anchor_mols_from_atom_indices(at_idx_set)
 
         Bfactors = []
         if normalize_per_frame:
