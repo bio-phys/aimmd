@@ -295,11 +295,15 @@ class GradientMovieMaker:
         if isinstance(traj, paths.Trajectory):
             traj = traj.to_mdtraj()
         if atom_indices is not None:
-            atom_indices = np.asarray(atom_indices, dtype=np.int_)
-            if isinstance(atom_indices[0], np.int_):
+            if isinstance(atom_indices[0], (np.integer, int)):
+                atom_indices = np.asarray(atom_indices, dtype=np.int_)
                 # make it possible to pass separate atom_indices for each frame
-                # or just one array and the ntake it for the whole tra
+                # or just one array but then take it for the whole tra
                 atom_indices = [atom_indices for _ in range(len(traj))]
+            else:
+                # cast to numpy ints and arrays
+                atom_indices = [np.asarray(idxs, dtype=np.int_)
+                                for idxs in atom_indices]
             if anchor_mols is None:
                 # our best guess at the anchor molecules is taking all molecules
                 # any of the atom indices for any frame points to
