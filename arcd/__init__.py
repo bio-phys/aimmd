@@ -31,10 +31,10 @@ from .base.utils import (emulate_production_from_trainset,
 
 try:
     from . import pytorch
-except ImportError:
+except (ModuleNotFoundError, ImportError):
     logger.warning("Pytorch not available")
 
 try:
     from . import keras
-except ImportError:
+except (ModuleNotFoundError, ImportError):
     logger.warning("Keras/Tensorflow not available")
