@@ -204,11 +204,11 @@ def _fix_pytorch_device(location):
         location = str(location)
     if not isinstance(location, str):
         raise ValueError("location should be a string or torch.device")
-    if location[5:] == '':
-        device = 0
-    else:
-        device = max(int(location[5:]), 0)
     if 'cuda' in location:
+        if location[5:] == '':
+            device = 0
+        else:
+            device = max(int(location[5:]), 0)
         if not torch.cuda.is_available():
             # no cuda, go to CPU
             logger.info('Restoring on CPU, since CUDA is not available.')
@@ -218,7 +218,12 @@ def _fix_pytorch_device(location):
             logger.info('Restoring on a different CUDA device.')
             # TODO: does this choose any cuda device or always No 0 ?
             return torch.device('cuda')
-    return device
+        # if we got until here we can restore on the same CUDA device we trained on
+        return torch.device('cuda:'+str(device))
+    else:
+        # we trained on cpu before
+        # TODO: should we try to go to GPU if it is available?
+        return torch.device('cpu')
 
 
 ## RCModels using one ANN
