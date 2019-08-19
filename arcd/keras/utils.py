@@ -44,6 +44,33 @@ def binomial_loss(y_true, y_pred):
     We expect the ann to output the reaction coordinate rc and construct p_B
     as p_B = 1/(1 + exp(-rc))
 
+    NOTE: this is NOT normalized in any way.
+    Parameters
+    ----------
+    We expect y_true to be an array with shape (N, 2), where N is the number
+    of shooting points. y_true[0,0] = n_a and y_true[0,1] = n_b for shot 0.
+    We expect y-pred to be the predicted reaction coordinate value.
+    """
+    # note that we are 'vendor-locked' here using tensorflow to handle the NaNs
+    # i.e. we lose the compability with other DL frameworks taht keras offers
+    t1 = y_true[:, 0] * K.log(1. + K.exp(y_pred[:, 0]))
+    t2 = y_true[:, 1] * K.log(1. + K.exp(-y_pred[:, 0]))
+    zeros = K.tf.zeros_like(t1)
+    return (K.tf.where(K.tf.equal(y_true[:, 0], 0), zeros, t1)
+            + K.tf.where(K.tf.equal(y_true[:, 1], 0), zeros, t2)
+            )
+
+
+def binomial_loss_normed(y_true, y_pred):
+    """
+    Maximum likeliehood loss function for TPS with random velocities or
+    equivalently diffusive dynamics. We use the log-likeliehood derived from
+    a binomial distribution.
+    ln L = ln(\prod_i L_i) = \sum_i ln(L_i)
+    where the loss per point, L_i = n_a * ln(1- p_B) + n_B * ln(p_B)
+    We expect the ann to output the reaction coordinate rc and construct p_B
+    as p_B = 1/(1 + exp(-rc))
+
     NOTE: this is normalized per shot.
     Parameters
     ----------
@@ -59,6 +86,26 @@ def binomial_loss(y_true, y_pred):
 
 
 def multinomial_loss(y_true, y_pred):
+    """
+    Maximum likelihood loss function for multiple state TPS.
+
+    NOTE: this is NOT normalized in any way.
+    Parameters
+    ----------
+    We expect y_true to be an array with shape (N, N_states), where N is the
+    number of shooting points. y_true[0,0] = n_a and y_true[0,1] = n_b etc
+    for shot 0.
+    We expect y-pred to be proportional to ln(p).
+    This is equivalent to binomial_loss if N_states = 2.
+    """
+    zeros = K.tf.zeros_like(y_true)
+    ln_Z = K.log(K.sum(K.exp(y_pred), axis=-1, keepdims=True))
+    return K.tf.where(K.tf.equal(y_true, 0),
+                      zeros, K.sum((ln_Z - y_pred) * y_true, axis=-1)
+                      )
+
+
+def multinomial_loss_normed(y_true, y_pred):
     """
     Maximum likelihood loss function for multiple state TPS.
 

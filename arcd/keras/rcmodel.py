@@ -16,6 +16,7 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
 import os
+import numpy as np
 from abc import abstractmethod
 from keras import backend as K
 from ..base.rcmodel import RCModel
@@ -92,7 +93,10 @@ class KerasRCModel(RCModel):
         loss = self.nnet.evaluate(x=trainset.descriptors,
                                   y=trainset.shot_results,
                                   verbose=0)
-        return loss
+        # loss is the mean loss per training point
+        # so multiply by number of points and divide through number of shots
+        # to return loss normalized per shot
+        return loss * len(trainset) / np.sum(trainset.shot_results)
 
     @abstractmethod
     def train_decision(self, trainset):
@@ -107,13 +111,14 @@ class KerasRCModel(RCModel):
         # train for one epoch == one pass over the trainset
         loss = 0.
         for descriptors, shot_results in trainset.iter_batch(batch_size, shuffle):
-            # multiply by batch lenght to get proper average loss per point
+            # multiply by batch lenght to get total loss per batch
+            # and then at the ernd the correct average loss per shooting point
             loss += (self.nnet.train_on_batch(x=descriptors, y=shot_results)
                      * len(shot_results)
                      )
-        # get loss per shot as for pytorch models, the lossFXs are normalized
-        loss /= len(trainset)
-        return loss
+        # get loss per shot as for pytorch models,
+        # the lossFXs are not normalized in any way
+        return loss / np.sum(trainset.shot_results)
 
 
 class EEKerasRCModel(KerasRCModel):
