@@ -176,7 +176,8 @@ class GradientMovieMaker:
 
     def movie_around_xyz(self, xyz, outfile, unitcell_vectors,
                          atom_indices=None, anchor_mols=None,
-                         overwrite=True):
+                         overwrite=True, normalize=True,
+                         gradient_proportional=True):
         """
         Write out pdb gradient movie around given xyz coordinates.
 
@@ -193,6 +194,11 @@ class GradientMovieMaker:
         anchor_mols - list of mdtraj molecules to center the movie on,
                       will be guessed from atom_indices if None
         overwrite - bool, wheter to overwrite existing files with given name
+        normalize - bool, wheter to normalize the calcuated Bfactors to [0., 99.99],
+                    the PDB-format requires them to be in (-10, 100)
+        gradient_proportional - bool, wheter to output the movie additionally
+                                with atom movements proportional to the
+                                gradient magnitudes
 
         """
         if (anchor_mols is None) and (atom_indices is not None):
@@ -211,6 +217,8 @@ class GradientMovieMaker:
         with np.errstate(invalid='ignore'):
             dq_dx_unit = np.true_divide(dq_dx, norm)
         dq_dx_unit[np.isnan(dq_dx_unit)] = 0
+        if gradient_proportional:
+            dq_dx_prop = dq_dx / np.max(norm)
 
         xyz_out = np.zeros((self.n_frames, xyz.shape[1], 3))
         xyz_out[:] = xyz[0]
@@ -224,9 +232,34 @@ class GradientMovieMaker:
         tra_out.unitcell_vectors = unitcell_vectors
         # unwrap and possibly anchor tra
         tra_out = tra_out.image_molecules(anchor_molecules=anchor_mols)
+        # enforce befactors to be in (-10, 100), this is a PDB format requirement
+        # i.e. we normalize to be in [0, 99.99]
+        bfacts = np.sqrt(np.sum(dq_dx**2, axis=-1))
+        if normalize:
+            bfacts *= 99.99/np.max(bfacts)
+        elif np.max(bfacts) >= 100:
+            logger.warn('The Bfactors must be < 100, but some calculated values'
+                        + ' are higher. Normalizing to [0., 99.99].')
+            bfacts *= 99.99/np.max(bfacts)
         tra_out.save_pdb(outfile, force_overwrite=overwrite,
-                         bfactors=np.sqrt(np.sum(dq_dx**2, axis=-1))
+                         bfactors=bfacts
                          )
+        if gradient_proportional:
+            # write out the gradient proportional movement trajectory
+            # calculation is the same as before, just different dq_dx magnitude
+            xyz_out = np.zeros((self.n_frames, xyz.shape[1], 3))
+            xyz_out[:] = xyz[0]
+            xyz_out += dq_dx_prop * self.amplitude * np.sin(omega * t_frame)
+            tra_out = md.Trajectory(xyz_out, self.topology)
+            tra_out.unitcell_vectors = unitcell_vectors
+            tra_out = tra_out.image_molecules(anchor_molecules=anchor_mols)
+            # (very naively) handle file ending...works only for '.pdb'
+            if outfile.endswith('.pdb'):
+                outfile = outfile[:-4]
+            outfile += '_gradient_proportional_movements.pdb'
+            tra_out.save_pdb(outfile, force_overwrite=overwrite,
+                             bfactors=bfacts
+                             )
 
     def movie_around_snapshot(self, snap, outfile, atom_indices=None,
                               anchor_mols=None, overwrite=True):
@@ -257,6 +290,7 @@ class GradientMovieMaker:
 
     def color_by_gradient(self, traj, outfile, atom_indices=None,
                           anchor_mols=None, overwrite=True,
+                          normalize=True,
                           normalize_per_frame=False,
                           single_frames=False):
         """
@@ -270,6 +304,8 @@ class GradientMovieMaker:
         anchor_mols - list of mdtraj molecules to center the movie on,
                       will be guessed from atom_indices if None
         overwrite - bool, wheter to overwrite existing files with given name
+        normalize - bool, wheter to normalize the calcuated Bfactors to [0., 99.99],
+                    the PDB-format requires them to be in (-10, 100)
         normalize_per_frame - bool, wheter to additionally write out a
                               trajectory with gradients normalized per frame
         single_frames - bool, wheter to output a series of single frame pbds
@@ -278,7 +314,7 @@ class GradientMovieMaker:
         """
         def strip_pdb_suffix(outfile):
             if outfile.endswith('.pdb'):
-                    outfile = outfile[:-4]
+                outfile = outfile[:-4]
             return outfile
 
         def write_single_frames(tra, Bfactors, outfile, overwrite):
@@ -325,13 +361,19 @@ class GradientMovieMaker:
             dq_dx = np.sum(dq_ddescript[f] * ddescript_dx, axis=-1)
             Bfactors.append(np.sqrt(np.sum(dq_dx**2, axis=-1)))
             if normalize_per_frame:
-                norm = np.sqrt(np.sum(dq_dx**2, axis=-1, keepdims=True))
-                with np.errstate(invalid='ignore'):
-                    dq_dx_unit = np.true_divide(dq_dx, norm)
-                dq_dx_unit[np.isnan(dq_dx_unit)] = 0
-                Bfactors_normalized.append(np.sqrt(np.sum(dq_dx**2, axis=-1)))
+                norm = 99.99/np.max(np.sqrt(np.sum(dq_dx**2, axis=-1)))
+                Bfactors_normalized.append(np.sqrt(np.sum(dq_dx**2, axis=-1))
+                                           / norm
+                                           )
 
         Bfactors = np.array(Bfactors)
+        # normalize Bfactors to PDB-fromat requirement
+        if normalize:
+            Bfactors *= 99.99/np.max(Bfactors)
+        elif np.max(Bfactors) >= 100:
+            logger.warn('The Bfactors must be < 100, but calculated gradients'
+                        + ' are higher. Normalizing to [0., 99.99].')
+            Bfactors *= 99.99/np.max(Bfactors)
         traj_out = traj.image_molecules(anchor_molecules=anchor_mols)
         if normalize_per_frame:
             Bfactors_normalized = np.array(Bfactors_normalized)
