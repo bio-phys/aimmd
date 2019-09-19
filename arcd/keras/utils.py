@@ -98,11 +98,11 @@ def multinomial_loss(y_true, y_pred):
     We expect y-pred to be proportional to ln(p).
     This is equivalent to binomial_loss if N_states = 2.
     """
-    zeros = K.tf.zeros_like(y_true)
+    zeros = K.tf.zeros_like(y_pred)
     ln_Z = K.log(K.sum(K.exp(y_pred), axis=-1, keepdims=True))
-    return K.tf.where(K.tf.equal(y_true, 0),
-                      zeros, K.sum((ln_Z - y_pred) * y_true, axis=-1)
-                      )
+    return K.sum(K.tf.where(K.tf.equal(y_true, 0),
+                            zeros, (ln_Z - y_pred) * y_true),
+                 axis=-1)
 
 
 def multinomial_loss_normed(y_true, y_pred):
@@ -381,7 +381,7 @@ def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True):
 
 def load_keras_model(filename):
     """
-    Loads a model from a given keras hdf5 model file.
+    Load a model from a given keras hdf5 model file.
     Takes care of setting the custom loss function.
     """
     with CustomObjectScope({'binomial_loss': binomial_loss,
