@@ -15,11 +15,12 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
-## train_decision functions, their defaults and their docstrings
+# train_decision functions, their defaults and their docstrings
 # NOTE: they are externalised because they are the same for all RCModels
 # (at least for all that use an ANN as prediction model)
 # but these models all have different __init__ signatures so we need to rewrite __init__
@@ -30,9 +31,7 @@ _train_decision_funcs = {}
 
 
 def train_decision_EEscale(self, trainset):
-    """
-    scales learning rate by EE-factor and trains only if lr > lr_min
-    """
+    """Scale learning rate by EE-factor and trains only if lr > lr_min."""
     train = False
     lr = self.ee_params['lr_0']
     lr *= self.train_expected_efficiency_factor(trainset,
@@ -73,6 +72,7 @@ _train_decision_defaults['EEscale'] = {'lr_0': 1e-3,
 
 
 def train_decision_EErand(self, trainset):
+    """Train with probability given by current EEfact."""
     train = False
     self._decisions_since_last_train += 1
     if self._decisions_since_last_train >= self.ee_params['max_interval']:
