@@ -16,10 +16,14 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
 import os
+import copy
 import numpy as np
 from abc import abstractmethod
 from keras import backend as K
 from ..base.rcmodel import RCModel
+from ..base.rcmodel_train_decision import (_train_decision_funcs,
+                                           _train_decision_defaults,
+                                           _train_decision_docs)
 from .utils import load_keras_model
 
 
@@ -81,12 +85,16 @@ class KerasRCModel(RCModel):
 
     def train_hook(self, trainset):
         self._count_train_hook += 1
-        train, new_lr, epochs = self.train_decision(trainset)
-        self.log_train_decision.append([train, new_lr, epochs])
+        train, new_lr, epochs, batch_size = self.train_decision(trainset)
+        self.log_train_decision.append([train, new_lr, epochs, batch_size])
         if new_lr is not None:
+            logger.info('Setting learning rate to {:.3e}'.format(new_lr))
             self.set_lr(new_lr)
         if train:
-            self.log_train_loss.append([self.train_epoch(trainset)
+            logger.info('Training for {:d} epochs'.format(epochs))
+            self.log_train_loss.append([self.train_epoch(trainset,
+                                                         batch_size=batch_size
+                                                         )
                                         for _ in range(epochs)])
 
     def test_loss(self, trainset):
@@ -121,40 +129,33 @@ class KerasRCModel(RCModel):
         return loss / np.sum(trainset.shot_results)
 
 
-class EEKerasRCModel(KerasRCModel):
-    """
-    Expected efficiency Keras RCModel wrapper
-    """
+class EEScaleKerasRCModel(KerasRCModel):
+    """Expected efficiency scale KerasRCModel."""
+    __doc__ += _train_decision_docs['EEscale']
+
     def __init__(self, nnet, descriptor_transform=None,
-                 ee_params={'lr_0': 1e-3,
-                            'lr_min': 1e-4,
-                            'epochs_per_train': 5,
-                            'interval': 3,
-                            'window': 100}
-                 ):
+                 ee_params=_train_decision_defaults["EEscale"]):
         super().__init__(nnet, descriptor_transform)
         # make it possible to pass only the altered values in dictionary
-        ee_params_defaults = {'lr_0': 1e-3,
-                              'lr_min': 1e-4,
-                              'epochs_per_train': 5,
-                              'interval': 3,
-                              'window': 100}
+        ee_params_defaults = copy.deepcopy(_train_decision_defaults['EEscale'])
         ee_params_defaults.update(ee_params)
         self.ee_params = ee_params_defaults
 
-    def train_decision(self, trainset):
-        # TODO: atm this is the same as for Pytorch Expected efficiecny models!
-        # TODO: we should deduplicate this somehow...
-        train = False
-        lr = self.ee_params['lr_0']
-        lr *= self.train_expected_efficiency_factor(trainset,
-                                                    self.ee_params['window'])
-        if self._count_train_hook % self.ee_params['interval'] == 0:
-            if lr >= self.ee_params['lr_min']:
-                train = True
-        epochs = self.ee_params['epochs_per_train']
-        logger.info('Decided train={:d}, lr={:.3e}, epochs={:d}'.format(train,
-                                                                        lr,
-                                                                        epochs)
-                    )
-        return train, lr, epochs
+    train_decision = _train_decision_funcs['EEscale']
+
+
+class EERandKerasRCModel(KerasRCModel):
+    """Expected efficiency randomized KerasRCModel."""
+    __doc__ += _train_decision_docs['EErand']
+
+    def __init__(self, nnet, optimizer,
+                 ee_params=_train_decision_defaults['EErand'],
+                 descriptor_transform=None, loss=None):
+        super().__init__(nnet, optimizer, descriptor_transform, loss)
+        # make it possible to pass only the altered values in dictionary
+        defaults = copy.deepcopy(_train_decision_defaults['EErand'])
+        defaults.update(ee_params)
+        self.ee_params = defaults
+        self._decisions_since_last_train = 0
+
+    train_decision = _train_decision_funcs['EErand']
