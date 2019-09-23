@@ -71,7 +71,7 @@ class Test_keras:
         snn = arcd.keras.create_snn(cv_ndim, hidden_parms, optim, len(states),
                                     multi_state=multi_state
                                     )
-        model = arcd.keras.EEKerasRCModel(snn, descriptor_transform=None)
+        model = arcd.keras.EEScaleKerasRCModel(snn, descriptor_transform=None)
         # predict before
         predictions_before = model(descriptors, use_transform=False)
         test_loss_before = model.test_loss(trainset)
@@ -113,12 +113,13 @@ class Test_keras:
                                     optim, len(setup_dict['states']),
                                     multi_state=False  # do binomial predictions
                                     )
-        model = arcd.keras.EEKerasRCModel(snn, setup_dict['descriptor_transform'],
-                                          ee_params={'lr_0': 1e-3, 'lr_min': 1e-4,
-                                                     'epochs_per_train': 1,
-                                                     'interval': 3,
-                                                     'window': 100}
-                                          )
+        model = arcd.keras.EEScaleKerasRCModel(snn, setup_dict['descriptor_transform'],
+                                               ee_params={'lr_0': 1e-3,
+                                                          'lr_min': 1e-4,
+                                                          'epochs_per_train': 1,
+                                                          'interval': 3,
+                                                          'window': 100}
+                                               )
         trainset = arcd.TrainSet(setup_dict['states'], setup_dict['descriptor_transform'])
         trainhook = arcd.ops.TrainingHook(model, trainset)
         if save_trainset == 'recreate_trainset':
