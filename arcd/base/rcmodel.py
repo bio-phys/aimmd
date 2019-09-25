@@ -66,10 +66,10 @@ class RCModel(ABC):
     z_sel_scale = 25
     # (TP) density collection params
     # NOTE: Everything here only makes it possible to collect TP densities
-    # by attaching a TrajectoryDenistyCollector, however for this feature
+    # by attaching a TrajectoryDensityCollector, however for this feature
     # to have any effect we need to regularly update the density estimate!
     # Updating the density estimate is done by the corresponding TrainingHook,
-    # and unless updating the density is enabled there we will not waste
+    # and unless using the density is enabled there we will not waste
     # computing power with unecessary updates of the density
     density_collection_n_bins = 10
 
@@ -325,8 +325,9 @@ class TrajectoryDensityCollector:
         self.n_dim = n_dim
         self.bins = bins
         self.density_histogram = np.zeros(tuple(bins for _ in range(n_dim)))
-        self._counts = []
-        self._descriptors = []
+        self._counts = np.empty((0, 0))
+        self._descriptors = np.empty((0, 0))
+        self._fill_pointer = 0
         # need to know the number of forbidden bins, i.e. where sum_prob > 1
         bounds = np.arange(0., 1., 1./bins)
         # this magic line creates all possible combinations of probs
@@ -337,11 +338,42 @@ class TrajectoryDensityCollector:
         n_forbidden_bins = len(np.where(sums > 1)[0])
         self._n_allowed_bins = bins**self.n_dim - n_forbidden_bins
 
+    def _extend_if_needed(self, tp_len, descriptor_dim, add_entries=5000):
+        """Extend internal storage arrays if next TP would not fit."""
+        shadow_len = self._descriptors.shape[0]
+        # make sure we always make space for the whole TP
+        add = max((add_entries, tp_len))
+        if shadow_len == 0:
+            # first creation of the arrays
+            self._counts = np.zeros((add,), dtype=np.float64)
+            self._descriptors = np.zeros((add, descriptor_dim),
+                                         dtype=np.float64)
+        elif shadow_len <= self._fill_pointer + tp_len:
+            # extend by at least the tp_len
+            self._counts = np.concatenate((self._counts,
+                                           np.zeros((add,), dtype=np.float64))
+                                          )
+            self._descriptors = np.concatenate(
+                    (self._descriptors,
+                     np.zeros((add, descriptor_dim), dtype=np.float64))
+                                               )
+
+    def _append(self, tp_descriptors, counts_arr):
+        # we expect tp_descriptors to be of shape (n_points, descriptor_dim)
+        # and counts_arr to be of shape (n_points,)
+        tp_len, descriptor_dim = tp_descriptors.shape
+        self._extend_if_needed(tp_len=tp_len, descriptor_dim=descriptor_dim)
+        self._descriptors[self._fill_pointer:self._fill_pointer+tp_len] = tp_descriptors
+        self._counts[self._fill_pointer:self._fill_pointer+tp_len] = counts_arr
+        self._fill_pointer += tp_len
+
     def evaluate_density_on_trajectories(self, model, trajectories, counts=None):
         """
         Evaluate the density on the given trajectories.
 
+        Note that we *add* to the existing density estimate.
         Additionally store trajectories/descriptors for later reevaluation.
+        See self.reevaluate_density() for a full recreation of the estimate.
 
         Parameters:
         -----------
@@ -350,27 +382,23 @@ class TrajectoryDensityCollector:
         counts - None or list of weights for the trajectories,
                  i.e. we will add every trajectory count times to the histo,
                  if None, every trajectory is added once
-        update - bool, if True we will add the density to the current estimate,
-                 if False we will overwrite the current estimate,
-                 default is True
 
         """
         if counts is None:
             counts = len(trajectories) * [1.]
-        p_list = [[] for _ in range(self.n_dim)]
         for tra, c in zip(trajectories, counts):
             descriptors = model.descriptor_transform(tra)
-            self._descriptors.append(descriptors)
-            self._counts.append(c)
-            pred = model(descriptors, use_transform=False)
-            for i in range(self.n_dim):
-                p_list[i] += c * [pred[:, i]]
+            self._append(tp_descriptors=descriptors,
+                         counts_arr=np.full((descriptors.shape[0]), c)
+                         )
+        pred = model(self._descriptors[:self._fill_pointer],
+                     use_transform=False)
         histo, edges = np.histogramdd(
-                            [np.concatenate(p, axis=0)
-                             for p in p_list],
+                            sample=pred,
                             bins=self.bins,
                             range=[[0., 1.]
-                                   for _ in range(self.n_dim)]
+                                   for _ in range(self.n_dim)],
+                            weights=self._counts[:self._fill_pointer]
                                       )
         self.density_histogram += histo
 
@@ -386,17 +414,14 @@ class TrajectoryDensityCollector:
         model - arcd.base.RCModel predicting commitment probabilities
 
         """
-        p_list = [[] for _ in range(self.n_dim)]
-        for desc, c in zip(self._descriptors, self._counts):
-            pred = model(desc, use_transform=False)
-            for i in range(self.n_dim):
-                p_list[i] += c * [pred[:, i]]
+        pred = model(self._descriptors[:self._fill_pointer],
+                     use_transform=False)
         histo, edges = np.histogramdd(
-                            [np.concatenate(p, axis=0)
-                             for p in p_list],
+                            sample=pred,
                             bins=self.bins,
                             range=[[0., 1.]
-                                   for _ in range(self.n_dim)]
+                                   for _ in range(self.n_dim)],
+                            weights=self._counts[:self._fill_pointer]
                                       )
         self.density_histogram = histo
 
