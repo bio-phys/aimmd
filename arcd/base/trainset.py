@@ -33,7 +33,7 @@ class TrainSet(Iterable):
 
     # TODO: do we need weights for the points?
     def __init__(self, states, descriptor_transform=None,
-                 descriptors=None, shot_results=None):
+                 descriptors=None, shot_results=None, weights=None):
         """
         Create a TrainSet.
 
@@ -49,6 +49,8 @@ class TrainSet(Iterable):
                       if given trainset is initialized with these descriptors
         shot_results - None or numpy.ndarray [shape=(n_points, n_states)],
                        if given trainset is initialized with these shot_results
+        weights - None or numpy.ndarray [shape=(n_points,)],
+                  if given we will use this as weights for the training points
         """
         self.states = states
         n_states = len(states)
@@ -62,15 +64,26 @@ class TrainSet(Iterable):
             descriptors = np.asarray(descriptors, dtype=np.float64)
             shot_results = np.asarray(shot_results, dtype=np.float64)
             if shot_results.shape[0] != descriptors.shape[0]:
-                raise ValueError('descriptors and shot_results must contain an'
+                raise ValueError("'descriptors' and 'shot_results' must contain an"
                                  + ' equal number of points /have the same '
                                  + 'first dimension.')
+            if weights is not None:
+                weights = np.asarray(weights, dtype=np.float64)
+                if weights.shape[0] != descriptors.shape[0]:
+                    raise ValueError("If given 'weights' and 'descriptors' must"
+                                     + ' contain the same number of points '
+                                     + '/have the same first dimension.')
+            else:
+                # assume equal weights for all given points
+                weights = np.ones((descriptors.shape[0],), dtype=np.float64)
         else:
             descriptors = np.empty((0, 0), dtype=np.float64)
             shot_results = np.empty((0, 0), dtype=np.float64)
+            weights = np.empty((0,), dtype=np.float64)
 
         self._descriptors = descriptors
         self._shot_results = shot_results
+        self._weights = weights
         self._fill_pointer = shot_results.shape[0]
 
     @property
@@ -82,6 +95,11 @@ class TrainSet(Iterable):
     def descriptors(self):
         """Return descriptor coordinates for each point."""
         return self._descriptors[:self._fill_pointer]
+
+    @property
+    def weights(self):
+        """Return weights for each point."""
+        return self._weights[:self._fill_pointer]
 
     @property
     def transitions(self):
@@ -108,19 +126,23 @@ class TrainSet(Iterable):
             # slice to preserve dimensionality
             descriptors = self._descriptors[:self._fill_pointer][key:key+1]
             shots = self._shot_results[:self._fill_pointer][key:key+1]
+            weights = self._weights[:self._fill_pointer][key:key+1]
         elif isinstance(key, slice):
             start, stop, step = key.indices(len(self))
             descriptors = self._descriptors[start:stop:step]
             shots = self._shot_results[start:stop:step]
+            weights = self._weights[start:stop:step]
         elif isinstance(key, np.ndarray):
             descriptors = self._descriptors[:self._fill_pointer][key]
             shots = self._shot_results[:self._fill_pointer][key]
+            weights = self._weights[:self._fill_pointer][key]
         else:
             raise KeyError('keys must be int, slice or np.ndarray.')
 
         return TrainSet(self.states,
                         descriptor_transform=self.descriptor_transform,
-                        descriptors=descriptors, shot_results=shots)
+                        descriptors=descriptors, shot_results=shots,
+                        weights=weights)
 
     # TODO: do we need __setitem__ ??
     def __setitem__(self, key):
@@ -149,6 +171,7 @@ class TrainSet(Iterable):
                                           dtype=np.float64)
             self._descriptors = np.zeros((add_entries, descriptor_dim),
                                          dtype=np.float64)
+            self._weights = np.zeros((add_entries, ), dtype=np.float64)
         elif shadow_len <= self._fill_pointer + 1:
             # no space left for the next point, extend
             self._shot_results = np.concatenate(
@@ -161,6 +184,9 @@ class TrainSet(Iterable):
                  np.zeros((add_entries, descriptor_dim), dtype=np.float64)
                  )
                                                )
+            self._weights = np.concatenate(
+                (self._weights, np.zeros((add_entries,), dtype=np.float64))
+                                           )
 
     def append_ops_mcstep(self, mcstep, add_invalid=False):
         """
@@ -232,16 +258,18 @@ class TrainSet(Iterable):
             # add shooting results and transformed descriptors to training set
             self.append_point(descriptors, shot_results)
 
-    def append_point(self, descriptors, shot_results):
+    def append_point(self, descriptors, shot_results, weight=1.):
         """
         Append the given 1d-arrays of descriptors and shot_results.
 
         descriptors - np.ndarray with shape (descriptor_dim,)
         shot_results - np.ndarray with shape (n_states,)
+        weight - float, (unnormalized) weight of the point
         """
         self._extend_if_needed(descriptors.shape[0])
         self._shot_results[self._fill_pointer] = shot_results
         self._descriptors[self._fill_pointer] = descriptors
+        self._weights[self._fill_pointer] = weight
         self._fill_pointer += 1
 
 
@@ -259,9 +287,11 @@ class TrainSetIterator(Iterator):
             shuffle_idxs = np.random.permutation(self.max_i)
             self.descriptors = trainset.descriptors[shuffle_idxs]
             self.shot_results = trainset.shot_results[shuffle_idxs]
+            self.weights = trainset.weights[shuffle_idxs]
         else:
             self.descriptors = trainset.descriptors
             self.shot_results = trainset.shot_results
+            self.weights = trainset.weights
 
     def __iter__(self):
         return self
@@ -281,4 +311,5 @@ class TrainSetIterator(Iterator):
 
         self.i += self.batch_size
         return (self.descriptors[start:stop],
-                self.shot_results[start:stop])
+                self.shot_results[start:stop],
+                self.weights[start:stop])
