@@ -154,14 +154,16 @@ class TrainingHook(PathSimulatorHook):
             descriptor_transform = storage.cvs.find(descriptor_transform)
         if all(isinstance(s, str) for s in states):
             states = [storage.volumes.find(s) for s in states]
-        descriptors, shot_results, delta = cls._find_latest_trainset_data(storage)
+        tsdata = cls._find_latest_trainset_data(storage)
+        descriptors, shot_results, weights, delta = tsdata
         if descriptors is not None:
             logger.info('Found a TrainSet in storage.tags')
             # we found a trainset in storage
             trainset = TrainSet(states=states,
                                 descriptor_transform=descriptor_transform,
                                 descriptors=descriptors,
-                                shot_results=shot_results
+                                shot_results=shot_results,
+                                weights=weights,
                                 )
             if delta > 0:
                 logger.info('Adding {:d} missing steps to the Trainset.'.format(delta))
@@ -190,7 +192,7 @@ class TrainingHook(PathSimulatorHook):
         keys = [k for k in keys if save_trainset_prefix in k]
         if len(keys) < 1:
             # did not find anything
-            return None, None, 0
+            return None, None, None, 0
         strip = (len(save_trainset_prefix)
                  + len(save_trainset_suffix)
                  - 4  # we ignore the first characters up until the number
@@ -210,13 +212,13 @@ class TrainingHook(PathSimulatorHook):
                            + ' We will try to add the missing steps to continue.')
         data = storage.tags[keys[max_idx]]
         if len(data) == 2:
+            # this is for backwards compability:
+            # make it possible to load trainsets that do not have weights
             descriptors, shot_results = data
+            weights = np.ones((shot_results.shape[0]), dtype=np.float64)
         elif len(data) == 3:
-            # TODO: this feature was last used in v0.3, I think we can deprecate?!
-            # make it possible to open/use storages created with TrainSets
-            # which contain in-state points
-            descriptors, shot_results, _ = data
-        return descriptors, shot_results, delta_complete
+            descriptors, shot_results, weights = data
+        return descriptors, shot_results, weights, delta_complete
 
     @staticmethod
     def _match_model_to_trainset(model, trainset):
@@ -415,7 +417,8 @@ class TrainingHook(PathSimulatorHook):
                          + self.save_trainset_suffix.format(sim.step)
                          )
             sim.storage.tags[save_name] = [self.trainset.descriptors,
-                                           self.trainset.shot_results]
+                                           self.trainset.shot_results,
+                                           self.trainset.weights]
         else:
             logger.warn('Could not save model, as there is no storage '
                         + 'associated with the simulation.')

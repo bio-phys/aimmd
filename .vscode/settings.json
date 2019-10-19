@@ -3,8 +3,8 @@
     "python.analysis.logLevel": "Warning",
     "python.linting.enabled": true,
     "python.linting.pylintEnabled": false,
-    "python.linting.pep8Enabled": false,
-    //"python.linting.pep8Args": ["--ignore=W503"]
+    "python.linting.pycodestyleEnabled": false,
+    //"python.linting.pycodestyleArgs": ["--ignore=W503"]
     "python.linting.flake8Enabled": true,
     "python.linting.flake8Args": ["--verbose"],
     // vertical line to indicate max line lengths

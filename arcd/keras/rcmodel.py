@@ -100,11 +100,13 @@ class KerasRCModel(RCModel):
     def test_loss(self, trainset):
         loss = self.nnet.evaluate(x=trainset.descriptors,
                                   y=trainset.shot_results,
+                                  sample_weight=trainset.weights,
                                   verbose=0)
         # loss is the mean loss per training point
-        # so multiply by number of points and divide through number of shots
-        # to return loss normalized per shot
-        return loss * len(trainset) / np.sum(trainset.shot_results)
+        # so multiply by sum of weights of points and divide through weighted
+        # number of shots to return loss normalized per shot
+        return loss * np.sum(trainset.weights) / np.sum(np.sum(trainset.shot_results, axis=-1)
+                                                        * trainset.weights)
 
     @abstractmethod
     def train_decision(self, trainset):
@@ -118,15 +120,18 @@ class KerasRCModel(RCModel):
     def train_epoch(self, trainset, batch_size=128, shuffle=True):
         # train for one epoch == one pass over the trainset
         loss = 0.
-        for descriptors, shot_results in trainset.iter_batch(batch_size, shuffle):
+        for des, shots, weights in trainset.iter_batch(batch_size, shuffle):
             # multiply by batch lenght to get total loss per batch
             # and then at the ernd the correct average loss per shooting point
-            loss += (self.nnet.train_on_batch(x=descriptors, y=shot_results)
-                     * len(shot_results)
+            loss += (self.nnet.train_on_batch(x=des, y=shots,
+                                              sample_weight=weights)
+                     * np.sum(weights)
                      )
         # get loss per shot as for pytorch models,
         # the lossFXs are not normalized in any way
-        return loss / np.sum(trainset.shot_results)
+        return loss / np.sum(np.sum(trainset.shot_results, axis=-1)
+                             * trainset.weights
+                             )
 
 
 class EEScaleKerasRCModel(KerasRCModel):
