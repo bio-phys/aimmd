@@ -103,9 +103,10 @@ class KerasRCModel(RCModel):
                                   sample_weight=trainset.weights,
                                   verbose=0)
         # loss is the mean loss per training point
-        # so multiply by number of points and divide through number of shots
-        # to return loss normalized per shot
-        return loss * len(trainset) / np.sum(trainset.shot_results)
+        # so multiply by sum of weights of points and divide through weighted
+        # number of shots to return loss normalized per shot
+        return loss * np.sum(trainset.weights) / np.sum(np.sum(trainset.shot_results, axis=-1)
+                                                        * trainset.weights)
 
     @abstractmethod
     def train_decision(self, trainset):
@@ -124,11 +125,13 @@ class KerasRCModel(RCModel):
             # and then at the ernd the correct average loss per shooting point
             loss += (self.nnet.train_on_batch(x=des, y=shots,
                                               sample_weight=weights)
-                     * len(shots)
+                     * np.sum(weights)
                      )
         # get loss per shot as for pytorch models,
         # the lossFXs are not normalized in any way
-        return loss / np.sum(trainset.shot_results)
+        return loss / np.sum(np.sum(trainset.shot_results, axis=-1)
+                             * trainset.weights
+                             )
 
 
 class EEScaleKerasRCModel(KerasRCModel):
