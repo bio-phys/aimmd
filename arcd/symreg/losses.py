@@ -60,10 +60,26 @@ def active_genes_count(expression, fact=0.0005):
 
 
 # weight regularizations
-def l1_regularization(active_weights, fact=0.0005):
+def _get_active_weights(expression):
+    # get list of active weights
+    a = expression.get_arity()
+    an = expression.get_active_nodes()
+    n = expression.get_n()
+    aw_idxs = []
+    for k in range(len(an)):
+        if an[k] >= n:
+            for l in range(a):
+                aw_idxs.append((an[k] - n) * a + l)
+    ws = expression.get_weights()
+    return [ws[i] for i in aw_idxs]
+
+
+def l1_regularization(expression, fact=0.0005):
+    active_weights = _get_active_weights(expression)
     return fact * sum([ad.abs(aw) for aw in active_weights])
 
 
-def l2_regularization(active_weights, fact=0.0005):
+def l2_regularization(expression, fact=0.0005):
+    active_weights = _get_active_weights(expression)
     return fact * ad.sqrt(sum([aw * aw
                                for aw in active_weights]))
