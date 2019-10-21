@@ -90,7 +90,8 @@ class HIPRanalysis:
                        self.trainset.states,
                        descriptor_transform=self.trainset.descriptor_transform,
                        descriptors=descriptors,
-                       shot_results=self.trainset.shot_results
+                       shot_results=self.trainset.shot_results,
+                       weights=self.trainset.weights
                               )
                 hipr_losses[i] += self.model.test_loss(ts, **self.call_kwargs)
         # take the mean
@@ -143,7 +144,8 @@ class HIPRanalysis:
                        self.trainset.states,
                        descriptor_transform=self.trainset.descriptor_transform,
                        descriptors=descriptors,
-                       shot_results=self.trainset.shot_results
+                       shot_results=self.trainset.shot_results,
+                       weights=self.trainset.weights
                               )
                 hipr_losses_plus[i] += self.model.test_loss(ts,
                                                             **self.call_kwargs
@@ -161,11 +163,12 @@ class HIPRanalysis:
         """
         Perform correlation HIPR analysis plus for given index combinations.
 
-        Permutes the descriptor values for the given indices together first
+        Permutes the descriptor values for the given indices together, first
         using different permutations for each input and second using the same
-        permutation order for all indices in one group. This can be used to
-        quantify the correlations between them. Correlated descriptors will
-        result in a higher loss when permuted in the same permutation order.
+        permutation order for all indices in one group.
+        This can be used to quantify the correlations between them. Correlated
+        descriptors will result in a higher loss when permuted in the same
+        permutation order.
 
         Parameters
         ----------
@@ -174,6 +177,16 @@ class HIPRanalysis:
                   should be calculated,
                   Note that although a group will usually contain two indices
                   any number of indices (>1) is supported
+
+        Returns
+        -------
+        correlation_losses - list of 1d arrays, each array/entry in the list
+                             corresponds to an index group,
+                             the first loss is for permuting the descriptors
+                             using a different permutation for every descriptor
+                             dimension,
+                             the second loss is for permuting all chosen
+                             descriptor dimesnions together in the same order
 
         """
         if n_redraw is None:
@@ -191,7 +204,8 @@ class HIPRanalysis:
                     self.trainset.states,
                     descriptor_transform=self.trainset.descriptor_transform,
                     descriptors=descriptors,
-                    shot_results=self.trainset.shot_results
+                    shot_results=self.trainset.shot_results,
+                    weights=self.trainset.weights
                              )
                 losses[i, 0] += self.model.test_loss(ts, **self.call_kwargs)
                 # now permute all idxs together
@@ -203,7 +217,8 @@ class HIPRanalysis:
                     self.trainset.states,
                     descriptor_transform=self.trainset.descriptor_transform,
                     descriptors=descriptors,
-                    shot_results=self.trainset.shot_results
+                    shot_results=self.trainset.shot_results,
+                    weights=self.trainset.weights
                              )
                 losses[i, 1] += self.model.test_loss(ts, **self.call_kwargs)
         # take the mean over n_redraw realizations
