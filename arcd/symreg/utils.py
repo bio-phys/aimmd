@@ -67,6 +67,6 @@ def initialize_random_expression(n_in, n_out,
                           kernels=kernels, seed=seed)
     # randomize the weights
     for j in range(ex.get_n(), ex.get_n() + ex.get_rows() * ex.get_cols()):
-        for k in range(ex.get_arity()):
+        for k in range(ex.get_arity(j)):
             ex.set_weight(j, k, gdual([np.random.normal(0, 1)]))
     return ex

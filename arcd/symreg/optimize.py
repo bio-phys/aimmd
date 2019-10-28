@@ -92,12 +92,13 @@ dCGPy is GPL licensed.
 
     def get_active_weights(expression):
         # get list of active weights
-        a = expression.get_arity()
+        arity = expression.get_arity()
         an = expression.get_active_nodes()
         n = expression.get_n()
         aw_idxs = []
         for k in range(len(an)):
             if an[k] >= n:
+                a = arity[an[k]]
                 for l in range(a):
                     aw_idxs.append((an[k] - n) * a + l)
         ws = expression.get_weights()
