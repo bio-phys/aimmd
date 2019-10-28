@@ -142,7 +142,8 @@ setup(
         # that you indicate whether you support Python 2, Python 3 or both.
         'Programming Language :: Python :: 3.4',  # should work, not tested
         'Programming Language :: Python :: 3.5',  # should work, not tested
-        'Programming Language :: Python :: 3.6',  # works, tested
+        'Programming Language :: Python :: 3.6',  # works, (tested)
+        'Programming Language :: Python :: 3.7',  # works, tested
         # NOTE: python 2 will most likely not work as intended:
         # 1. we did not take care of integer division vs float division
         # 2. we use binary pickle formats for storing the trainers
@@ -172,7 +173,6 @@ setup(
         'networkx',
         'dcgpy',
         'h5py',  # for loading and saving of keras models
-        #'keras', # moving to tf.keras since we used only tensorflow as backend anyway
     ],
 
     # List additional groups of dependencies here (e.g. development
@@ -180,6 +180,7 @@ setup(
     # for example:
     # $ pip install -e .[test]
     extras_require={
-        'test': ['coverage', 'pytest', 'pytest-cov'],
+        'test': ['pytest'],
+        'dev': ['coverage', 'pytest', 'pytest-cov'],
     }
 )

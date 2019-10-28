@@ -23,6 +23,7 @@ from ..base.rcmodel import RCModel
 from ..base.rcmodel_train_decision import (_train_decision_funcs,
                                            _train_decision_defaults,
                                            _train_decision_docs)
+from .utils import get_closest_pytorch_device
 
 
 logger = logging.getLogger(__name__)
@@ -104,39 +105,6 @@ def multinomial_loss_vect(input, target, weight):
                               dim=1)
 
 
-## Utility functions
-def _fix_pytorch_device(location):
-    """
-    Checks if location is an available pytorch.device, else
-    returns the pytorch device that is `closest` to location.
-    Adopted from pytorch.serialization.validate_cuda_device
-    """
-    if isinstance(location, torch.device):
-        location = str(location)
-    if not isinstance(location, str):
-        raise ValueError("location should be a string or torch.device")
-    if 'cuda' in location:
-        if location[5:] == '':
-            device = 0
-        else:
-            device = max(int(location[5:]), 0)
-        if not torch.cuda.is_available():
-            # no cuda, go to CPU
-            logger.info('Restoring on CPU, since CUDA is not available.')
-            return torch.device('cpu')
-        if device >= torch.cuda.device_count():
-            # other cuda device ID
-            logger.info('Restoring on a different CUDA device.')
-            # TODO: does this choose any cuda device or always No 0 ?
-            return torch.device('cuda')
-        # if we got until here we can restore on the same CUDA device we trained on
-        return torch.device('cuda:'+str(device))
-    else:
-        # we trained on cpu before
-        # TODO: should we try to go to GPU if it is available?
-        return torch.device('cpu')
-
-
 ## RCModels using one ANN
 class PytorchRCModel(RCModel):
     """
@@ -182,7 +150,7 @@ class PytorchRCModel(RCModel):
         nnet = state['nnet_class'](**state['nnet_call_kwargs'])
         del state['nnet_class']
         del state['nnet_call_kwargs']
-        dev = _fix_pytorch_device(state['_device'])
+        dev = get_closest_pytorch_device(state['_device'])
         nnet.to(dev)
         nnet.load_state_dict(state['nnet'])
         state['nnet'] = nnet
@@ -198,6 +166,8 @@ class PytorchRCModel(RCModel):
     def save(self, fname, overwrite=False):
         # keep a ref to the network
         nnet = self.nnet
+        # move to cpu before saving
+        self.nnet = nnet.to(torch.device('cpu'))
         # but replace with state_dict in self.__dict__
         self.nnet_class = nnet.__class__
         self.nnet_call_kwargs = nnet.call_kwargs
@@ -209,8 +179,7 @@ class PytorchRCModel(RCModel):
         # now let super save the state dict
         super().save(fname, overwrite)
         # and restore nnet and optimizer such that self stays functional
-        self.nnet = nnet
-        self.optimizer = optimizer
+        self.nnet = nnet.to(self._device)
         # and remove uneccessary keys to self.__dict__
         del self.nnet_class
         del self.nnet_call_kwargs
@@ -400,7 +369,7 @@ class EnsemblePytorchRCModel(RCModel):
                  ]
         del state['nnets_classes']
         del state['nnets_call_kwargs']
-        devs = [_fix_pytorch_device(d) for d in state['_devices']]
+        devs = [get_closest_pytorch_device(d) for d in state['_devices']]
         for nnet, d, s in zip(nnets, devs, state['nnets']):
             nnet.to(d)
             nnet.load_state_dict(s)
@@ -680,14 +649,14 @@ class MultiDomainPytorchRCModel(RCModel):
         for i, pn in enumerate(pnets):
             pn.load_state_dict(state['pnets'][i])
             # try moving the model to the platform it was on
-            dev = _fix_pytorch_device(state['_pdevices'][i])
+            dev = get_closest_pytorch_device(state['_pdevices'][i])
             pn.to(dev)
         state['pnets'] = pnets
         cnet = state['cnet_class'](**state['cnet_call_kwargs'])
         del state['cnet_class']
         del state['cnet_call_kwargs']
         cnet.load_state_dict(state['cnet'])
-        dev = _fix_pytorch_device(state['_cdevice'])
+        dev = get_closest_pytorch_device(state['_cdevice'])
         cnet.to(dev)
         state['cnet'] = cnet
         # and the optimizers

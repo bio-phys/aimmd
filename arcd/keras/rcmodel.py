@@ -19,7 +19,7 @@ import os
 import copy
 import numpy as np
 from abc import abstractmethod
-from keras import backend as K
+from tensorflow.keras import backend as K
 from ..base.rcmodel import RCModel
 from ..base.rcmodel_train_decision import (_train_decision_funcs,
                                            _train_decision_defaults,
