@@ -172,7 +172,7 @@ setup(
         'networkx',
         'dcgpy',
         'h5py',  # for loading and saving of keras models
-        'keras',
+        #'keras', # moving to tf.keras since we used only tensorflow as backend anyway
     ],
 
     # List additional groups of dependencies here (e.g. development

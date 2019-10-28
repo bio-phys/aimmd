@@ -16,18 +16,18 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 # we use this to be able to run tests when GPU in use
 import tensorflow as tf
-from keras.backend.tensorflow_backend import set_session
-config = tf.ConfigProto()
-config.gpu_options.allow_growth = True  # dynamically grow the memory used on the GPU
-sess = tf.Session(config=config)
-set_session(sess)  # set this TensorFlow session as the default session for Keras
+#from keras.backend.tensorflow_backend import set_session
+#config = tf.ConfigProto()
+#config.gpu_options.allow_growth = True  # dynamically grow the memory used on the GPU
+#sess = tf.Session(config=config)
+#set_session(sess)  # set this TensorFlow session as the default session for Keras
 
 import pytest
 import arcd
 import os
 import numpy as np
 import openpathsampling as paths
-from keras import optimizers
+from tensorflow.keras import optimizers
 
 
 class Test_keras:

@@ -14,11 +14,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
-import keras.models
-from keras.models import Model
-from keras.utils import CustomObjectScope
-from keras import layers
-from keras import backend as K
+import tensorflow as tf
+#import keras.models
+from tensorflow.keras.models import Model
+from tensorflow.keras.utils import CustomObjectScope
+from tensorflow.keras import layers
+from tensorflow.keras import backend as K
 
 
 # NOTE ON LOSS FUNCTIONS
@@ -55,9 +56,9 @@ def binomial_loss(y_true, y_pred):
     # i.e. we lose the compability with other DL frameworks taht keras offers
     t1 = y_true[:, 0] * K.log(1. + K.exp(y_pred[:, 0]))
     t2 = y_true[:, 1] * K.log(1. + K.exp(-y_pred[:, 0]))
-    zeros = K.tf.zeros_like(t1)
-    return (K.tf.where(K.tf.equal(y_true[:, 0], 0), zeros, t1)
-            + K.tf.where(K.tf.equal(y_true[:, 1], 0), zeros, t2)
+    zeros = tf.zeros_like(t1)
+    return (tf.where(tf.equal(y_true[:, 0], 0), zeros, t1)
+            + tf.where(tf.equal(y_true[:, 1], 0), zeros, t2)
             )
 
 
@@ -98,10 +99,10 @@ def multinomial_loss(y_true, y_pred):
     We expect y-pred to be proportional to ln(p).
     This is equivalent to binomial_loss if N_states = 2.
     """
-    zeros = K.tf.zeros_like(y_pred)
+    zeros = tf.zeros_like(y_pred)
     ln_Z = K.log(K.sum(K.exp(y_pred), axis=-1, keepdims=True))
-    return K.sum(K.tf.where(K.tf.equal(y_true, 0),
-                            zeros, (ln_Z - y_pred) * y_true),
+    return K.sum(tf.where(tf.equal(y_true, 0),
+                          zeros, (ln_Z - y_pred) * y_true),
                  axis=-1)
 
 
@@ -386,5 +387,5 @@ def load_keras_model(filename):
     """
     with CustomObjectScope({'binomial_loss': binomial_loss,
                             'multinomial_loss': multinomial_loss}):
-        model = keras.models.load_model(filename)
+        model = tf.keras.models.load_model(filename)
     return model
