@@ -388,6 +388,8 @@ class EnsemblePytorchRCModel(RCModel):
     def save(self, fname, overwrite=False):
         # keep a ref to the nnets
         nnets = self.nnets
+        # move to cpu
+        nnets = [nnet.to(torch.device('cpu')) for nnet in self.nnets]
         # replace it in self.__dict__
         self.nnets_classes = [nnet.__class__ for nnet in nnets]
         self.nnets_call_kwargs = [nnet.call_kwargs for nnet in nnets]
@@ -397,7 +399,8 @@ class EnsemblePytorchRCModel(RCModel):
         self.optimizers_classes = [opt.__class__ for opt in optimizers]
         self.optimizers = [opt.state_dict() for opt in optimizers]
         super().save(fname, overwrite=overwrite)
-        # reset the network
+        # reset the networks
+        nnets = [nnet.to(d) for nnet, d in zip(nnets, self._devices)]
         self.nnets = nnets
         self.optimizers = optimizers
         # keep namespace clean
@@ -676,6 +679,9 @@ class MultiDomainPytorchRCModel(RCModel):
         # keep a ref to the networks
         pnets = self.pnets
         cnet = self.cnet
+        # move to CPU before saving
+        pnets = [pn.to(torch.device('cpu')) for pn in pnets]
+        cnet = cnet.to(torch.device('cpu'))
         # but replace with state_dict in self.__dict__
         self.pnets_class = [pn.__class__ for pn in pnets]
         self.pnets_call_kwargs = [pn.call_kwargs for pn in pnets]
@@ -692,6 +698,9 @@ class MultiDomainPytorchRCModel(RCModel):
         self.coptimizer = coptimizer.state_dict()
         # now let super save the state dict
         super().save(fname, overwrite)
+        # move back to old devices
+        pnets = [pn.to(d) for pn, d in zip(pnets, self._pdevices)]
+        cnet = cnet.to(self._cdevice)
         # and restore nnet and optimizer such that self stays functional
         self.pnets = pnets
         self.cnet = cnet
@@ -824,32 +833,32 @@ class MultiDomainPytorchRCModel(RCModel):
             for descriptors, shot_results, weights in trainset.iter_batch(batch_size, False):
                 if self._pnets_same_device:
                     # create descriptors and results tensors where the models live
-                    descriptors = torch.as_tensor(descriptors,
-                                                  device=self._pdevices[0],
-                                                  dtype=self._pdtypes[0])
-                    shot_results = torch.as_tensor(shot_results,
-                                                   device=self._pdevices[0],
-                                                   dtype=self._pdtypes[0])
-                    weights = torch.as_tensor(weights,
-                                              device=self._pdevices[0],
-                                              dtype=self._pdtypes[0])
+                    descript = torch.as_tensor(descriptors,
+                                               device=self._pdevices[0],
+                                               dtype=self._pdtypes[0])
+                    shots = torch.as_tensor(shot_results,
+                                            device=self._pdevices[0],
+                                            dtype=self._pdtypes[0])
+                    ws = torch.as_tensor(weights,
+                                         device=self._pdevices[0],
+                                         dtype=self._pdtypes[0])
                 # we collect the results on the device of the first pnet
                 l_m_sum = torch.zeros((descriptors.shape[0],), device=self._pdevices[0],
                                       dtype=self._pdtypes[0])
                 for i, pnet in enumerate(self.pnets):
                     if not self._pnets_same_device:
                         # create descriptors and results tensors where the models live
-                        descriptors = torch.as_tensor(descriptors,
-                                                      device=self._pdevices[i],
-                                                      dtype=self._pdtypes[i])
-                        shot_results = torch.as_tensor(shot_results,
-                                                       device=self._pdevices[i],
-                                                       dtype=self._pdtypes[i])
-                        weights = torch.as_tensor(weights,
-                                                  device=self._pdevices[i],
-                                                  dtype=self._pdtypes[i])
-                    q_pred = pnet(descriptors)
-                    l_m = self.loss(q_pred, shot_results, weights)
+                        descript = torch.as_tensor(descriptors,
+                                                   device=self._pdevices[i],
+                                                   dtype=self._pdtypes[i])
+                        shots = torch.as_tensor(shot_results,
+                                                device=self._pdevices[i],
+                                                dtype=self._pdtypes[i])
+                        ws = torch.as_tensor(weights,
+                                             device=self._pdevices[i],
+                                             dtype=self._pdtypes[i])
+                    q_pred = pnet(descript)
+                    l_m = self.loss(q_pred, shots, ws)
                     loss_by_model[i] += float(torch.sum(l_m))
                     l_m_sum += torch.pow(l_m, self.gamma).to(l_m_sum.device)
                 # end models loop
@@ -902,44 +911,49 @@ class MultiDomainPytorchRCModel(RCModel):
         # returns loss per shot averaged over whole training set as list,
         # one fore each model by idx and last entry is the combined multidomain loss
         total_loss = 0.
-        loss_by_model = [0. for _ in self.pnets]
+        loss_by_model = np.array([0. for _ in self.pnets])
         for descriptors, shot_results, weights in trainset.iter_batch(batch_size, shuffle):
-            self.poptimizer.zero_grad()
-            if self._pnets_same_device:
-                # create descriptors and results tensors where the models live
-                descriptors = torch.as_tensor(descriptors,
-                                              device=self._pdevices[0],
-                                              dtype=self._pdtypes[0])
-                shot_results = torch.as_tensor(shot_results,
+            def closure():
+                self.poptimizer.zero_grad()
+                l_by_mod = np.zeros_like(loss_by_model)
+                if self._pnets_same_device:
+                    # create descriptors and results tensors where the models live
+                    descript = torch.as_tensor(descriptors,
                                                device=self._pdevices[0],
                                                dtype=self._pdtypes[0])
-                weights = torch.as_tensor(weights,
-                                          device=self._pdevices[0],
-                                          dtype=self._pdtypes[0])
-            # we collect the results on the device of the first pnet
-            l_m_sum = torch.zeros((descriptors.shape[0],), device=self._pdevices[0],
-                                  dtype=self._pdtypes[0])
-            for i, pnet in enumerate(self.pnets):
-                if not self._pnets_same_device:
-                    # create descriptors and results tensors where the models live
-                    descriptors = torch.as_tensor(descriptors,
-                                                  device=self._pdevices[i],
-                                                  dtype=self._pdtypes[i])
-                    shot_results = torch.as_tensor(shot_results,
+                    shots = torch.as_tensor(shot_results,
+                                            device=self._pdevices[0],
+                                            dtype=self._pdtypes[0])
+                    ws = torch.as_tensor(weights,
+                                         device=self._pdevices[0],
+                                         dtype=self._pdtypes[0])
+                # we collect the results on the device of the first pnet
+                l_m_sum = torch.zeros((descriptors.shape[0],),
+                                      device=self._pdevices[0],
+                                      dtype=self._pdtypes[0])
+                for i, pnet in enumerate(self.pnets):
+                    if not self._pnets_same_device:
+                        # create descriptors and results tensors where the models live
+                        descript = torch.as_tensor(descriptors,
                                                    device=self._pdevices[i],
                                                    dtype=self._pdtypes[i])
-                    weights = torch.as_tensor(weights,
-                                              device=self._pdevices[i],
-                                              dtype=self._pdtypes[i])
-                q_pred = pnet(descriptors)
-                l_m = self.loss(q_pred, shot_results, weights)
-                loss_by_model[i] += float(torch.sum(l_m))
-                l_m_sum += torch.pow(l_m, self.gamma).to(l_m_sum.device)
-            # end models loop
-            L_gamma = torch.sum(torch.pow(l_m_sum / len(self.pnets), 1/self.gamma))
+                        shots = torch.as_tensor(shot_results,
+                                                device=self._pdevices[i],
+                                                dtype=self._pdtypes[i])
+                        ws = torch.as_tensor(weights,
+                                             device=self._pdevices[i],
+                                             dtype=self._pdtypes[i])
+                    q_pred = pnet(descript)
+                    l_m = self.loss(q_pred, shots, ws)
+                    l_by_mod[i] = float(torch.sum(l_m))
+                    l_m_sum += torch.pow(l_m, self.gamma).to(l_m_sum.device)
+                # end models loop
+                L_gamma = torch.sum(torch.pow(l_m_sum / len(self.pnets), 1/self.gamma))
+                L_gamma.backward()
+                return L_gamma, l_by_mod
+            L_gamma, l_by_mod = self.poptimizer.step(closure)
             total_loss += float(L_gamma)
-            L_gamma.backward()
-            self.poptimizer.step()
+            loss_by_model += l_by_mod
         # end trainset loop
         return (np.asarray(loss_by_model + [total_loss])
                 / np.sum(trainset.weights * np.sum(trainset.shot_results, axis=1))
@@ -1016,25 +1030,30 @@ class MultiDomainPytorchRCModel(RCModel):
         n_batch = int(len(trainset) / batch_size)
         rest = len(trainset) % batch_size
         for b in range(n_batch):
-            self.coptimizer.zero_grad()
             des = descriptors[b*batch_size:(b+1)*batch_size]
             tar = cnet_targets[b*batch_size:(b+1)*batch_size]
             ws = weights[b*batch_size:(b+1)*batch_size]
-            log_probs = self.cnet(des)
-            loss = multinomial_loss(log_probs, tar, ws)
+            def closure():
+                self.coptimizer.zero_grad()
+                log_probs = self.cnet(des)
+                loss = multinomial_loss(log_probs, tar, ws)
+                loss.backward()
+                return loss
+            loss = self.coptimizer.step(closure)
             total_loss += float(loss)
-            loss.backward()
-            self.coptimizer.step()
+
         # the rest
-        self.coptimizer.zero_grad()
         des = descriptors[n_batch*batch_size:n_batch*batch_size + rest]
         tar = cnet_targets[n_batch*batch_size:n_batch*batch_size + rest]
         ws = weights[n_batch*batch_size:n_batch*batch_size + rest]
-        log_probs = self.cnet(des)
-        loss = multinomial_loss(log_probs, tar, ws)
+        def closure():
+            self.coptimizer.zero_grad()
+            log_probs = self.cnet(des)
+            loss = multinomial_loss(log_probs, tar, ws)
+            loss.backward()
+            return loss
+        loss = self.coptimizer.step(closure)
         total_loss += float(loss)
-        loss.backward()
-        self.coptimizer.step()
 
         # normalize classifier loss per point in trainset
         return total_loss / np.sum(trainset.weights)

@@ -15,7 +15,6 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import tensorflow as tf
-#import keras.models
 from tensorflow.keras.models import Model
 from tensorflow.keras.utils import CustomObjectScope
 from tensorflow.keras import layers
