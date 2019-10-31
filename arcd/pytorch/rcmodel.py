@@ -438,7 +438,7 @@ class EnsemblePytorchRCModel(RCModel):
     def _log_prob(self, descriptors, use_transform=False):
         p = self(descriptors, use_transform)
         if p.shape[1] == 1:
-            return np.log(1. / p - 1.)
+            return -np.log(1. / p - 1.)
         return np.log(p)
 
     # NOTE: prediction happens in here,
@@ -1085,7 +1085,7 @@ class MultiDomainPytorchRCModel(RCModel):
     def log_prob(self, descriptors, use_transform=True):
         p = self(descriptors, use_transform)
         if p.shape[1] == 1:
-            return np.log(1. / p - 1.)
+            return -np.log(1. / p - 1.)
         return np.log(p)
 
     def __call__(self, descriptors, use_transform=True, domain_predictions=False):
