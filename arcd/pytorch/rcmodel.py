@@ -868,7 +868,7 @@ class MultiDomainPytorchRCModel(RCModel):
         # end torch.no_grad()
         # back to training mode for all pnets
         self.pnets = [pn.train() for pn in self.pnets]
-        return (np.asarray(loss_by_model + [total_loss])
+        return (np.concatenate((loss_by_model, [total_loss]))
                 / np.sum(trainset.weights * np.sum(trainset.shot_results, axis=1))
                 )
 
@@ -955,7 +955,7 @@ class MultiDomainPytorchRCModel(RCModel):
             total_loss += float(L_gamma)
             loss_by_model += l_by_mod
         # end trainset loop
-        return (np.asarray(loss_by_model + [total_loss])
+        return (np.concatenate((loss_by_model, [total_loss]))
                 / np.sum(trainset.weights * np.sum(trainset.shot_results, axis=1))
                 )
 
@@ -1093,41 +1093,43 @@ class MultiDomainPytorchRCModel(RCModel):
         # we decide here if we transform, as this is our initial step even if we back-calculate q
         # if wanted and self.descriptor_transform is defined we use it before prediction
         # if domain_predictions=True we will return a tuple (p_weighted, [p_m for m in self.pnets])
+        if self.n_out == 1:
+            def p_func(q):
+                return 1. / (1. + torch.exp(-q))
+        else:
+            def p_func(q):
+                exp_q = torch.exp(q)
+                return exp_q / torch.sum(exp_q, dim=1, keepdim=True)
+
         if use_transform:
             descriptors = self._apply_descriptor_transform(descriptors)
+
         # get the probabilities for each model from classifier
         p_c = self._classify(descriptors)  # returns p_c on self._cdevice
+        p_c = p_c.cpu().numpy()
         self.pnets = [pn.eval() for pn in self.pnets]  # pnets to evaluation
         # now committement probabilities
         with torch.no_grad():
             descriptors = torch.as_tensor(descriptors,
                                           device=self._pdevices[0],
                                           dtype=self._pdtypes[0])
-            pred = torch.zeros((p_c.shape[0], self.n_out),
-                               device=self._pdevices[0],
-                               dtype=self._pdtypes[0])
+            pred = np.zeros((p_c.shape[0], self.n_out))
             if domain_predictions:
                 p_m_list = []
-            p_c = p_c.to(self._pdevices[0])
             for i, pnet in enumerate(self.pnets):
                 # .to() should be a no-op if they are all on the same device (?)
                 descriptors = descriptors.to(self._pdevices[i])
                 q = pnet(descriptors)
-                if q.shape[1] == 1:
-                    p = 1. / (1. + torch.exp(-q))
-                else:
-                    exp_q = torch.exp(q)
-                    p = exp_q / torch.sum(exp_q, dim=1, keepdim=True)
+                p = p_func(q).cpu().numpy()
                 if domain_predictions:
-                    p_m_list.append(p.cpu().numpy())
-                p = p.to(self._pdevices[0])
+                    p_m_list.append(p)
                 pred += p_c[:, i:i+1] * p
             # end pnets loop
         # end torch.no_grad()
         self.pnets = [pn.train() for pn in self.pnets]  # back to train
         if domain_predictions:
-            return (pred.cpu().numpy(), p_m_list)
-        return pred.cpu().numpy()
+            return (pred, p_m_list)
+        return pred
 
     def classify(self, descriptors, use_transform=True):
         """
