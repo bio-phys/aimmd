@@ -883,6 +883,8 @@ class MultiDomainPytorchRCModel(RCModel):
             weights = torch.as_tensor(trainset.weights,
                                       device=self._cdevice,
                                       dtype=self._cdtype)
+            if batch_size is None:
+                batch_size = len(trainset)
             n_batch = int(len(trainset) / batch_size)
             rest = len(trainset) % batch_size
             for b in range(n_batch):
@@ -1027,6 +1029,8 @@ class MultiDomainPytorchRCModel(RCModel):
             cnet_targets = cnet_targets[shuffle_idxs]
             weights = weights[shuffle_idxs]
 
+        if batch_size is None:
+            batch_size = len(trainset)
         n_batch = int(len(trainset) / batch_size)
         rest = len(trainset) % batch_size
         for b in range(n_batch):

@@ -22,47 +22,46 @@ import torch.nn.functional as F
 # every ANN here needs to have a self.call_kwargs dictionary
 # containing the kwargs needed to instantiate the ANN
 # the reason is the way we save and restore the RCmodels with pytorch ANNs
-# this enables the instantiation as cls(**call_kwargs)
-# optimizers need to be instatiable the same way as pytorch optimizers,
-# i.e. the state_dict needs to have a key called param_groups,
-# the list corresponding to taht key will be passed as first arg to optimizer
+# the dict enables the reinstantiation as cls(**call_kwargs)
+# which we use when loading a previuosly saved RCmodel
 
 
 class FFNet(nn.Module):
-    """Simple feedforward network with 4 hidden layers."""
+    """Simple feedforward network with a variable number of hidden layers."""
 
-    def __init__(self, n_in, n_out=1, n_hidden=None, activation=F.elu,
+    def __init__(self, n_in, n_hidden, n_out=1, activation=F.elu,
                  **kwargs):
         """
         Initialize FFNet.
 
         n_in - number of input coordinates
+        n_hidden - list of ints, number of hidden units per layer
         n_out - number of log probabilities to output,
                 i.e. 1 for 2-state and N for N-State,
                 make sure to use the correct loss
-        n_hidden - number of hidden units per layer,
-                   list of ints or None, if None default to n_in
-        activation - the torch activation function used for all hidden layers
+        activation - activation function or list of activation functions,
+                     if one function it is used for all hidden layers,
+                     if a list the length must match the number of hidden layers
         """
         super().__init__()
         self.call_kwargs = {'n_in': n_in,
+                            'n_hidden': n_hidden,
                             'n_out': n_out,
                             'activation': activation,
-                            'n_hidden': n_hidden
                             }
-        if n_hidden is None:
-            n_hidden = [n_in for _ in range(4)]
+        if not isinstance(activation, list):
+            activation = [activation] * len(n_hidden)
         self.activation = activation
-        self.lay0 = nn.Linear(n_in, n_hidden[0])
-        self.lay1 = nn.Linear(n_hidden[0], n_hidden[1])
-        self.lay2 = nn.Linear(n_hidden[1], n_hidden[2])
-        self.lay3 = nn.Linear(n_hidden[2], n_hidden[3])
-        self.out_lay = nn.Linear(n_hidden[3], n_out)
+        n_units = [n_in] + list(n_hidden)
+        self.hidden_layers = nn.ModuleList([nn.Linear(n_units[i], n_units[i+1])
+                                            for i in range(len(n_units)-1)
+                                            ])
+        self.out_lay = nn.Linear(n_units[-1], n_out)
 
     def forward(self, x):
-        x = self.activation(self.lay0(x))
-        x = self.activation(self.lay1(x))
-        x = self.activation(self.lay2(x))
-        x = self.activation(self.lay3(x))
+        for act, lay in zip(self.activation, self.hidden_layers):
+            x = act(lay(x))
+        # last layer without any activation function,
+        # we always predict log probabilities
         x = self.out_lay(x)
         return x
