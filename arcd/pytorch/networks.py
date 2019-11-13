@@ -65,3 +65,25 @@ class FFNet(nn.Module):
         # we always predict log probabilities
         x = self.out_lay(x)
         return x
+
+
+class PreActivationResidualUnit(nn.Module):
+    """
+    Full pre-activation residual unit as proposed in
+    'Identity Mappings in Deep Residual Networks' by He et al (arXiv:1603.05027)
+
+    """
+    def __init__(self, n_units, n_skip, activation, norm_layer=None):
+        """
+        n_units - number of units per layer
+        n_skip - number of layers to skip with the identity
+        activation - 
+        norm_layer - 
+        """
+        self.layers = nn.ModuleList([nn.Linear(n_units, n_units)
+                                     for _ in range(n_skip)])
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm1d
+        self.norm_layers = nn.ModuleList([norm_layer(n_units)
+                                          for _ in range(n_skip)])
+        self.activation = activation

@@ -26,7 +26,9 @@ from .__about__ import (__version__, __title__, __author__,
 from . import symreg, ops, coords, analysis
 from .base.trainset import TrainSet
 from .base.utils import (emulate_production_from_trainset,
-                         emulate_production_from_storage
+                         emulate_production_from_storage,
+                         load_model,
+                         load_model_with_storage,
                          )
 
 try:

@@ -249,15 +249,15 @@ def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True):
                    key 'residual_n_skip', which determines the number of hidden
                    layers in that residual unit
                    key 'batch_norm' results in preactivation batch
-                   normaliziation beeing applied, float values between 0
-                   and 1 determine the fraction of units beeing dropped out
-                   key 'dropout' with a float value will result in a Dropout
-                   layer beeing applied AFTER the corresponding ResUnit
-                   in the hidden_params dicts, but NOT to the shortcut
+                   normaliziation beeing applied
+                   key 'dropout' with a float value between 0 and 1,
+                   determining the fraction of units beeing dropped out, will
+                   result in a Dropout layer beeing applied AFTER the corresponding
+                   ResUnit in the hidden_params dicts, but NOT to the shortcut
                    connection i.e. [{parms1}, {parms2}] gives you 2 ResUnits,
                    the first with parms1 and the second with parms2,
                    if parms1 includes dropout you will get:
-                       ResUnit1 -> drop + input_shortcut -> ResUnit2
+                       ResUnit1 -> drop + input_shortcut -> ResUnit2,
     optimizer - `keras.optimizer` object, will be passed as optimizer to
                 training_model.compile()
     n_states - int, number of states for multistate TPS,
