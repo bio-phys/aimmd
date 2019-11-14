@@ -76,9 +76,9 @@ class PreActivationResidualUnit(nn.Module):
     def __init__(self, n_units, n_skip, activation, norm_layer=None):
         """
         n_units - number of units per layer
-        n_skip - number of layers to skip with the identity
-        activation - 
-        norm_layer - 
+        n_skip - number of layers to skip with the identity connection
+        activation - activation function class
+        norm_layer - normalization layer class
         """
         self.layers = nn.ModuleList([nn.Linear(n_units, n_units)
                                      for _ in range(n_skip)])
@@ -86,4 +86,13 @@ class PreActivationResidualUnit(nn.Module):
             norm_layer = nn.BatchNorm1d
         self.norm_layers = nn.ModuleList([norm_layer(n_units)
                                           for _ in range(n_skip)])
+        # TODO: do we want to be able to sue different actiavtions?
+        # i.e. should we use a list of activation functions?
         self.activation = activation
+
+    def forward(self, x):
+        identity = x
+        for lay, norm in zip(self.layers, self.norm_layers):
+            x = lay(self.activation(norm(x)))
+        x = x + identity
+        return x
