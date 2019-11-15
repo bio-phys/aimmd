@@ -29,8 +29,10 @@ import torch.nn.functional as F
 class FFNet(nn.Module):
     """Simple feedforward network with a variable number of hidden layers."""
 
-    def __init__(self, n_in, n_hidden, n_out=1, activation=F.elu,
-                 **kwargs):
+    def __init__(self, n_in, n_hidden, n_out=1, activation=F.elu):
+                 #TODO/FIXME: is there a reason we allow for kwargs we do not use??
+                 # tests pass without it ;)
+                 #**kwargs):
         """
         Initialize FFNet.
 
@@ -73,20 +75,26 @@ class PreActivationResidualUnit(nn.Module):
     'Identity Mappings in Deep Residual Networks' by He et al (arXiv:1603.05027)
 
     """
-    def __init__(self, n_units, n_skip, activation, norm_layer=None):
+    def __init__(self, n_units, n_skip=4, activation=F.elu, norm_layer=None):
         """
         n_units - number of units per layer
         n_skip - number of layers to skip with the identity connection
         activation - activation function class
         norm_layer - normalization layer class
         """
+        super().__init__()
+        self.call_kwargs = {'n_units': n_units,
+                            'n_skip': n_skip,
+                            'activation': activation,
+                            'norm_layer': norm_layer,
+                            }
         self.layers = nn.ModuleList([nn.Linear(n_units, n_units)
                                      for _ in range(n_skip)])
         if norm_layer is None:
             norm_layer = nn.BatchNorm1d
         self.norm_layers = nn.ModuleList([norm_layer(n_units)
                                           for _ in range(n_skip)])
-        # TODO: do we want to be able to sue different actiavtions?
+        # TODO: do we want to be able to use different activations?
         # i.e. should we use a list of activation functions?
         self.activation = activation
 
@@ -96,3 +104,21 @@ class PreActivationResidualUnit(nn.Module):
             x = lay(self.activation(norm(x)))
         x = x + identity
         return x
+
+
+class ResNet(nn.Module):
+    """
+    Variable depth residual neural network
+    """
+    def __init__(self, n_out, n_units, n_blocks=4, block_kwargs=None):
+        """
+        n_out - number of outputs/ log probabilities to predict
+        n_units - number of units per hidden layer [==number of inputs]
+        n_blocks - number of residual blocks
+        block_kwargs - None or list of dicts with ResUnit instatiation kwargs,
+                       if None we will use the 'PreActivationResidualUnit' with defaults
+        """
+        if block_kwargs is None:
+            block_kwargs = [{'class': PreActivationResidualUnit}
+                            for _ in range(n_blocks)]
+        #self.block_list = 
