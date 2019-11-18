@@ -23,7 +23,7 @@ import torch.nn.functional as F
 # containing the kwargs needed to instantiate the ANN
 # the reason is the way we save and restore the RCmodels with pytorch ANNs
 # the dict enables the reinstantiation as cls(**call_kwargs)
-# which we use when loading a previuosly saved RCmodel
+# which we use when loading a previously saved RCmodel
 
 
 class FFNet(nn.Module):
@@ -69,6 +69,17 @@ class FFNet(nn.Module):
         return x
 
 
+class SNN(nn.Module):
+    """
+    Self-normalizing neural network as proposed in
+    'Self-Normalizing Neural Networks' by Klambauer et al (arXiv:1706.02515)
+    """
+    def __init__(self, n_in, n_hidden, n_out):
+        super().__init__()
+        # TODO
+        pass
+
+
 class PreActivationResidualUnit(nn.Module):
     """
     Full pre-activation residual unit as proposed in
@@ -110,15 +121,44 @@ class ResNet(nn.Module):
     """
     Variable depth residual neural network
     """
-    def __init__(self, n_out, n_units, n_blocks=4, block_kwargs=None):
+    def __init__(self, n_out, n_units, n_blocks=4, block_class=None, block_kwargs=None):
         """
         n_out - number of outputs/ log probabilities to predict
         n_units - number of units per hidden layer [==number of inputs]
         n_blocks - number of residual blocks
+        block_class - None or class or list of classes,
+                      if None we will use the PreActivationResidualunit,
+                      if one class, we will use it for all Residualblocks,
+                      if a list it must be of len n_blocks, for each Block,
+                      we will use the class given in the list
         block_kwargs - None or list of dicts with ResUnit instatiation kwargs,
-                       if None we will use the 'PreActivationResidualUnit' with defaults
+                       if None we will use the default values for each block class
         """
+        super().__init__()
+        self.call_kwargs = {'n_out': n_out,
+                            'n_units': n_units,
+                            'n_blocks': n_blocks,
+                            'block_class': block_class,
+                            'block_kwargs': block_kwargs,
+                            }
+        if block_class is None:
+            block_class = PreActivationResidualUnit
+        if not isinstance(block_class, (list, tuple)):
+            # make it a list
+            block_class = [block_class for _ in range(n_blocks)]
         if block_kwargs is None:
-            block_kwargs = [{'class': PreActivationResidualUnit}
-                            for _ in range(n_blocks)]
-        #self.block_list = 
+            # make a list with empty dicts for kwargs
+            block_kwargs = [{} for _ in range(n_blocks)]
+
+        self.block_list = nn.ModuleList([clas(n_units=n_units, **kwargs)
+                                         for clas, kwargs in zip(block_class,
+                                                                 block_kwargs)
+                                         ])
+        # linear layer for predicting log probabilities
+        self.log_predictor = nn.Linear(in_features=n_units, out_features=n_out)
+
+    def forward(self, x):
+        for block in self.block_list:
+            x = block(x)
+        x = self.log_predictor(x)
+        return x
