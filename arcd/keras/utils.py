@@ -19,6 +19,7 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.utils import CustomObjectScope
 from tensorflow.keras import layers
 from tensorflow.keras import backend as K
+from . import layers as custom_layers
 
 
 # NOTE ON LOSS FUNCTIONS
@@ -120,45 +121,6 @@ def multinomial_loss_normed(y_true, y_pred):
     """
     ln_Z = K.log(K.sum(K.exp(y_pred), axis=-1, keepdims=True))
     return K.sum((ln_Z - y_pred) * y_true, axis=-1) / K.sum(y_true, axis=-1)
-
-
-class Sparse1to1(layers.Dense):
-    """
-    A sparsely connected one to one layer, where every output has only one input.
-
-    Build from keras.Dense, has same parameters but ignores number of units.
-    """
-    def build(self, input_shape):
-        assert len(input_shape) >= 2
-        input_dim = input_shape[-1]
-
-        self.kernel = self.add_weight(shape=(input_dim,),
-                                      initializer=self.kernel_initializer,
-                                      name='kernel',
-                                      regularizer=self.kernel_regularizer,
-                                      constraint=self.kernel_constraint)
-        if self.use_bias:
-            self.bias = self.add_weight(shape=(input_dim,),
-                                        initializer=self.bias_initializer,
-                                        name='bias',
-                                        regularizer=self.bias_regularizer,
-                                        constraint=self.bias_constraint)
-        else:
-            self.bias = None
-        super(layers.Dense, self).build(input_shape)
-
-    def call(self, inputs):
-        output = inputs * self.kernel
-        if self.use_bias:
-            output = K.bias_add(output, self.bias, data_format='channels_last')
-        if self.activation is not None:
-            output = self.activation(output)
-        return output
-
-    def compute_output_shape(self, input_shape):
-        assert input_shape and len(input_shape) >= 2
-        assert input_shape[-1]
-        return input_shape
 
 
 def create_snn(ndim, hidden_parms, optimizer, n_states, multi_state=True):
@@ -392,7 +354,16 @@ def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True,
     if dropout_inputs is not None:
         h = layers.Dropout(dropout_inputs)(h)
     if learn_norm:
-        h = Sparse1to1(units=1, activation='sigmoid', **norm_lay_kwargs)(h)
+        try:
+            act = norm_lay_kwargs['activation']
+            del norm_lay_kwargs['activation']
+        except KeyError:
+            # fallback to sigmoid
+            act = 'sigmoid'
+        if learn_norm is '1for1':
+            h = custom_layers.InputNorm1for1(activation=act, **norm_lay_kwargs)(h)
+        elif learn_norm is '1forAll':
+            h = custom_layers.InputNorm1forAll(activation=act, **norm_lay_kwargs)(h)
     if res:
         h = apply_residual_unit(h, res, drop, batch, parms)
     else:
@@ -431,6 +402,9 @@ def load_keras_model(filename):
     Takes care of setting the custom loss function.
     """
     with CustomObjectScope({'binomial_loss': binomial_loss,
-                            'multinomial_loss': multinomial_loss}):
+                            'multinomial_loss': multinomial_loss,
+                            'InputNorm1forAll': custom_layers.InputNorm1forAll,
+                            'InputNorm1for1': custom_layers.InputNorm1for1,
+                            }):
         model = tf.keras.models.load_model(filename)
     return model
