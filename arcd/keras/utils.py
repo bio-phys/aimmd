@@ -227,7 +227,7 @@ def create_snn(ndim, hidden_parms, optimizer, n_states, multi_state=True):
 
 
 def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True,
-                  learn_norm=False, norm_lay_kwargs={}, dropout_inputs=None):
+                  learn_norm=None, norm_lay_kwargs={}, dropout_inputs=None):
     """
     Creates a Keras ResNet for committor prediction.
     The network takes as input a coordinatevector of length ndim and
@@ -268,6 +268,20 @@ def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True,
                  and for the loss we will assume p_B = 1/(1 + exp(-rc)),
                  if True the neural network will output the RCs
                  towards all states and we will use a multinomial loss
+    learn_norm - None or string, if str one of: '1for1' or '1forAll',
+                 if '1for1' we use one hidden unit with one input per output
+                 if '1forAll' we use the same hidden unit paremters elementwise
+                 on all inputs
+    norm_lay_kwargs - dict, keyword arguments directly passed to the InputNorm
+                      layer, which supports the same kwargs as a Dense layer
+                      except for 'units' (not necessary)
+                      and 'partial_norm', which controls to which inputs the
+                      InputNorm is applied; if it is present it is interpreted
+                      as integer index specifying up to which input the Norm is applied,
+                      every input with a higher index will be left unchanged and
+                      concatenated with the normalized inputs before the first hidden layer,
+                      e.g. if partial_norm=1 we will normalize only the first input
+    dropout_inputs - fraction inputs to drop out before first layer of the network
 
     Returns
     -------
@@ -354,16 +368,31 @@ def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True,
     if dropout_inputs is not None:
         h = layers.Dropout(dropout_inputs)(h)
     if learn_norm:
+        # preprocess norm layer kwargs
         try:
             act = norm_lay_kwargs['activation']
             del norm_lay_kwargs['activation']
         except KeyError:
             # fallback to sigmoid
             act = 'sigmoid'
+        try:
+            partial_norm = int(norm_lay_kwargs['partial_norm'])
+            del norm_lay_kwargs['partial_norm']
+        except KeyError:
+            partial_norm = False
+        # sort out which kind of norm layer we use
         if learn_norm is '1for1':
-            h = custom_layers.InputNorm1for1(activation=act, **norm_lay_kwargs)(h)
+            norm_lay = custom_layers.InputNorm1for1(activation=act, **norm_lay_kwargs)
         elif learn_norm is '1forAll':
-            h = custom_layers.InputNorm1forAll(activation=act, **norm_lay_kwargs)(h)
+            norm_lay = custom_layers.InputNorm1forAll(activation=act, **norm_lay_kwargs)
+        else:
+            raise ValueError("'learn_norm' must be one of '1for1' or '1forAll'.")
+        # and finally use it
+        if partial_norm:
+            h_normed = norm_lay(h[:, 0:partial_norm])
+            h = layers.concatenate(inputs=[h_normed, h[:, partial_norm:]], axis=-1)
+        else:
+            h = norm_lay(h)
     if res:
         h = apply_residual_unit(h, res, drop, batch, parms)
     else:
