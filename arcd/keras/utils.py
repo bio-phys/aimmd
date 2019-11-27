@@ -389,8 +389,10 @@ def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True,
             raise ValueError("'learn_norm' must be one of '1for1' or '1forAll'.")
         # and finally use it
         if partial_norm:
-            h_normed = norm_lay(h[:, 0:partial_norm])
-            h = layers.concatenate(inputs=[h_normed, h[:, partial_norm:]], axis=-1)
+            slice1_lay = layers.Lambda(lambda x: x[:, 0:partial_norm])
+            slice2_lay = layers.Lambda(lambda x: x[:, partial_norm:])
+            h_normed = norm_lay(slice1_lay(h))
+            h = layers.concatenate(inputs=[h_normed, slice2_lay(h)], axis=-1)
         else:
             h = norm_lay(h)
     if res:

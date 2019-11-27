@@ -70,7 +70,12 @@ class KerasRCModel(RCModel):
         return state
 
     def save(self, fname, overwrite=False):
-        self.nnet.save(fname + self.save_nnet_suffix, overwrite=overwrite)
+        self.nnet.save(fname + self.save_nnet_suffix,
+                       overwrite=overwrite,
+                       include_optimizer=True,
+                       # 'tf only works for eager execution models and tf v2
+                       #save_format='tf',  # 'h5' or 'tf'
+                       )
         # keep a ref to the network
         nnet = self.nnet
         # but replace with the name of the file in self.__dict__
