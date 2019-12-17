@@ -19,6 +19,7 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.utils import CustomObjectScope
 from tensorflow.keras import layers
 from tensorflow.keras import backend as K
+from . import layers as custom_layers
 
 
 # NOTE ON LOSS FUNCTIONS
@@ -225,7 +226,8 @@ def create_snn(ndim, hidden_parms, optimizer, n_states, multi_state=True):
     return model
 
 
-def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True):
+def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True,
+                  learn_norm=None, norm_lay_kwargs={}, dropout_inputs=None):
     """
     Creates a Keras ResNet for committor prediction.
     The network takes as input a coordinatevector of length ndim and
@@ -266,6 +268,20 @@ def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True):
                  and for the loss we will assume p_B = 1/(1 + exp(-rc)),
                  if True the neural network will output the RCs
                  towards all states and we will use a multinomial loss
+    learn_norm - None or string, if str one of: '1for1' or '1forAll',
+                 if '1for1' we use one hidden unit with one input per output
+                 if '1forAll' we use the same hidden unit paremters elementwise
+                 on all inputs
+    norm_lay_kwargs - dict, keyword arguments directly passed to the InputNorm
+                      layer, which supports the same kwargs as a Dense layer
+                      except for 'units' (not necessary)
+                      and 'partial_norm', which controls to which inputs the
+                      InputNorm is applied; if it is present it is interpreted
+                      as integer index specifying up to which input the Norm is applied,
+                      every input with a higher index will be left unchanged and
+                      concatenated with the normalized inputs before the first hidden layer,
+                      e.g. if partial_norm=1 we will normalize only the first input
+    dropout_inputs - fraction inputs to drop out before first layer of the network
 
     Returns
     -------
@@ -348,10 +364,42 @@ def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True):
             t = d['units']
     # hidden layers
     drop, res, batch, parms = drop_residual_batch_from_parms(hidden_parms[0])
+    h = coords
+    if dropout_inputs is not None:
+        h = layers.Dropout(dropout_inputs)(h)
+    if learn_norm:
+        # preprocess norm layer kwargs
+        try:
+            act = norm_lay_kwargs['activation']
+            del norm_lay_kwargs['activation']
+        except KeyError:
+            # fallback to sigmoid
+            act = 'sigmoid'
+        try:
+            partial_norm = int(norm_lay_kwargs['partial_norm'])
+            del norm_lay_kwargs['partial_norm']
+        except KeyError:
+            partial_norm = False
+        # sort out which kind of norm layer we use
+        if learn_norm is '1for1':
+            norm_lay = custom_layers.InputNorm1for1(activation=act, **norm_lay_kwargs)
+        elif learn_norm is '1forAll':
+            norm_lay = custom_layers.InputNorm1forAll(activation=act, **norm_lay_kwargs)
+        else:
+            raise ValueError("'learn_norm' must be one of '1for1' or '1forAll'.")
+        # and finally use it
+        if partial_norm:
+            slice1_lay = layers.Lambda(lambda x: x[:, 0:partial_norm])
+            slice2_lay = layers.Lambda(lambda x: x[:, partial_norm:])
+            h_normed = norm_lay(slice1_lay(h))
+            h = layers.concatenate(inputs=[h_normed, slice2_lay(h)], axis=-1)
+        else:
+            h = norm_lay(h)
     if res:
-        h = apply_residual_unit(coords, res, drop, batch, parms)
+        h = apply_residual_unit(h, res, drop, batch, parms)
     else:
-        h = apply_hidden_unit(coords, drop, batch, parms)
+        h = apply_hidden_unit(h, drop, batch, parms)
+
     for parms in hidden_parms[1:]:
         drop, res, batch, parms = drop_residual_batch_from_parms(parms)
         if res:
@@ -385,6 +433,9 @@ def load_keras_model(filename):
     Takes care of setting the custom loss function.
     """
     with CustomObjectScope({'binomial_loss': binomial_loss,
-                            'multinomial_loss': multinomial_loss}):
+                            'multinomial_loss': multinomial_loss,
+                            'InputNorm1forAll': custom_layers.InputNorm1forAll,
+                            'InputNorm1for1': custom_layers.InputNorm1for1,
+                            }):
         model = tf.keras.models.load_model(filename)
     return model
