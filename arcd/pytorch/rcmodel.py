@@ -136,7 +136,9 @@ class PytorchRCModel(RCModel):
     @property
     def n_out(self):
         # FIXME:TODO: only works if the last layer is linear!
-        return list(self.nnet.modules())[-1].out_features
+        #return list(self.nnet.modules())[-1].out_features
+        # NOTE also not ideal, this way every pytorch model needs to set self.n_out
+        return self.nnet.n_out
 
     @classmethod
     def set_state(cls, state):
@@ -180,6 +182,7 @@ class PytorchRCModel(RCModel):
         super().save(fname, overwrite)
         # and restore nnet and optimizer such that self stays functional
         self.nnet = nnet.to(self._device)
+        self.optimizer = optimizer
         # and remove uneccessary keys to self.__dict__
         del self.nnet_class
         del self.nnet_call_kwargs
@@ -352,7 +355,9 @@ class EnsemblePytorchRCModel(RCModel):
         # FIXME:TODO: only works if the last layer is a linear layer
         # but it can have any activation func, just not an embedding etc
         # FIXME: we assume all nnets have the same number of outputs
-        return list(self.nnets[0].modules())[-1].out_features
+        #return list(self.nnets[0].modules())[-1].out_features
+        # NOTE also not ideal, this way the pytorch model needs to set self.n_out
+        return self.nnets[0].n_out
 
     @classmethod
     def set_state(cls, state):
@@ -632,7 +637,9 @@ class MultiDomainPytorchRCModel(RCModel):
     def n_out(self):
         # FIXME:TODO: only works if the last layer is linear!
         # all networks have the same number of out features
-        return list(self.pnets[0].modules())[-1].out_features
+        #return list(self.pnets[0].modules())[-1].out_features
+        # NOTE also not ideal, this way the pytorch model needs to set self.n_out
+        return self.pnets[0].n_out
 
     @classmethod
     def set_state(cls, state):

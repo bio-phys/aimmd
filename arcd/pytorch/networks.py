@@ -14,6 +14,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
+import math
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -51,6 +52,7 @@ class FFNet(nn.Module):
                             'n_out': n_out,
                             'activation': activation,
                             }
+        self.n_out = n_out
         if not isinstance(activation, list):
             activation = [activation] * len(n_hidden)
         self.activation = activation
@@ -94,6 +96,7 @@ class SNN(nn.Module):
                             'n_out': n_out,
                             'dropout': dropout,
                             }
+        self.n_out = n_out
         n_units = [n_in] + list(n_hidden)
         self.hidden_layers = nn.ModuleList([nn.Linear(n_units[i], n_units[i+1])
                                             for i in range(len(n_units)-1)
@@ -107,7 +110,6 @@ class SNN(nn.Module):
             idx = int(key)
             dropout_list[idx] = nn.AlphaDropout(val)
         self.dropout_layers = nn.ModuleList(dropout_list)
-        # always predict log probabilities, so no activation here
         self.log_predictor = nn.Linear(n_units[-1], n_out)
         self.activation = nn.SELU()
         self.reset_parameters()  # initialize weights
@@ -115,13 +117,19 @@ class SNN(nn.Module):
     def forward(self, x):
         for h, d in zip(self.hidden_layers, self.dropout_layers):
             x = d(self.activation(h(x)))
+        # always predict log probabilities, so no activation here
         x = self.log_predictor(x)
         return x
 
     def reset_parameters(self):
-        # properly initialize weights and biases
-        # TODO
-        pass
+        # properly initialize weights
+        # TODO? for the biases we keep the pytorch standard, i.e.
+        # uniform \in [-1/sqrt(N_in), + 1/sqrt(N_in)]
+        # NOTE: I think we do not need to check:
+        # we can only have nn.Linear layers in there
+        for lay in self.hidden_layers:
+            fan_out = lay.out_features
+            nn.init.normal_(lay.weight, mean=0., std=1./math.sqrt(fan_out))
 
 
 class PreActivationResidualUnit(nn.Module):
@@ -185,6 +193,7 @@ class ResNet(nn.Module):
                             'block_class': block_class,
                             'block_kwargs': block_kwargs,
                             }
+        self.n_out = n_out
         if block_class is None:
             block_class = PreActivationResidualUnit
         if not isinstance(block_class, (list, tuple)):
