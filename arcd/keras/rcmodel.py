@@ -74,7 +74,7 @@ class KerasRCModel(RCModel):
                        overwrite=overwrite,
                        include_optimizer=True,
                        # 'tf only works for eager execution models and tf v2
-                       #save_format='tf',  # 'h5' or 'tf'
+                       # save_format='tf',  # 'h5' or 'tf'
                        )
         # keep a ref to the network
         nnet = self.nnet

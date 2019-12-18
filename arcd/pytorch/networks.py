@@ -74,8 +74,52 @@ class SNN(nn.Module):
     Self-normalizing neural network as proposed in
     'Self-Normalizing Neural Networks' by Klambauer et al (arXiv:1706.02515)
     """
-    def __init__(self, n_in, n_hidden, n_out):
+    def __init__(self, n_in, n_hidden, n_out, dropout={}):
+        """
+        Initialize SNN.
+
+        n_in - number of input coordinates
+        n_hidden - list of ints, number of hidden units per layer
+        n_out - number of log probabilities to output,
+                i.e. 1 for 2-state and N for N-State,
+                make sure to use the correct loss
+        dropout - dict, {'idx': p_drop}, i.e.
+                  keys give the index of the hidden layer AFTER which
+                  AlphaDropout is applied and the respective dropout
+                  probabilities are given by the values
+        """
         super().__init__()
+        self.call_kwargs = {'n_in': n_in,
+                            'n_hidden': n_hidden,
+                            'n_out': n_out,
+                            'dropout': dropout,
+                            }
+        n_units = [n_in] + list(n_hidden)
+        self.hidden_layers = nn.ModuleList([nn.Linear(n_units[i], n_units[i+1])
+                                            for i in range(len(n_units)-1)
+                                            ])
+        # TODO: do we have a better way of doing this?
+        # we could use None instead of the Identity,
+        # but then we would have to check in forward if it is None
+        # now we can just apply without 'thinking'
+        dropout_list = [nn.Identity() for _ in range(len(self.hidden_layers))]
+        for key, val in dropout.items():
+            idx = int(key)
+            dropout_list[idx] = nn.AlphaDropout(val)
+        self.dropout_layers = nn.ModuleList(dropout_list)
+        # always predict log probabilities, so no activation here
+        self.log_predictor = nn.Linear(n_units[-1], n_out)
+        self.activation = nn.SELU()
+        self.reset_parameters()  # initialize weights
+
+    def forward(self, x):
+        for h, d in zip(self.hidden_layers, self.dropout_layers):
+            x = d(self.activation(h(x)))
+        x = self.log_predictor(x)
+        return x
+
+    def reset_parameters(self):
+        # properly initialize weights and biases
         # TODO
         pass
 
