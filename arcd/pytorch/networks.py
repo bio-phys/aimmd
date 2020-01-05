@@ -83,7 +83,7 @@ class ModuleStack(nn.Module):
 class FFNet(nn.Module):
     """Simple feedforward network with a variable number of hidden layers."""
 
-    def __init__(self, n_in, n_hidden, n_out=1, activation=F.elu):
+    def __init__(self, n_in, n_hidden, activation=F.elu):
                  #TODO/FIXME: is there a reason we allow for kwargs we do not use??
                  # tests pass without it ;)
                  #**kwargs):
@@ -121,7 +121,7 @@ class SNN(nn.Module):
     Self-normalizing neural network as proposed in
     'Self-Normalizing Neural Networks' by Klambauer et al (arXiv:1706.02515)
     """
-    def __init__(self, n_in, n_hidden, n_out, dropout={}):
+    def __init__(self, n_in, n_hidden, dropout={}):
         """
         Initialize SNN.
 
@@ -135,7 +135,6 @@ class SNN(nn.Module):
         super().__init__()
         self.call_kwargs = {'n_in': n_in,
                             'n_hidden': n_hidden,
-                            'n_out': n_out,
                             'dropout': dropout,
                             }
         self.n_out = n_hidden[-1]

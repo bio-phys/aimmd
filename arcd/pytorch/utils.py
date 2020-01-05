@@ -53,3 +53,16 @@ def get_closest_pytorch_device(location):
             # we trained on cpu before
             # TODO: should we try to go to GPU if it is available?
             return torch.device('cpu')
+
+
+def optimizer_state_to_device(sdict, device):
+    """
+    Helper function to move all tensors in optimizer state dicts to device.
+
+    This enables saving/loading models on machines with and without GPU.
+    """
+    for state in sdict['state'].values():
+        for k, v in state.items():
+            if torch.is_tensor(v):
+                state[k] = v.to(device)
+    return sdict

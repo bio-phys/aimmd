@@ -23,7 +23,7 @@ from ..base.rcmodel import RCModel
 from ..base.rcmodel_train_decision import (_train_decision_funcs,
                                            _train_decision_defaults,
                                            _train_decision_docs)
-from .utils import get_closest_pytorch_device
+from .utils import get_closest_pytorch_device, optimizer_state_to_device
 
 
 logger = logging.getLogger(__name__)
@@ -153,6 +153,7 @@ class PytorchRCModel(RCModel):
         del state['nnet_class']
         del state['nnet_call_kwargs']
         dev = get_closest_pytorch_device(state['_device'])
+        state['_device'] = dev
         nnet.to(dev)
         nnet.load_state_dict(state['nnet'])
         state['nnet'] = nnet
@@ -177,12 +178,18 @@ class PytorchRCModel(RCModel):
         # same for optimizer
         optimizer = self.optimizer
         self.optimizer_class = optimizer.__class__
-        self.optimizer = optimizer.state_dict()
+        # move the tensors in state dict to CPU too
+        sdict = optimizer.state_dict()
+        sdict = optimizer_state_to_device(sdict, device='cpu')
+        self.optimizer = sdict
         # now let super save the state dict
         super().save(fname, overwrite)
         # and restore nnet and optimizer such that self stays functional
         self.nnet = nnet.to(self._device)
-        self.optimizer = optimizer
+        # reinitialize optimizer because we moved the state
+        self.optimizer = self.optimizer_class(self.nnet.parameters())
+        # load_state casts to the correct types/devices again
+        self.optimizer.load_state_dict(sdict)
         # and remove uneccessary keys to self.__dict__
         del self.nnet_class
         del self.nnet_call_kwargs
@@ -375,6 +382,7 @@ class EnsemblePytorchRCModel(RCModel):
         del state['nnets_classes']
         del state['nnets_call_kwargs']
         devs = [get_closest_pytorch_device(d) for d in state['_devices']]
+        state['_devices'] = devs
         for nnet, d, s in zip(nnets, devs, state['nnets']):
             nnet.to(d)
             nnet.load_state_dict(s)
@@ -402,12 +410,20 @@ class EnsemblePytorchRCModel(RCModel):
         # same for optimizers
         optimizers = self.optimizers
         self.optimizers_classes = [opt.__class__ for opt in optimizers]
-        self.optimizers = [opt.state_dict() for opt in optimizers]
+        # move optimizer state to cpu for saving
+        optimizer_states = [optimizer_state_to_device(opt.state_dict(), device='cpu')
+                            for opt in optimizers]
+        self.optimizers = optimizer_states
         super().save(fname, overwrite=overwrite)
         # reset the networks
         nnets = [nnet.to(d) for nnet, d in zip(nnets, self._devices)]
         self.nnets = nnets
-        self.optimizers = optimizers
+        # reinitialize optimizers to have the state on the correct devices
+        self.optimizers = [clas(nnet.parameters())
+                           for clas, nnet in zip(self.optimizers_classes, nnets)
+                           ]
+        for opt, s in zip(self.optimizers, optimizer_states):
+            opt.load_state_dict(s)
         # keep namespace clean
         del self.nnets_classes
         del self.nnets_call_kwargs
@@ -660,6 +676,7 @@ class MultiDomainPytorchRCModel(RCModel):
             pn.load_state_dict(state['pnets'][i])
             # try moving the model to the platform it was on
             dev = get_closest_pytorch_device(state['_pdevices'][i])
+            state['_pdevices'][i] = dev
             pn.to(dev)
         state['pnets'] = pnets
         cnet = state['cnet_class'](**state['cnet_call_kwargs'])
@@ -667,6 +684,7 @@ class MultiDomainPytorchRCModel(RCModel):
         del state['cnet_call_kwargs']
         cnet.load_state_dict(state['cnet'])
         dev = get_closest_pytorch_device(state['_cdevice'])
+        state['_cdevice'] = dev
         cnet.to(dev)
         state['cnet'] = cnet
         # and the optimizers
@@ -699,10 +717,13 @@ class MultiDomainPytorchRCModel(RCModel):
         # same for optimizers
         poptimizer = self.poptimizer
         self.poptimizer_class = poptimizer.__class__
-        self.poptimizer = poptimizer.state_dict()
+        poptimizer_state = optimizer_state_to_device(poptimizer.state_dict(),
+                                                     device='cpu')
+        self.poptimizer = poptimizer_state
         coptimizer = self.coptimizer
         self.coptimizer_class = coptimizer.__class__
-        self.coptimizer = coptimizer.state_dict()
+        coptimizer_state = optimizer_state_to_device(coptimizer.state_dict(), device='cpu')
+        self.coptimizer = coptimizer_state
         # now let super save the state dict
         super().save(fname, overwrite)
         # move back to old devices
@@ -711,8 +732,12 @@ class MultiDomainPytorchRCModel(RCModel):
         # and restore nnet and optimizer such that self stays functional
         self.pnets = pnets
         self.cnet = cnet
-        self.poptimizer = poptimizer
-        self.coptimizer = coptimizer
+        # reinstantiate optimizers to have them working on the right params/devices
+        self.poptimizer = poptimizer_class([{'params': pnet.parameters()}
+                                            for pnet in pnets])
+        self.poptimizer.load_state_dict(poptimizer_state)
+        self.coptimizer = coptimizer_class(cnet.parameters())
+        self.coptimizer.load_state_dict(coptimizer_state)
         # and remove unecessary keys
         del self.pnets_class
         del self.pnets_call_kwargs
