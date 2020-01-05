@@ -46,24 +46,24 @@ class Test_pytorch:
         trainset = arcd.TrainSet(states, descriptors=descriptors,
                                  shot_results=shot_results)
         # model creation
+        def make_1hidden_net(n_in, n_out):
+            modules = [arcd.pytorch.networks.FFNet(n_in=n_in,
+                                                   n_hidden=[n_in, n_out])
+                       ]
+            torch_model = arcd.pytorch.networks.ModuleStack(n_out=n_out,
+                                                            modules=modules)
+            return torch_model
         if model_type == 'EESingleDomain':
-            torch_model = arcd.pytorch.networks.FFNet(n_in=cv_ndim,
-                                                      n_hidden=[cv_ndim, n_out],
-                                                      n_out=n_out)
             # move model to GPU if CUDA is available
+            torch_model = make_1hidden_net(cv_ndim, n_out)
             if torch.cuda.is_available():
                 torch_model = torch_model.to('cuda')
             optimizer = torch.optim.Adam(torch_model.parameters(), lr=1e-3)
             model = arcd.pytorch.EEScalePytorchRCModel(torch_model, optimizer,
                                                   descriptor_transform=None)
         elif model_type == 'EEMultiDomain':
-            pnets = [arcd.pytorch.networks.FFNet(n_in=cv_ndim,
-                                                 n_hidden=[cv_ndim, n_out],
-                                                 n_out=n_out)
-                     for _ in range(3)]
-            cnet = arcd.pytorch.networks.FFNet(n_in=cv_ndim,
-                                               n_hidden=[cv_ndim, len(pnets)],
-                                               n_out=len(pnets))
+            pnets = [make_1hidden_net(cv_ndim, n_out) for _ in range(3)]
+            cnet = make_1hidden_net(cv_ndim, len(pnets))
             # move model(s) to GPU if CUDA is available
             if torch.cuda.is_available():
                 pnets = [pn.to('cuda') for pn in pnets]
@@ -118,10 +118,15 @@ class Test_pytorch:
         setup_dict = ops_toy_sim_setup
 
         # model creation
+        def make_1hidden_net(n_in, n_out):
+            modules = [arcd.pytorch.networks.FFNet(n_in=n_in,
+                                                   n_hidden=[n_in, n_out])
+                       ]
+            torch_model = arcd.pytorch.networks.ModuleStack(n_out=n_out,
+                                                            modules=modules)
+            return torch_model
         if model_type == 'EESingleDomain':
-            torch_model = arcd.pytorch.networks.FFNet(n_in=setup_dict['cv_ndim'],
-                                                      n_hidden=[setup_dict['cv_ndim'], 1],
-                                                      n_out=1)
+            torch_model = make_1hidden_net(setup_dict['cv_ndim'], 1)
             # move model to GPU if CUDA is available
             if torch.cuda.is_available():
                 torch_model = torch_model.to('cuda')
@@ -129,13 +134,9 @@ class Test_pytorch:
             model = arcd.pytorch.EEScalePytorchRCModel(torch_model, optimizer,
                                                   descriptor_transform=setup_dict['descriptor_transform'])
         elif model_type == 'EEMultiDomain':
-            pnets = [arcd.pytorch.networks.FFNet(n_in=setup_dict['cv_ndim'],
-                                                 n_hidden=[setup_dict['cv_ndim'], 1],
-                                                 n_out=1)
+            pnets = [make_1hidden_net(setup_dict['cv_ndim'], 1)
                      for _ in range(3)]
-            cnet = arcd.pytorch.networks.FFNet(n_in=setup_dict['cv_ndim'],
-                                               n_hidden=[setup_dict['cv_ndim'], len(pnets)],
-                                               n_out=len(pnets))
+            cnet = make_1hidden_net(setup_dict['cv_ndim'], len(pnets))
             # move model(s) to GPU if CUDA is available
             if torch.cuda.is_available():
                 pnets = [pn.to('cuda') for pn in pnets]

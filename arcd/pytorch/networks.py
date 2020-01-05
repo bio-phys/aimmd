@@ -27,6 +27,59 @@ import torch.nn.functional as F
 # which we use when loading a previously saved RCmodel
 
 
+class ModuleStack(nn.Module):
+    """
+    arcd specialized wrapper around pytorch ModuleList.
+
+    Adds a last linear layer to predict log-probabilities and additionally
+    keeps track of the single modules call_kwargs to facilitate saving/loading.
+    """
+    def __init__(self, n_out, modules, modules_call_kwargs=None):
+        """
+        Initialize ModuleStack.
+
+        n_out - number of log probabilities to output,
+                i.e. 1 for 2-state and N for N-State,
+                make sure to use the correct loss
+        modules - list of initialized arcd network parts, will be used in the
+                  given order to construct the network from in to out,
+                  additionally a last linear layer with n_out units is added
+                  to predict the log-probabilities
+        modules_call_kwargs - list of dicts, classes and call_kwargs of the
+                              single modules, mainly used for automatic
+                              reinstanitiation when loading/saving the model
+        """
+        super().__init__()
+        # see if we use (saved) modules_call_kwargs
+        # or if we extract it from given modules
+        if modules_call_kwargs is None:
+            modules_call_kwargs = []
+            for module in modules:
+                modules_call_kwargs.append({'class': module.__class__,
+                                            'call_kwargs': module.call_kwargs,
+                                            })
+        else:
+            # TODO: should we perform basic sanity checks for formatting etc?
+            # or we just let it throw whatever errors we might create :)
+            modules = [mck['class'](**mck['call_kwargs'])
+                       for mck in modules_call_kwargs]
+
+        self.module_list = nn.ModuleList(modules)
+        self.log_predictor = nn.Linear(modules[-1].n_out, n_out)
+        self.n_out = n_out
+        self.call_kwargs = {'n_out': n_out,
+                            # we save None, since we recreate from modules_call_kwargs
+                            'modules': None,
+                            'modules_call_kwargs': modules_call_kwargs,
+                            }
+
+    def forward(self, x):
+        for m in self.module_list:
+            x = m(x)
+        x = self.log_predictor(x)
+        return x
+
+
 class FFNet(nn.Module):
     """Simple feedforward network with a variable number of hidden layers."""
 
@@ -39,9 +92,6 @@ class FFNet(nn.Module):
 
         n_in - number of input coordinates
         n_hidden - list of ints, number of hidden units per layer
-        n_out - number of log probabilities to output,
-                i.e. 1 for 2-state and N for N-State,
-                make sure to use the correct loss
         activation - activation function or list of activation functions,
                      if one function it is used for all hidden layers,
                      if a list the length must match the number of hidden layers
@@ -49,10 +99,9 @@ class FFNet(nn.Module):
         super().__init__()
         self.call_kwargs = {'n_in': n_in,
                             'n_hidden': n_hidden,
-                            'n_out': n_out,
                             'activation': activation,
                             }
-        self.n_out = n_out
+        self.n_out = n_hidden[-1]
         if not isinstance(activation, list):
             activation = [activation] * len(n_hidden)
         self.activation = activation
@@ -60,14 +109,10 @@ class FFNet(nn.Module):
         self.hidden_layers = nn.ModuleList([nn.Linear(n_units[i], n_units[i+1])
                                             for i in range(len(n_units)-1)
                                             ])
-        self.out_lay = nn.Linear(n_units[-1], n_out)
 
     def forward(self, x):
         for act, lay in zip(self.activation, self.hidden_layers):
             x = act(lay(x))
-        # last layer without any activation function,
-        # we always predict log probabilities
-        x = self.out_lay(x)
         return x
 
 
@@ -82,9 +127,6 @@ class SNN(nn.Module):
 
         n_in - number of input coordinates
         n_hidden - list of ints, number of hidden units per layer
-        n_out - number of log probabilities to output,
-                i.e. 1 for 2-state and N for N-State,
-                make sure to use the correct loss
         dropout - dict, {'idx': p_drop}, i.e.
                   keys give the index of the hidden layer AFTER which
                   AlphaDropout is applied and the respective dropout
@@ -96,7 +138,7 @@ class SNN(nn.Module):
                             'n_out': n_out,
                             'dropout': dropout,
                             }
-        self.n_out = n_out
+        self.n_out = n_hidden[-1]
         n_units = [n_in] + list(n_hidden)
         self.hidden_layers = nn.ModuleList([nn.Linear(n_units[i], n_units[i+1])
                                             for i in range(len(n_units)-1)
@@ -110,15 +152,12 @@ class SNN(nn.Module):
             idx = int(key)
             dropout_list[idx] = nn.AlphaDropout(val)
         self.dropout_layers = nn.ModuleList(dropout_list)
-        self.log_predictor = nn.Linear(n_units[-1], n_out)
         self.activation = nn.SELU()
         self.reset_parameters()  # initialize weights
 
     def forward(self, x):
         for h, d in zip(self.hidden_layers, self.dropout_layers):
             x = d(self.activation(h(x)))
-        # always predict log probabilities, so no activation here
-        x = self.log_predictor(x)
         return x
 
     def reset_parameters(self):
@@ -146,6 +185,7 @@ class PreActivationResidualUnit(nn.Module):
         norm_layer - normalization layer class
         """
         super().__init__()
+        self.n_out = n_units
         self.call_kwargs = {'n_units': n_units,
                             'n_skip': n_skip,
                             'activation': activation,
@@ -155,7 +195,7 @@ class PreActivationResidualUnit(nn.Module):
                                      for _ in range(n_skip)])
         if norm_layer is None:
             # TODO: is this really what we want?!
-            norm_layer = nn.BatchNorm1d()
+            norm_layer = nn.BatchNorm1d
         self.norm_layers = nn.ModuleList([norm_layer(n_units)
                                           for _ in range(n_skip)])
         # TODO: do we want to be able to use different activations?
@@ -174,9 +214,8 @@ class ResNet(nn.Module):
     """
     Variable depth residual neural network
     """
-    def __init__(self, n_out, n_units, n_blocks=4, block_class=None, block_kwargs=None):
+    def __init__(self, n_units, n_blocks=4, block_class=None, block_kwargs=None):
         """
-        n_out - number of outputs/ log probabilities to predict
         n_units - number of units per hidden layer [==number of inputs]
         n_blocks - number of residual blocks
         block_class - None or class or list of classes,
@@ -188,13 +227,12 @@ class ResNet(nn.Module):
                        if None we will use the default values for each block class
         """
         super().__init__()
-        self.call_kwargs = {'n_out': n_out,
-                            'n_units': n_units,
+        self.n_out = n_units
+        self.call_kwargs = {'n_units': n_units,
                             'n_blocks': n_blocks,
                             'block_class': block_class,
                             'block_kwargs': block_kwargs,
                             }
-        self.n_out = n_out
         if block_class is None:
             block_class = PreActivationResidualUnit
         if not isinstance(block_class, (list, tuple)):
@@ -208,11 +246,8 @@ class ResNet(nn.Module):
                                          for clas, kwargs in zip(block_class,
                                                                  block_kwargs)
                                          ])
-        # linear layer for predicting log probabilities
-        self.log_predictor = nn.Linear(in_features=n_units, out_features=n_out)
 
     def forward(self, x):
         for block in self.block_list:
             x = block(x)
-        x = self.log_predictor(x)
         return x
