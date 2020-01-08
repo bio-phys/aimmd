@@ -45,9 +45,11 @@ class ModuleStack(nn.Module):
                   given order to construct the network from in to out,
                   additionally a last linear layer with n_out units is added
                   to predict the log-probabilities
-        modules_call_kwargs - list of dicts, classes and call_kwargs of the
-                              single modules, mainly used for automatic
-                              reinstanitiation when loading/saving the model
+        modules_call_kwargs - [default None] list of dicts, classes and
+                              call_kwargs of the single modules,
+                              will be automatically inferred if modules is given
+                              and is mainly used for automatic reinstanitiation
+                              when loading/saving the model
         """
         super().__init__()
         # see if we use (saved) modules_call_kwargs
