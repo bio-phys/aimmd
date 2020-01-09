@@ -68,7 +68,7 @@ def _get_active_weights(expression):
     aw_idxs = []
     for k in range(len(an)):
         if an[k] >= n:
-            for l in range(a):
+            for l in a:
                 aw_idxs.append((an[k] - n) * a + l)
     ws = expression.get_weights()
     return [ws[i] for i in aw_idxs]
