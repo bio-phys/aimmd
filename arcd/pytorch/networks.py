@@ -34,6 +34,7 @@ class ModuleStack(nn.Module):
     Adds a last linear layer to predict log-probabilities and additionally
     keeps track of the single modules call_kwargs to facilitate saving/loading.
     """
+
     def __init__(self, n_out, modules, modules_call_kwargs=None):
         """
         Initialize ModuleStack.
@@ -86,9 +87,6 @@ class FFNet(nn.Module):
     """Simple feedforward network with a variable number of hidden layers."""
 
     def __init__(self, n_in, n_hidden, activation=F.elu):
-                 #TODO/FIXME: is there a reason we allow for kwargs we do not use??
-                 # tests pass without it ;)
-                 #**kwargs):
         """
         Initialize FFNet.
 
@@ -120,9 +118,13 @@ class FFNet(nn.Module):
 
 class SNN(nn.Module):
     """
-    Self-normalizing neural network as proposed in
+    Self-normalizing neural network.
+
+    Literature:
     'Self-Normalizing Neural Networks' by Klambauer et al (arXiv:1706.02515)
+
     """
+
     def __init__(self, n_in, n_hidden, dropout={}):
         """
         Initialize SNN.
@@ -174,12 +176,17 @@ class SNN(nn.Module):
 
 class PreActivationResidualUnit(nn.Module):
     """
-    Full pre-activation residual unit as proposed in
+    Full pre-activation residual unit.
+
+    Literature:
     'Identity Mappings in Deep Residual Networks' by He et al (arXiv:1603.05027)
 
     """
+
     def __init__(self, n_units, n_skip=4, activation=F.elu, norm_layer=None):
         """
+        Initialize PreActivationResidualUnit.
+
         n_units - number of units per layer
         n_skip - number of layers to skip with the identity connection
         activation - activation function class
@@ -213,8 +220,10 @@ class PreActivationResidualUnit(nn.Module):
 
 class ResNet(nn.Module):
     """
-    Variable depth residual neural network
+    Variable depth residual neural network.
+
     """
+
     def __init__(self, n_units, n_blocks=4, block_class=None, block_kwargs=None):
         """
         n_units - number of units per hidden layer [==number of inputs]

@@ -147,6 +147,7 @@ setup(
         # NOTE: python 2 will most likely not work as intended:
         # 1. we did not take care of integer division vs float division
         # 2. we use binary pickle formats for storing the trainers
+        # 3. we use cython with language_level=3
     ],
 
     # What does your project relate to?
@@ -167,11 +168,11 @@ setup(
     install_requires=[
         'numpy',
         'cython',
-        'sympy',
         'openpathsampling',
         'mdtraj',
         'networkx',
-        'dcgpy',
+        #'dcgpy',
+        'sympy',  # only used for dcgpy atm
         'h5py',  # for loading and saving of keras models
     ],
 

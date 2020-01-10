@@ -51,7 +51,7 @@ def get_git_version():
     return git_revision
 
 
-base_version = "0.5"
+base_version = "0.6"
 git_version = get_git_version()
 if git_version is None:
     __version__ = base_version
@@ -66,4 +66,4 @@ else:
 __title__ = "arcd"
 __author__ = "Hendrik Jung"
 __license__ = "GNU GENERAL PUBLIC LICENSE v3"
-__copyright__ = "2019 {:s}".format(__author__)
+__copyright__ = "2019-2020 {:s}".format(__author__)

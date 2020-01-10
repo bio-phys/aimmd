@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 from .__about__ import (__version__, __title__, __author__,
                         __license__, __copyright__
                         )
-from . import symreg, ops, coords, analysis
+from . import ops, coords, analysis
 from .base.trainset import TrainSet
 from .base.utils import (emulate_production_from_trainset,
                          emulate_production_from_storage,
@@ -37,6 +37,11 @@ except (ModuleNotFoundError, ImportError):
     logger.warning("Pytorch not available")
 
 try:
+    from . import symreg
+except(ModuleNotFoundError, ImportError):
+    logger.warning('dCGPy not found. SymReg will not be available.')
+
+try:
     from . import keras
 except (ModuleNotFoundError, ImportError):
-    logger.warning("Keras/Tensorflow not available")
+    logger.warning("Tensorflow/Keras not available")
