@@ -733,10 +733,10 @@ class MultiDomainPytorchRCModel(RCModel):
         self.pnets = pnets
         self.cnet = cnet
         # reinstantiate optimizers to have them working on the right params/devices
-        self.poptimizer = poptimizer_class([{'params': pnet.parameters()}
+        self.poptimizer = self.poptimizer_class([{'params': pnet.parameters()}
                                             for pnet in pnets])
         self.poptimizer.load_state_dict(poptimizer_state)
-        self.coptimizer = coptimizer_class(cnet.parameters())
+        self.coptimizer = self.coptimizer_class(cnet.parameters())
         self.coptimizer.load_state_dict(coptimizer_state)
         # and remove unecessary keys
         del self.pnets_class

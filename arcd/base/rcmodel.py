@@ -369,11 +369,12 @@ class TrajectoryDensityCollector:
 
     def evaluate_density_on_trajectories(self, model, trajectories, counts=None):
         """
-        Evaluate the density on the given trajectories.
-
-        Note that we *add* to the existing density estimate.
+        Evaluate the density on the given trajectories, also **recreates** the
+        complete density estimate using the current model predictions.
         Additionally store trajectories/descriptors for later reevaluation.
-        See self.reevaluate_density() for a full recreation of the estimate.
+
+        See self.reevaluate_density() to only recreate the density estimate
+        without adding new trajectories.
 
         Parameters:
         -----------
@@ -384,6 +385,7 @@ class TrajectoryDensityCollector:
                  if None, every trajectory is added once
 
         """
+        # add descriptors to self
         if counts is None:
             counts = len(trajectories) * [1.]
         for tra, c in zip(trajectories, counts):
@@ -391,16 +393,8 @@ class TrajectoryDensityCollector:
             self._append(tp_descriptors=descriptors,
                          counts_arr=np.full((descriptors.shape[0]), c)
                          )
-        pred = model(self._descriptors[:self._fill_pointer],
-                     use_transform=False)
-        histo, edges = np.histogramdd(
-                            sample=pred,
-                            bins=self.bins,
-                            range=[[0., 1.]
-                                   for _ in range(self.n_dim)],
-                            weights=self._counts[:self._fill_pointer]
-                                      )
-        self.density_histogram += histo
+        # get current density estimate for all stored descriptors
+        self.reevaluate_density(model=model)
 
     def reevaluate_density(self, model):
         """
