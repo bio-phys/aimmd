@@ -42,7 +42,7 @@ def get_involved(idx, pairs, triples, quadrouples):
         return cos_sin, quadrouples[int(idx/2)]
 
 
-def generate_indices(topology, source_idx):
+def generate_indices(topology, source_idx, exclude_atom_names=None):
     """
     Generates the index pairs, triples and quadroples needed to calculate
     distances, angles and dihedrals for internal coordinate representation of a
@@ -72,11 +72,18 @@ def generate_indices(topology, source_idx):
                                        topology.atom(source_idx)))
     for origin_at, neighbour_ats in succ_dict.items():
         for middle_at in neighbour_ats:
+            if exclude_atom_names is not None:
+                if middle_at.name in exclude_atom_names:
+                    # skip any bond, angle or dihedral including this atom
+                    continue
             pairs.append([origin_at.index, middle_at.index])
             if middle_at in succ_dict.keys():
                 # the middle atom has neighbours,
                 # we define angles over all of them
                 for target_at in succ_dict[middle_at]:
+                    if target_at.name in exclude_atom_names:
+                        # skip any angle or dihedral including this atom
+                        continue
                     triples.append([origin_at.index,
                                     middle_at.index,
                                     target_at.index])
@@ -87,10 +94,19 @@ def generate_indices(topology, source_idx):
                         # the rotation, use first one since it always exists
                         dihed_ats = succ_dict[target_at]
                         if dihed_ats:
-                            quadrouples.append([origin_at.index,
-                                                middle_at.index,
-                                                target_at.index,
-                                                dihed_ats[0].index])
+                            dihed_at = None
+                            if exclude_atom_names is not None:
+                                for at in dihed_ats:
+                                    if at.name not in exclude_atom_names:
+                                        dihed_at = at
+                            else:
+                                # we just take the first one
+                                dihed_at = dihed_ats[0]
+                            if dihed_at is not None:
+                                quadrouples.append([origin_at.index,
+                                                    middle_at.index,
+                                                    target_at.index,
+                                                    dihed_at.index])
 
     return pairs, triples, quadrouples
 
