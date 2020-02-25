@@ -57,6 +57,9 @@ def generate_indices(topology, source_idx, exclude_atom_names=None):
     topology - :class:`mdtraj.Topology` object
     source_idx - the atom index of the atom which should be the source atom,
                  i.e. at the origin of the coordinate representation
+    exclude_atom_names - None or list of string, if given we will not create
+                         any bond, angle or dihedral that would include one of
+                         the listed atom names, usefull to e.g. exclude all Hs
 
     Returns
     -------
@@ -91,16 +94,17 @@ def generate_indices(topology, source_idx, exclude_atom_names=None):
                         # if the target_at has at least one neighbour
                         # we can define a dihedral over the four atoms
                         # any one of the neighbours is sufficient to fix
-                        # the rotation, use first one since it always exists
+                        # the rotation
                         dihed_ats = succ_dict[target_at]
-                        if dihed_ats:
+                        if dihed_ats:  # first check if dihed_ats list is empty
                             dihed_at = None
                             if exclude_atom_names is not None:
+                                # sort out if any of the atom is not excluded
                                 for at in dihed_ats:
                                     if at.name not in exclude_atom_names:
                                         dihed_at = at
                             else:
-                                # we just take the first one
+                                # no exclusions, we just take the first one
                                 dihed_at = dihed_ats[0]
                             if dihed_at is not None:
                                 quadrouples.append([origin_at.index,
