@@ -61,7 +61,7 @@ def active_genes_count(expression, fact=0.0005):
 
 # weight regularizations
 def _get_active_weights(expression):
-    # get list of active weights
+    # gets and return the list of active weights
     arity = expression.get_arity()
     an = expression.get_active_nodes()
     n = expression.get_n()
@@ -69,7 +69,12 @@ def _get_active_weights(expression):
     aw_idxs = []
     for k in range(len(an)):
         if an[k] >= n:
-            a = arity[an[k] // r]
+            if isinstance(arity, list):
+                # new dcgpy has arity as a vector
+                a = arity[(an[k] - n) // r]
+            else:
+                # 'old' dcgpy, arity is the same for all nodes
+                a = arity
             for l in range(a):
                 aw_idxs.append((an[k] - n) * a + l)
     ws = expression.get_weights()

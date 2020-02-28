@@ -66,7 +66,13 @@ def initialize_random_expression(n_in, n_out,
                           levels_back=levels_back, arity=arity,
                           kernels=kernels, seed=seed)
     # randomize the weights
-    for j in range(ex.get_n(), ex.get_n() + ex.get_rows() * ex.get_cols()):
-        for k in range(ex.get_arity(j)):
-            ex.set_weight(j, k, gdual([np.random.normal(0, 1)]))
+    ar = ex.get_arity()
+    r = ex.get_rows()
+    for j in range(r * ex.get_cols()):
+        if isinstance(ar, list):
+            a = ar[j // r]
+        else:
+            a = ar
+        for k in range(a):
+            ex.set_weight(j + n_in, k, gdual([np.random.normal(0, 1)]))
     return ex
