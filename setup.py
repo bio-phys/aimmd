@@ -4,8 +4,21 @@ Created on Sa Nov 10 16:39:29 2018
 
 @author: Hendrik Jung
 
+Usage:
+   cd /the/folder/where/this/setup.py/lies
+   pip install -e .
+Or (not recommended) with:
+   python setup.py
+
+If you want linetrace for the tests
+give --install-option='--linetrace' to pip install
+or --global-option='--linetrace' to pip install
+or --linetrace option to setup.py
+
+
 This setup.py is a strongly modified version,
 originally adopted from https://github.com/pypa/sampleproject
+
 This file is part of ARCD.
 
 ARCD is free software: you can redistribute it and/or modify
@@ -20,18 +33,6 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
-
-
-Usage:
-   cd /the/folder/where/this/setup.py/lies
-   pip install -e .
-Or (not recommended) with:
-   python setup.py
-
-If you want linetrace for the tests
-give --install-option='--linetrace' to pip install
-or --global-option='--linetrace' to pip install
-or --linetrace option to setup.py
 """
 import os
 import sys
@@ -109,7 +110,10 @@ setup(
     # https://packaging.python.org/en/latest/single_source_version.html
     version=about_dct['__version__'],
 
-    description='''Automatic Reaction Coordinate Discovery: Machine learning the reaction coordinate from shooting results.''',
+    description='''
+                Automatic Reaction Coordinate Discovery:
+                Machine learning the reaction coordinate from shooting results.
+                ''',
 
     long_description=LONG_DESCRIPTION,
 
@@ -118,7 +122,7 @@ setup(
 
     # Author details
     author=about_dct['__author__'],
-    author_email='hendrik.andre.jung@gmail.com',
+    author_email=about_dct['__author_email__'],
 
     # Choose your license
     license=about_dct['__license__'],

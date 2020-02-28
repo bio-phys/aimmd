@@ -1,10 +1,13 @@
 # cythons annotated coverage htmls
 # ATTENTION: this matches ALL .html files in
-# ALL SUBDIRECTORIES of ANNShooter
-ANNShooter/**/*.html
+# ALL SUBDIRECTORIES of arcd
+arcd/**/*.html
 
 # OPS storage files
 *.nc
+
+# VSCode settings folder
+.vscode/*
 
 # Spyder project files
 .spyproject/*
