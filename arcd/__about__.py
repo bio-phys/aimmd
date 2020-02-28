@@ -16,7 +16,7 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 
 
-def get_git_version():
+def _get_git_version():
     import os
     import subprocess
 
@@ -51,11 +51,11 @@ def get_git_version():
     return git_revision
 
 
-base_version = "0.5"
-git_version = get_git_version()
+base_version = "0.6"
+git_version = _get_git_version()
 if git_version is None:
     __version__ = base_version
-elif git_version is '':
+elif git_version == '':
     # this happens if git is installed,
     # but source is not part of a repo
     __version__ = base_version
@@ -65,5 +65,6 @@ else:
 
 __title__ = "arcd"
 __author__ = "Hendrik Jung"
+__author_email__ = "hendrik.andre.jung@googlemail.com"
 __license__ = "GNU GENERAL PUBLIC LICENSE v3"
-__copyright__ = "2019 {:s}".format(__author__)
+__copyright__ = "2019-2020 {:s}".format(__author__)

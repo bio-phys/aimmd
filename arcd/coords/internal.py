@@ -42,7 +42,7 @@ def get_involved(idx, pairs, triples, quadrouples):
         return cos_sin, quadrouples[int(idx/2)]
 
 
-def generate_indices(topology, source_idx):
+def generate_indices(topology, source_idx, exclude_atom_names=None):
     """
     Generates the index pairs, triples and quadroples needed to calculate
     distances, angles and dihedrals for internal coordinate representation of a
@@ -57,6 +57,9 @@ def generate_indices(topology, source_idx):
     topology - :class:`mdtraj.Topology` object
     source_idx - the atom index of the atom which should be the source atom,
                  i.e. at the origin of the coordinate representation
+    exclude_atom_names - None or list of string, if given we will not create
+                         any bond, angle or dihedral that would include one of
+                         the listed atom names, usefull to e.g. exclude all Hs
 
     Returns
     -------
@@ -72,11 +75,18 @@ def generate_indices(topology, source_idx):
                                        topology.atom(source_idx)))
     for origin_at, neighbour_ats in succ_dict.items():
         for middle_at in neighbour_ats:
+            if exclude_atom_names is not None:
+                if middle_at.name in exclude_atom_names:
+                    # skip any bond, angle or dihedral including this atom
+                    continue
             pairs.append([origin_at.index, middle_at.index])
             if middle_at in succ_dict.keys():
                 # the middle atom has neighbours,
                 # we define angles over all of them
                 for target_at in succ_dict[middle_at]:
+                    if target_at.name in exclude_atom_names:
+                        # skip any angle or dihedral including this atom
+                        continue
                     triples.append([origin_at.index,
                                     middle_at.index,
                                     target_at.index])
@@ -84,13 +94,23 @@ def generate_indices(topology, source_idx):
                         # if the target_at has at least one neighbour
                         # we can define a dihedral over the four atoms
                         # any one of the neighbours is sufficient to fix
-                        # the rotation, use first one since it always exists
+                        # the rotation
                         dihed_ats = succ_dict[target_at]
-                        if dihed_ats:
-                            quadrouples.append([origin_at.index,
-                                                middle_at.index,
-                                                target_at.index,
-                                                dihed_ats[0].index])
+                        if dihed_ats:  # first check if dihed_ats list is empty
+                            dihed_at = None
+                            if exclude_atom_names is not None:
+                                # sort out if any of the atom is not excluded
+                                for at in dihed_ats:
+                                    if at.name not in exclude_atom_names:
+                                        dihed_at = at
+                            else:
+                                # no exclusions, we just take the first one
+                                dihed_at = dihed_ats[0]
+                            if dihed_at is not None:
+                                quadrouples.append([origin_at.index,
+                                                    middle_at.index,
+                                                    target_at.index,
+                                                    dihed_at.index])
 
     return pairs, triples, quadrouples
 

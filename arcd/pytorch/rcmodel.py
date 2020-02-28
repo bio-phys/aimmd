@@ -23,6 +23,7 @@ from ..base.rcmodel import RCModel
 from ..base.rcmodel_train_decision import (_train_decision_funcs,
                                            _train_decision_defaults,
                                            _train_decision_docs)
+from .utils import get_closest_pytorch_device, optimizer_state_to_device
 
 
 logger = logging.getLogger(__name__)
@@ -104,39 +105,6 @@ def multinomial_loss_vect(input, target, weight):
                               dim=1)
 
 
-## Utility functions
-def _fix_pytorch_device(location):
-    """
-    Checks if location is an available pytorch.device, else
-    returns the pytorch device that is `closest` to location.
-    Adopted from pytorch.serialization.validate_cuda_device
-    """
-    if isinstance(location, torch.device):
-        location = str(location)
-    if not isinstance(location, str):
-        raise ValueError("location should be a string or torch.device")
-    if 'cuda' in location:
-        if location[5:] == '':
-            device = 0
-        else:
-            device = max(int(location[5:]), 0)
-        if not torch.cuda.is_available():
-            # no cuda, go to CPU
-            logger.info('Restoring on CPU, since CUDA is not available.')
-            return torch.device('cpu')
-        if device >= torch.cuda.device_count():
-            # other cuda device ID
-            logger.info('Restoring on a different CUDA device.')
-            # TODO: does this choose any cuda device or always No 0 ?
-            return torch.device('cuda')
-        # if we got until here we can restore on the same CUDA device we trained on
-        return torch.device('cuda:'+str(device))
-    else:
-        # we trained on cpu before
-        # TODO: should we try to go to GPU if it is available?
-        return torch.device('cpu')
-
-
 ## RCModels using one ANN
 class PytorchRCModel(RCModel):
     """
@@ -168,7 +136,9 @@ class PytorchRCModel(RCModel):
     @property
     def n_out(self):
         # FIXME:TODO: only works if the last layer is linear!
-        return list(self.nnet.modules())[-1].out_features
+        #return list(self.nnet.modules())[-1].out_features
+        # NOTE also not ideal, this way every pytorch model needs to set self.n_out
+        return self.nnet.n_out
 
     @classmethod
     def set_state(cls, state):
@@ -182,7 +152,8 @@ class PytorchRCModel(RCModel):
         nnet = state['nnet_class'](**state['nnet_call_kwargs'])
         del state['nnet_class']
         del state['nnet_call_kwargs']
-        dev = _fix_pytorch_device(state['_device'])
+        dev = get_closest_pytorch_device(state['_device'])
+        state['_device'] = dev
         nnet.to(dev)
         nnet.load_state_dict(state['nnet'])
         state['nnet'] = nnet
@@ -198,6 +169,8 @@ class PytorchRCModel(RCModel):
     def save(self, fname, overwrite=False):
         # keep a ref to the network
         nnet = self.nnet
+        # move to cpu before saving
+        self.nnet = nnet.to(torch.device('cpu'))
         # but replace with state_dict in self.__dict__
         self.nnet_class = nnet.__class__
         self.nnet_call_kwargs = nnet.call_kwargs
@@ -205,12 +178,18 @@ class PytorchRCModel(RCModel):
         # same for optimizer
         optimizer = self.optimizer
         self.optimizer_class = optimizer.__class__
-        self.optimizer = optimizer.state_dict()
+        # move the tensors in state dict to CPU too
+        sdict = optimizer.state_dict()
+        sdict = optimizer_state_to_device(sdict, device='cpu')
+        self.optimizer = sdict
         # now let super save the state dict
         super().save(fname, overwrite)
         # and restore nnet and optimizer such that self stays functional
-        self.nnet = nnet
-        self.optimizer = optimizer
+        self.nnet = nnet.to(self._device)
+        # reinitialize optimizer because we moved the state
+        self.optimizer = self.optimizer_class(self.nnet.parameters())
+        # load_state casts to the correct types/devices again
+        self.optimizer.load_state_dict(sdict)
         # and remove uneccessary keys to self.__dict__
         del self.nnet_class
         del self.nnet_call_kwargs
@@ -383,7 +362,9 @@ class EnsemblePytorchRCModel(RCModel):
         # FIXME:TODO: only works if the last layer is a linear layer
         # but it can have any activation func, just not an embedding etc
         # FIXME: we assume all nnets have the same number of outputs
-        return list(self.nnets[0].modules())[-1].out_features
+        #return list(self.nnets[0].modules())[-1].out_features
+        # NOTE also not ideal, this way the pytorch model needs to set self.n_out
+        return self.nnets[0].n_out
 
     @classmethod
     def set_state(cls, state):
@@ -400,7 +381,8 @@ class EnsemblePytorchRCModel(RCModel):
                  ]
         del state['nnets_classes']
         del state['nnets_call_kwargs']
-        devs = [_fix_pytorch_device(d) for d in state['_devices']]
+        devs = [get_closest_pytorch_device(d) for d in state['_devices']]
+        state['_devices'] = devs
         for nnet, d, s in zip(nnets, devs, state['nnets']):
             nnet.to(d)
             nnet.load_state_dict(s)
@@ -419,6 +401,8 @@ class EnsemblePytorchRCModel(RCModel):
     def save(self, fname, overwrite=False):
         # keep a ref to the nnets
         nnets = self.nnets
+        # move to cpu
+        nnets = [nnet.to(torch.device('cpu')) for nnet in self.nnets]
         # replace it in self.__dict__
         self.nnets_classes = [nnet.__class__ for nnet in nnets]
         self.nnets_call_kwargs = [nnet.call_kwargs for nnet in nnets]
@@ -426,11 +410,20 @@ class EnsemblePytorchRCModel(RCModel):
         # same for optimizers
         optimizers = self.optimizers
         self.optimizers_classes = [opt.__class__ for opt in optimizers]
-        self.optimizers = [opt.state_dict() for opt in optimizers]
+        # move optimizer state to cpu for saving
+        optimizer_states = [optimizer_state_to_device(opt.state_dict(), device='cpu')
+                            for opt in optimizers]
+        self.optimizers = optimizer_states
         super().save(fname, overwrite=overwrite)
-        # reset the network
+        # reset the networks
+        nnets = [nnet.to(d) for nnet, d in zip(nnets, self._devices)]
         self.nnets = nnets
-        self.optimizers = optimizers
+        # reinitialize optimizers to have the state on the correct devices
+        self.optimizers = [clas(nnet.parameters())
+                           for clas, nnet in zip(self.optimizers_classes, nnets)
+                           ]
+        for opt, s in zip(self.optimizers, optimizer_states):
+            opt.load_state_dict(s)
         # keep namespace clean
         del self.nnets_classes
         del self.nnets_call_kwargs
@@ -466,7 +459,7 @@ class EnsemblePytorchRCModel(RCModel):
     def _log_prob(self, descriptors, use_transform=False):
         p = self(descriptors, use_transform)
         if p.shape[1] == 1:
-            return np.log(1. / p - 1.)
+            return -np.log(1. / p - 1.)
         return np.log(p)
 
     # NOTE: prediction happens in here,
@@ -660,7 +653,9 @@ class MultiDomainPytorchRCModel(RCModel):
     def n_out(self):
         # FIXME:TODO: only works if the last layer is linear!
         # all networks have the same number of out features
-        return list(self.pnets[0].modules())[-1].out_features
+        #return list(self.pnets[0].modules())[-1].out_features
+        # NOTE also not ideal, this way the pytorch model needs to set self.n_out
+        return self.pnets[0].n_out
 
     @classmethod
     def set_state(cls, state):
@@ -680,14 +675,16 @@ class MultiDomainPytorchRCModel(RCModel):
         for i, pn in enumerate(pnets):
             pn.load_state_dict(state['pnets'][i])
             # try moving the model to the platform it was on
-            dev = _fix_pytorch_device(state['_pdevices'][i])
+            dev = get_closest_pytorch_device(state['_pdevices'][i])
+            state['_pdevices'][i] = dev
             pn.to(dev)
         state['pnets'] = pnets
         cnet = state['cnet_class'](**state['cnet_call_kwargs'])
         del state['cnet_class']
         del state['cnet_call_kwargs']
         cnet.load_state_dict(state['cnet'])
-        dev = _fix_pytorch_device(state['_cdevice'])
+        dev = get_closest_pytorch_device(state['_cdevice'])
+        state['_cdevice'] = dev
         cnet.to(dev)
         state['cnet'] = cnet
         # and the optimizers
@@ -707,6 +704,9 @@ class MultiDomainPytorchRCModel(RCModel):
         # keep a ref to the networks
         pnets = self.pnets
         cnet = self.cnet
+        # move to CPU before saving
+        pnets = [pn.to(torch.device('cpu')) for pn in pnets]
+        cnet = cnet.to(torch.device('cpu'))
         # but replace with state_dict in self.__dict__
         self.pnets_class = [pn.__class__ for pn in pnets]
         self.pnets_call_kwargs = [pn.call_kwargs for pn in pnets]
@@ -717,17 +717,27 @@ class MultiDomainPytorchRCModel(RCModel):
         # same for optimizers
         poptimizer = self.poptimizer
         self.poptimizer_class = poptimizer.__class__
-        self.poptimizer = poptimizer.state_dict()
+        poptimizer_state = optimizer_state_to_device(poptimizer.state_dict(),
+                                                     device='cpu')
+        self.poptimizer = poptimizer_state
         coptimizer = self.coptimizer
         self.coptimizer_class = coptimizer.__class__
-        self.coptimizer = coptimizer.state_dict()
+        coptimizer_state = optimizer_state_to_device(coptimizer.state_dict(), device='cpu')
+        self.coptimizer = coptimizer_state
         # now let super save the state dict
         super().save(fname, overwrite)
+        # move back to old devices
+        pnets = [pn.to(d) for pn, d in zip(pnets, self._pdevices)]
+        cnet = cnet.to(self._cdevice)
         # and restore nnet and optimizer such that self stays functional
         self.pnets = pnets
         self.cnet = cnet
-        self.poptimizer = poptimizer
-        self.coptimizer = coptimizer
+        # reinstantiate optimizers to have them working on the right params/devices
+        self.poptimizer = self.poptimizer_class([{'params': pnet.parameters()}
+                                            for pnet in pnets])
+        self.poptimizer.load_state_dict(poptimizer_state)
+        self.coptimizer = self.coptimizer_class(cnet.parameters())
+        self.coptimizer.load_state_dict(coptimizer_state)
         # and remove unecessary keys
         del self.pnets_class
         del self.pnets_call_kwargs
@@ -855,32 +865,32 @@ class MultiDomainPytorchRCModel(RCModel):
             for descriptors, shot_results, weights in trainset.iter_batch(batch_size, False):
                 if self._pnets_same_device:
                     # create descriptors and results tensors where the models live
-                    descriptors = torch.as_tensor(descriptors,
-                                                  device=self._pdevices[0],
-                                                  dtype=self._pdtypes[0])
-                    shot_results = torch.as_tensor(shot_results,
-                                                   device=self._pdevices[0],
-                                                   dtype=self._pdtypes[0])
-                    weights = torch.as_tensor(weights,
-                                              device=self._pdevices[0],
-                                              dtype=self._pdtypes[0])
+                    descript = torch.as_tensor(descriptors,
+                                               device=self._pdevices[0],
+                                               dtype=self._pdtypes[0])
+                    shots = torch.as_tensor(shot_results,
+                                            device=self._pdevices[0],
+                                            dtype=self._pdtypes[0])
+                    ws = torch.as_tensor(weights,
+                                         device=self._pdevices[0],
+                                         dtype=self._pdtypes[0])
                 # we collect the results on the device of the first pnet
                 l_m_sum = torch.zeros((descriptors.shape[0],), device=self._pdevices[0],
                                       dtype=self._pdtypes[0])
                 for i, pnet in enumerate(self.pnets):
                     if not self._pnets_same_device:
                         # create descriptors and results tensors where the models live
-                        descriptors = torch.as_tensor(descriptors,
-                                                      device=self._pdevices[i],
-                                                      dtype=self._pdtypes[i])
-                        shot_results = torch.as_tensor(shot_results,
-                                                       device=self._pdevices[i],
-                                                       dtype=self._pdtypes[i])
-                        weights = torch.as_tensor(weights,
-                                                  device=self._pdevices[i],
-                                                  dtype=self._pdtypes[i])
-                    q_pred = pnet(descriptors)
-                    l_m = self.loss(q_pred, shot_results, weights)
+                        descript = torch.as_tensor(descriptors,
+                                                   device=self._pdevices[i],
+                                                   dtype=self._pdtypes[i])
+                        shots = torch.as_tensor(shot_results,
+                                                device=self._pdevices[i],
+                                                dtype=self._pdtypes[i])
+                        ws = torch.as_tensor(weights,
+                                             device=self._pdevices[i],
+                                             dtype=self._pdtypes[i])
+                    q_pred = pnet(descript)
+                    l_m = self.loss(q_pred, shots, ws)
                     loss_by_model[i] += float(torch.sum(l_m))
                     l_m_sum += torch.pow(l_m, self.gamma).to(l_m_sum.device)
                 # end models loop
@@ -890,7 +900,7 @@ class MultiDomainPytorchRCModel(RCModel):
         # end torch.no_grad()
         # back to training mode for all pnets
         self.pnets = [pn.train() for pn in self.pnets]
-        return (np.asarray(loss_by_model + [total_loss])
+        return (np.concatenate((loss_by_model, [total_loss]))
                 / np.sum(trainset.weights * np.sum(trainset.shot_results, axis=1))
                 )
 
@@ -905,6 +915,8 @@ class MultiDomainPytorchRCModel(RCModel):
             weights = torch.as_tensor(trainset.weights,
                                       device=self._cdevice,
                                       dtype=self._cdtype)
+            if batch_size is None:
+                batch_size = len(trainset)
             n_batch = int(len(trainset) / batch_size)
             rest = len(trainset) % batch_size
             for b in range(n_batch):
@@ -933,46 +945,51 @@ class MultiDomainPytorchRCModel(RCModel):
         # returns loss per shot averaged over whole training set as list,
         # one fore each model by idx and last entry is the combined multidomain loss
         total_loss = 0.
-        loss_by_model = [0. for _ in self.pnets]
+        loss_by_model = np.array([0. for _ in self.pnets])
         for descriptors, shot_results, weights in trainset.iter_batch(batch_size, shuffle):
-            self.poptimizer.zero_grad()
-            if self._pnets_same_device:
-                # create descriptors and results tensors where the models live
-                descriptors = torch.as_tensor(descriptors,
-                                              device=self._pdevices[0],
-                                              dtype=self._pdtypes[0])
-                shot_results = torch.as_tensor(shot_results,
+            def closure():
+                self.poptimizer.zero_grad()
+                l_by_mod = np.zeros_like(loss_by_model)
+                if self._pnets_same_device:
+                    # create descriptors and results tensors where the models live
+                    descript = torch.as_tensor(descriptors,
                                                device=self._pdevices[0],
                                                dtype=self._pdtypes[0])
-                weights = torch.as_tensor(weights,
-                                          device=self._pdevices[0],
-                                          dtype=self._pdtypes[0])
-            # we collect the results on the device of the first pnet
-            l_m_sum = torch.zeros((descriptors.shape[0],), device=self._pdevices[0],
-                                  dtype=self._pdtypes[0])
-            for i, pnet in enumerate(self.pnets):
-                if not self._pnets_same_device:
-                    # create descriptors and results tensors where the models live
-                    descriptors = torch.as_tensor(descriptors,
-                                                  device=self._pdevices[i],
-                                                  dtype=self._pdtypes[i])
-                    shot_results = torch.as_tensor(shot_results,
+                    shots = torch.as_tensor(shot_results,
+                                            device=self._pdevices[0],
+                                            dtype=self._pdtypes[0])
+                    ws = torch.as_tensor(weights,
+                                         device=self._pdevices[0],
+                                         dtype=self._pdtypes[0])
+                # we collect the results on the device of the first pnet
+                l_m_sum = torch.zeros((descriptors.shape[0],),
+                                      device=self._pdevices[0],
+                                      dtype=self._pdtypes[0])
+                for i, pnet in enumerate(self.pnets):
+                    if not self._pnets_same_device:
+                        # create descriptors and results tensors where the models live
+                        descript = torch.as_tensor(descriptors,
                                                    device=self._pdevices[i],
                                                    dtype=self._pdtypes[i])
-                    weights = torch.as_tensor(weights,
-                                              device=self._pdevices[i],
-                                              dtype=self._pdtypes[i])
-                q_pred = pnet(descriptors)
-                l_m = self.loss(q_pred, shot_results, weights)
-                loss_by_model[i] += float(torch.sum(l_m))
-                l_m_sum += torch.pow(l_m, self.gamma).to(l_m_sum.device)
-            # end models loop
-            L_gamma = torch.sum(torch.pow(l_m_sum / len(self.pnets), 1/self.gamma))
+                        shots = torch.as_tensor(shot_results,
+                                                device=self._pdevices[i],
+                                                dtype=self._pdtypes[i])
+                        ws = torch.as_tensor(weights,
+                                             device=self._pdevices[i],
+                                             dtype=self._pdtypes[i])
+                    q_pred = pnet(descript)
+                    l_m = self.loss(q_pred, shots, ws)
+                    l_by_mod[i] = float(torch.sum(l_m))
+                    l_m_sum += torch.pow(l_m, self.gamma).to(l_m_sum.device)
+                # end models loop
+                L_gamma = torch.sum(torch.pow(l_m_sum / len(self.pnets), 1/self.gamma))
+                L_gamma.backward()
+                return L_gamma, l_by_mod
+            L_gamma, l_by_mod = self.poptimizer.step(closure)
             total_loss += float(L_gamma)
-            L_gamma.backward()
-            self.poptimizer.step()
+            loss_by_model += l_by_mod
         # end trainset loop
-        return (np.asarray(loss_by_model + [total_loss])
+        return (np.concatenate((loss_by_model, [total_loss]))
                 / np.sum(trainset.weights * np.sum(trainset.shot_results, axis=1))
                 )
 
@@ -1044,28 +1061,35 @@ class MultiDomainPytorchRCModel(RCModel):
             cnet_targets = cnet_targets[shuffle_idxs]
             weights = weights[shuffle_idxs]
 
+        if batch_size is None:
+            batch_size = len(trainset)
         n_batch = int(len(trainset) / batch_size)
         rest = len(trainset) % batch_size
         for b in range(n_batch):
-            self.coptimizer.zero_grad()
             des = descriptors[b*batch_size:(b+1)*batch_size]
             tar = cnet_targets[b*batch_size:(b+1)*batch_size]
             ws = weights[b*batch_size:(b+1)*batch_size]
-            log_probs = self.cnet(des)
-            loss = multinomial_loss(log_probs, tar, ws)
+            def closure():
+                self.coptimizer.zero_grad()
+                log_probs = self.cnet(des)
+                loss = multinomial_loss(log_probs, tar, ws)
+                loss.backward()
+                return loss
+            loss = self.coptimizer.step(closure)
             total_loss += float(loss)
-            loss.backward()
-            self.coptimizer.step()
+
         # the rest
-        self.coptimizer.zero_grad()
         des = descriptors[n_batch*batch_size:n_batch*batch_size + rest]
         tar = cnet_targets[n_batch*batch_size:n_batch*batch_size + rest]
         ws = weights[n_batch*batch_size:n_batch*batch_size + rest]
-        log_probs = self.cnet(des)
-        loss = multinomial_loss(log_probs, tar, ws)
+        def closure():
+            self.coptimizer.zero_grad()
+            log_probs = self.cnet(des)
+            loss = multinomial_loss(log_probs, tar, ws)
+            loss.backward()
+            return loss
+        loss = self.coptimizer.step(closure)
         total_loss += float(loss)
-        loss.backward()
-        self.coptimizer.step()
 
         # normalize classifier loss per point in trainset
         return total_loss / np.sum(trainset.weights)
@@ -1097,7 +1121,7 @@ class MultiDomainPytorchRCModel(RCModel):
     def log_prob(self, descriptors, use_transform=True):
         p = self(descriptors, use_transform)
         if p.shape[1] == 1:
-            return np.log(1. / p - 1.)
+            return -np.log(1. / p - 1.)
         return np.log(p)
 
     def __call__(self, descriptors, use_transform=True, domain_predictions=False):
@@ -1105,41 +1129,43 @@ class MultiDomainPytorchRCModel(RCModel):
         # we decide here if we transform, as this is our initial step even if we back-calculate q
         # if wanted and self.descriptor_transform is defined we use it before prediction
         # if domain_predictions=True we will return a tuple (p_weighted, [p_m for m in self.pnets])
+        if self.n_out == 1:
+            def p_func(q):
+                return 1. / (1. + torch.exp(-q))
+        else:
+            def p_func(q):
+                exp_q = torch.exp(q)
+                return exp_q / torch.sum(exp_q, dim=1, keepdim=True)
+
         if use_transform:
             descriptors = self._apply_descriptor_transform(descriptors)
+
         # get the probabilities for each model from classifier
         p_c = self._classify(descriptors)  # returns p_c on self._cdevice
+        p_c = p_c.cpu().numpy()
         self.pnets = [pn.eval() for pn in self.pnets]  # pnets to evaluation
         # now committement probabilities
         with torch.no_grad():
             descriptors = torch.as_tensor(descriptors,
                                           device=self._pdevices[0],
                                           dtype=self._pdtypes[0])
-            pred = torch.zeros((p_c.shape[0], self.n_out),
-                               device=self._pdevices[0],
-                               dtype=self._pdtypes[0])
+            pred = np.zeros((p_c.shape[0], self.n_out))
             if domain_predictions:
                 p_m_list = []
-            p_c = p_c.to(self._pdevices[0])
             for i, pnet in enumerate(self.pnets):
                 # .to() should be a no-op if they are all on the same device (?)
                 descriptors = descriptors.to(self._pdevices[i])
                 q = pnet(descriptors)
-                if q.shape[1] == 1:
-                    p = 1. / (1. + torch.exp(-q))
-                else:
-                    exp_q = torch.exp(q)
-                    p = exp_q / torch.sum(exp_q, dim=1, keepdim=True)
+                p = p_func(q).cpu().numpy()
                 if domain_predictions:
-                    p_m_list.append(p.cpu().numpy())
-                p = p.to(self._pdevices[0])
+                    p_m_list.append(p)
                 pred += p_c[:, i:i+1] * p
             # end pnets loop
         # end torch.no_grad()
         self.pnets = [pn.train() for pn in self.pnets]  # back to train
         if domain_predictions:
-            return (pred.cpu().numpy(), p_m_list)
-        return pred.cpu().numpy()
+            return (pred, p_m_list)
+        return pred
 
     def classify(self, descriptors, use_transform=True):
         """

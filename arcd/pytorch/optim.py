@@ -45,7 +45,8 @@ class HMC(torch.optim.Optimizer):
 
     def __init__(self, params, lr=1e-3, tau=500, weight_decay=0,
                  lr_func=None, tau_func=None):
-        # NOTE: lr is actually epsilon, i.e. the leapfrog step-size, the corresponding lr in a simple gradient descent setting is lr=0.5 * epsilon**2
+        # NOTE: lr is actually epsilon, i.e. the leapfrog step-size,
+        # the corresponding lr for gradient descent would be lr=0.5 * epsilon**2
         # TODO: param reasonability checks?
         defaults = dict(lr=lr, tau=tau, weight_decay=weight_decay,
                         lr_func=lr_func, tau_func=tau_func

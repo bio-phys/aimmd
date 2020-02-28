@@ -28,6 +28,7 @@ import logging
 import numpy as np
 import pyaudi as ad
 from pyaudi import gdual_vdouble as gdual
+from .losses import _get_active_weights
 
 
 logger = logging.getLogger(__name__)
@@ -90,19 +91,6 @@ dCGPy is GPL licensed.
         loss_functions['full'] = lambda ex, x, y, aw: loss_function(ex, x, y)
         loss_functions['newton'] = lambda ex, x, y, aw: loss_function(ex, x, y)
 
-    def get_active_weights(expression):
-        # get list of active weights
-        a = expression.get_arity()
-        an = expression.get_active_nodes()
-        n = expression.get_n()
-        aw_idxs = []
-        for k in range(len(an)):
-            if an[k] >= n:
-                for l in range(a):
-                    aw_idxs.append((an[k] - n) * a + l)
-        ws = expression.get_weights()
-        return [ws[i] for i in aw_idxs]
-
     # The offsprings chromosome, loss and weights
     chromosome = [1] * offsprings
     loss = [1] * offsprings
@@ -110,7 +98,7 @@ dCGPy is GPL licensed.
     # Init the best as the initial expression
     best_chromosome = expression.get()
     best_weights = expression.get_weights()
-    aw_list = get_active_weights(expression)
+    aw_list = _get_active_weights(expression)
     best_loss = sum(loss_functions['full'](expression, xt, yt, aw_list).constant_cf)
     if math.isnan(best_loss):
         # if initial expression loss is NaN we set loss to inf
@@ -134,7 +122,7 @@ dCGPy is GPL licensed.
             else:
                 newton(expression, loss_functions['newton'], xt, yt, **newtonParams)
             # get the loss
-            aw_list = get_active_weights(expression)
+            aw_list = _get_active_weights(expression)
             loss[i] = sum(loss_functions['full'](expression, xt, yt, aw_list).constant_cf)
             chromosome[i] = expression.get()
             weights[i] = expression.get_weights()
@@ -182,13 +170,17 @@ def newton(ex, f, x, yt, steps, n_weights=[2, 3], randomize_weights=True):
     n = ex.get_n()
     r = ex.get_rows()
     c = ex.get_cols()
-    a = ex.get_arity()
+    ar = ex.get_arity()
     #v = np.zeros(r * c * a)
 
     # random initialization of weights
     if randomize_weights:
-        w=[]
+        w = []
         for i in range(r*c):
+            if isinstance(ar, list):
+                a = ar[i // r]  # arity of the current column
+            else:
+                a = ar
             for j in range(a):
                 w.append(gdual([np.random.normal(0,1)]))
         ex.set_weights(w)
@@ -199,28 +191,43 @@ def newton(ex, f, x, yt, steps, n_weights=[2, 3], randomize_weights=True):
     is_active = [False] * (n + r * c) # bool vector of active nodes
     for k in range(len(an)):
         is_active[an[k]] = True
-    aw=[] # list of active weights
+    aw = [] # list of active weights
     for k in range(len(an)):
         if an[k] >= n:
+            if isinstance(ar, list):
+                # arity list starts after the input nodes
+                a = ar[(an[k] - n) // r]
+            else:
+                a = ar
             for l in range(a):
                 aw.append([an[k], l]) # pair node/ingoing connection
     # check that we have enough active weights
-    if len(aw)<n_weights[0]:
+    if len(aw) < n_weights[0]:
         if len(aw) < 1:
             return
         # otherwise reset minimum number of updated weights
         n_weights[0] = len(aw)
 
     for i in range(steps):
-        w = ex.get_weights() # initial weights
+        w = ex.get_weights()  # initial weights
         # random choice of the weights w.r.t. which we'll minimize the error
         num_vars = np.random.randint(n_weights[0], min(n_weights[1], len(aw)) + 1) # number of weights
         awidx = np.random.choice(len(aw), num_vars, replace=False) # indexes of chosen weights
-        ss = [] # symbols
+        ss = []  # symbols
         opt_weights = []
         for j in range(len(awidx)):
             ss.append("w" + str(aw[awidx[j]][0]) + "_" + str(aw[awidx[j]][1]))
-            idx = (aw[awidx[j]][0] - n) * a + aw[awidx[j]][1]
+            if isinstance(ar, list):
+                # the number of weights before the current weight is given by the sum of the arities in the cols before
+                # plus the sum of the arities of the nodes in the current col up to current row/node
+                n_previous = (sum(ar[:(aw[awidx[j]][0] - n) // r]) * r
+                              + ar[(aw[awidx[j]][0] - n) // r] * ((aw[awidx[j]][0] - n) % r)
+                              )
+                idx = n_previous + aw[awidx[j]][1]
+            else:
+                # arity is the same for all nodes,
+                # number of previous weights is simply numebr of nodes times arity
+                idx = (aw[awidx[j]][0] - n) * a + aw[awidx[j]][1]
             w[idx] = gdual(w[idx].constant_cf, ss[j], 2)
             opt_weights.append(w[idx])
         ex.set_weights(w)
@@ -240,7 +247,7 @@ def newton(ex, f, x, yt, steps, n_weights=[2, 3], randomize_weights=True):
                 H[l][k] = H[k][l]
 
         det = np.linalg.det(H)
-        if det == 0: # if H is singular
+        if det == 0:  # if H is singular
             continue
 
         # compute the updates
@@ -248,18 +255,48 @@ def newton(ex, f, x, yt, steps, n_weights=[2, 3], randomize_weights=True):
 
         # update the weights
         for k in range(len(updates)):
-            idx = (aw[awidx[k]][0] - n) * a + aw[awidx[k]][1]
+            if isinstance(ar, list):
+                # the number of weights before the current weight is given by the sum of the arities in the cols before
+                # plus the sum of the arities of the nodes in the current col up to current row/node
+                n_previous = (sum(ar[:(aw[awidx[k]][0] - n) // r]) * r
+                              + ar[(aw[awidx[k]][0] - n) // r] * ((aw[awidx[k]][0] - n) % r)
+                              )
+                idx = n_previous + aw[awidx[k]][1]
+            else:
+                # arity is the same for all nodes,
+                # number of previous weights is simply numebr of nodes times arity
+                idx = (aw[awidx[k]][0] - n) * a + aw[awidx[k]][1]
             ex.set_weight(aw[awidx[k]][0], aw[awidx[k]][1], w[idx] + updates[k])
         wfe = ex.get_weights()
         for j in range(len(awidx)):
-            idx = (aw[awidx[j]][0] - n) * a + aw[awidx[j]][1]
+            if isinstance(ar, list):
+                # the number of weights before the current weight is given by the sum of the arities in the cols before
+                # plus the sum of the arities of the nodes in the current col up to current row/node
+                n_previous = (sum(ar[:(aw[awidx[j]][0] - n) // r]) * r
+                              + ar[(aw[awidx[j]][0] - n) // r] * ((aw[awidx[j]][0] - n) % r)
+                              )
+                idx = n_previous + aw[awidx[j]][1]
+            else:
+                # arity is the same for all nodes,
+                # number of previous weights is simply numebr of nodes times arity
+                idx = (aw[awidx[j]][0] - n) * a + aw[awidx[j]][1]
             wfe[idx] = gdual(wfe[idx].constant_cf)
         ex.set_weights(wfe)
 
         # if error increased restore the initial weights
-        Ef = sum(f(ex, x, yt, opt_weights).constant_cf)
+        Ef = sum(f(ex, x, yt, wfe).constant_cf)
         if not Ef < Ei:
             for j in range(len(awidx)):
-                idx = (aw[awidx[j]][0] - n) * a + aw[awidx[j]][1]
+                if isinstance(ar, list):
+                    # the number of weights before the current weight is given by the sum of the arities in the cols before
+                    # plus the sum of the arities of the nodes in the current col up to current row/node
+                    n_previous = (sum(ar[:(aw[awidx[j]][0] - n) // r]) * r
+                                  + ar[(aw[awidx[j]][0] - n) // r] * ((aw[awidx[j]][0] - n) % r)
+                                  )
+                    idx = n_previous + aw[awidx[j]][1]
+                else:
+                    # arity is the same for all nodes,
+                    # number of previous weights is simply numebr of nodes times arity
+                    idx = (aw[awidx[j]][0] - n) * a + aw[awidx[j]][1]
                 w[idx] = gdual(w[idx].constant_cf)
             ex.set_weights(w)

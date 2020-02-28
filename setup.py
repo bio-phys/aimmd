@@ -4,8 +4,21 @@ Created on Sa Nov 10 16:39:29 2018
 
 @author: Hendrik Jung
 
+Usage:
+   cd /the/folder/where/this/setup.py/lies
+   pip install -e .
+Or (not recommended) with:
+   python setup.py
+
+If you want linetrace for the tests
+give --install-option='--linetrace' to pip install
+or --global-option='--linetrace' to pip install
+or --linetrace option to setup.py
+
+
 This setup.py is a strongly modified version,
 originally adopted from https://github.com/pypa/sampleproject
+
 This file is part of ARCD.
 
 ARCD is free software: you can redistribute it and/or modify
@@ -20,18 +33,6 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
-
-
-Usage:
-   cd /the/folder/where/this/setup.py/lies
-   pip install -e .
-Or (not recommended) with:
-   python setup.py
-
-If you want linetrace for the tests
-give --install-option='--linetrace' to pip install
-or --global-option='--linetrace' to pip install
-or --linetrace option to setup.py
 """
 import os
 import sys
@@ -109,7 +110,10 @@ setup(
     # https://packaging.python.org/en/latest/single_source_version.html
     version=about_dct['__version__'],
 
-    description='''Automatic Reaction Coordinate Discovery: Machine learning the reaction coordinate from shooting results.''',
+    description='''
+                Automatic Reaction Coordinate Discovery:
+                Machine learning the reaction coordinate from shooting results.
+                ''',
 
     long_description=LONG_DESCRIPTION,
 
@@ -118,7 +122,7 @@ setup(
 
     # Author details
     author=about_dct['__author__'],
-    author_email='hendrik.andre.jung@gmail.com',
+    author_email=about_dct['__author_email__'],
 
     # Choose your license
     license=about_dct['__license__'],
@@ -142,10 +146,12 @@ setup(
         # that you indicate whether you support Python 2, Python 3 or both.
         'Programming Language :: Python :: 3.4',  # should work, not tested
         'Programming Language :: Python :: 3.5',  # should work, not tested
-        'Programming Language :: Python :: 3.6',  # works, tested
+        'Programming Language :: Python :: 3.6',  # works, (tested)
+        'Programming Language :: Python :: 3.7',  # works, tested
         # NOTE: python 2 will most likely not work as intended:
         # 1. we did not take care of integer division vs float division
         # 2. we use binary pickle formats for storing the trainers
+        # 3. we use cython with language_level=3
     ],
 
     # What does your project relate to?
@@ -166,13 +172,12 @@ setup(
     install_requires=[
         'numpy',
         'cython',
-        'sympy',
         'openpathsampling',
         'mdtraj',
         'networkx',
-        'dcgpy',
+        #'dcgpy',
+        'sympy',  # only used for dcgpy atm
         'h5py',  # for loading and saving of keras models
-        'keras',
     ],
 
     # List additional groups of dependencies here (e.g. development
@@ -180,6 +185,7 @@ setup(
     # for example:
     # $ pip install -e .[test]
     extras_require={
-        'test': ['coverage', 'pytest', 'pytest-cov'],
+        'test': ['pytest'],
+        'dev': ['coverage', 'pytest', 'pytest-cov'],
     }
 )
