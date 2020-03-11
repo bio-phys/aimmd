@@ -84,9 +84,10 @@ def generate_indices(topology, source_idx, exclude_atom_names=None):
                 # the middle atom has neighbours,
                 # we define angles over all of them
                 for target_at in succ_dict[middle_at]:
-                    if target_at.name in exclude_atom_names:
-                        # skip any angle or dihedral including this atom
-                        continue
+                    if exclude_atom_names is not None:
+                        if target_at.name in exclude_atom_names:
+                            # skip any angle or dihedral including this atom
+                            continue
                     triples.append([origin_at.index,
                                     middle_at.index,
                                     target_at.index])
