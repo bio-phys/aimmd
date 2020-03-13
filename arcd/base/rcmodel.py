@@ -64,6 +64,8 @@ class RCModel(ABC):
     save_model_extension = '.pckl'
     # scale z_sel to [0., z_sel_scale] for multinomial predictions
     z_sel_scale = 25
+    # minimum number of SPs in training set for EE factor calculation
+    min_points_ee_factor = 10
     # (TP) density collection params
     # NOTE: Everything here only makes it possible to collect TP densities
     # by attaching a TrajectoryDensityCollector, however for this feature
@@ -183,12 +185,16 @@ class RCModel(ABC):
         {n_TP}_expected - calculated from self.expected_p assuming
                           2 independent shots per point
 
-        Note that we will return min(1, EE-Factor)
+        Note that we will return min(1, EE-Factor).
+        Note also that we will always return 1 if there are less than
+        self.min_points_ee_factor points in the trainset.
 
         """
         # make sure there are enough points, otherwise take less
-        # TODO: or should we return 1. in that case?
         n_points = min(len(trainset), len(self.expected_p), window)
+        if n_points < self.min_points_ee_factor:
+            # we can not reasonably estimate EE factor due to too less points
+            return 1
         n_tp_true = sum(trainset.transitions[-n_points:])
         p_ex = np.asarray(self.expected_p[-n_points:])
         if self.n_out == 1:
