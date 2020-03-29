@@ -382,19 +382,19 @@ class TrainingHook(PathSimulatorHook):
                     if step_number - first == 0:
                         # first collection
                         tps, counts = get_tps(sim.storage, start=-first)
-                        dc.evaluate_density_on_trajectories(
+                        dc.add_density_for_trajectories(
                                             model=self.model,
                                             trajectories=tps,
                                             counts=counts
-                                                            )
+                                                        )
                     elif step_number % interval == 0:
                         # add only the last interval steps
                         tps, counts = get_tps(sim.storage, start=-interval)
-                        dc.evaluate_density_on_trajectories(
+                        dc.add_density_for_trajectories(
                                             model=self.model,
                                             trajectories=tps,
                                             counts=counts
-                                                            )
+                                                        )
                     # Note that this is an if because reevaluation should be
                     # independent of adding new TPs in the same MCStep
                     if step_number % recreate == 0:

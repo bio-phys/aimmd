@@ -25,6 +25,7 @@ from .__about__ import (__version__, __title__, __author__,
                         )
 from . import ops, coords, analysis
 from .base.trainset import TrainSet
+from .base.storage import Storage
 from .base.utils import (emulate_production_from_trainset,
                          emulate_production_from_storage,
                          load_model,

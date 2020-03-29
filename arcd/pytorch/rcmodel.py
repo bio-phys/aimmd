@@ -110,7 +110,8 @@ class PytorchRCModel(RCModel):
     """
     Wraps pytorch neural networks for use with arcd
     """
-    def __init__(self, nnet, optimizer, descriptor_transform=None, loss=None):
+    def __init__(self, nnet, optimizer, descriptor_transform=None,
+                 loss=None, cache_file=None):
         self.nnet = nnet  # a pytorch.nn.Module
         # any pytorch.optim optimizer, model parameters need to be registered already
         self.optimizer = optimizer
@@ -131,15 +132,90 @@ class PytorchRCModel(RCModel):
                 self.loss = multinomial_loss
         # again call super __init__ last such that it can use the fully
         # initialized subclasses methods
-        super().__init__(descriptor_transform)
+        super().__init__(descriptor_transform=descriptor_transform,
+                         cache_file=cache_file)
 
     @property
     def n_out(self):
+        # TODO: make us of both versions: i.e. check if nnet has n_out attribute
+        # if not we can at least try to get the number of outputs, this way
+        # users can use any model with last layer linear...!
         # FIXME:TODO: only works if the last layer is linear!
         #return list(self.nnet.modules())[-1].out_features
         # NOTE also not ideal, this way every pytorch model needs to set self.n_out
         return self.nnet.n_out
 
+    # NOTE: NEW LOADING-SAVING API
+    def object_for_pickle(self, group, overwrite=True, keep_device=True):
+        """
+        Return pickleable object equivalent to self.
+
+        Write everything we can not pickle to h5py group.
+
+        Parameters:
+        -----------
+        group - h5py group to write additional data to
+        overwrite - bool, wheter to overwrite existing data in h5pygroup
+        keep_device - bool, wheter to keep the pytorch device as is (faster)
+                      or to change to CPU before saving (better portability)
+        """
+        # TODO: do we need to do this (and then move back at the end?)
+        # or can we just move the nnet in state dict
+        #if not keep_device:
+        #    # move to CPU before saving
+        #    self.nnet = self.nnet.to(torch.device('CPU'))
+        state = self.__dict__.copy()
+        state['nnet_class'] = self.nnet.__class__
+        state['optimizer_class'] = self.optimizer.__class__
+        state['nnet_call_kwargs'] = self.nnet.call_kwargs
+        if not keep_device:
+            state['nnet'] = state['nnet'].to(torch.device('CPU'))
+        state['nnet'] = self.nnet.state_dict()
+        state['optimizer'] = self.optimizer.state_dict()
+        if not keep_device:
+            state['optimizer'] = optimizer_state_to_device(state['optimizer'],
+                                                           torch.device('CPU'),
+                                                           )
+        # TODO: maybe we need to reset self.nnet device?!
+        # but then we should use the more verbose way and modify self.nnet directly
+        # instead of state['nnet']!
+        ret_obj = self.__class__.__new__(self.__class__)
+        ret_obj.__dict__.update(state)
+        # and call supers object_for_pickle in case there is something left
+        # in ret_obj.__dict__ that we can not pickle
+        return super(PytorchRCModel,
+                     ret_obj).object_for_pickle(group, overwrite=overwrite)
+
+    def complete_from_h5py_group(self, group, device=None):
+        """
+        Restore working state.
+
+        Parameters:
+        -----------
+        group - h5py group with optional addtional data
+        device - None or torch device, if given will overwrite the torch model
+                 restore location, if None will try to restore to a device
+                 'close' to where it was saved from
+        """
+        # instatiate and load the neural network
+        nnet = self.nnet_class(**self.nnet_call_kwargs)
+        del self.nnet_class
+        del self.nnet_call_kwargs
+        if device is None:
+            device = get_closest_pytorch_device(self._device)
+        nnet = nnet.to(device)
+        nnet.load_state_dict(self.nnet)
+        self.nnet = nnet
+        # now load the optimizer
+        # first initialize with defaults
+        optimizer = self.optimizer_class(self.nnet.parameters())
+        del self.optimizer_class
+        # TODO: do we need this: put optimizer state on correct device
+        opt_sdict = optimizer_state_to_device(self.optimizer, device)
+        self.optimizer = optimizer.load_state_dict(opt_sdict)
+        return super(PytorchRCModel, self).complete_from_h5py_group(group)
+
+    # TODO: OBSOLETE: Old saving/loading API
     @classmethod
     def set_state(cls, state):
         obj = cls(nnet=state['nnet'], optimizer=state['optimizer'])
@@ -194,6 +270,7 @@ class PytorchRCModel(RCModel):
         del self.nnet_class
         del self.nnet_call_kwargs
         del self.optimizer_class
+    # TODO: END OBSOLETE
 
     @abstractmethod
     def train_decision(self, trainset):
@@ -286,8 +363,11 @@ class EEScalePytorchRCModel(PytorchRCModel):
 
     def __init__(self, nnet, optimizer,
                  ee_params=_train_decision_defaults['EEscale'],
-                 descriptor_transform=None, loss=None):
-        super().__init__(nnet, optimizer, descriptor_transform, loss)
+                 descriptor_transform=None, loss=None, cache_file=None):
+        super().__init__(nnet=nnet, optimizer=optimizer,
+                         descriptor_transform=descriptor_transform,
+                         loss=loss, cache_file=cache_file,
+                         )
         # make it possible to pass only the altered values in dictionary
         defaults = copy.deepcopy(_train_decision_defaults['EEscale'])
         defaults.update(ee_params)
@@ -302,8 +382,11 @@ class EERandPytorchRCModel(PytorchRCModel):
 
     def __init__(self, nnet, optimizer,
                  ee_params=_train_decision_defaults['EErand'],
-                 descriptor_transform=None, loss=None):
-        super().__init__(nnet, optimizer, descriptor_transform, loss)
+                 descriptor_transform=None, loss=None, cache_file=None):
+        super().__init__(nnet=nnet, optimizer=optimizer,
+                         descriptor_transform=descriptor_transform,
+                         loss=loss, cache_file=cache_file,
+                         )
         # make it possible to pass only the altered values in dictionary
         defaults = copy.deepcopy(_train_decision_defaults['EErand'])
         defaults.update(ee_params)

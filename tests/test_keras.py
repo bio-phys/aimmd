@@ -104,7 +104,7 @@ class Test_keras:
         setup_dict = ops_toy_sim_setup
 
         hidden_parms = [{'units_factor': 1,  # test units_fact key
-                         'activation': 'elu',  # should be fixed to selu
+                         'activation': 'elu',  # should be changed to selu automatically
                          'use_bias': True,
                          'kernel_initializer': 'lecun_normal',
                          'bias_initializer': 'lecun_normal',
@@ -128,7 +128,7 @@ class Test_keras:
                                                ee_params={'lr_0': 1e-3,
                                                           'lr_min': 1e-4,
                                                           'epochs_per_train': 1,
-                                                          'interval': 3,
+                                                          'interval': 1,
                                                           'window': 100}
                                                )
         trainset = arcd.TrainSet(setup_dict['states'], setup_dict['descriptor_transform'])
@@ -154,7 +154,7 @@ class Test_keras:
         sampler = paths.PathSampling(storage=storage, sample_set=initial_conditions, move_scheme=move_scheme)
         sampler.attach_hook(trainhook)
         # generate some steps
-        sampler.run(5)
+        sampler.run(10)
         # close the storage
         storage.sync_all()
         storage.close()
