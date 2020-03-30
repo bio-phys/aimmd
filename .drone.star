@@ -20,7 +20,7 @@ def main(ctx):
     make_pipeline(os="linux", arch="amd64", py_version="3.7"),
   ]
 
-def make_step(os, arch, py_version):
+def make_pipeline(os, arch, py_version):
   return {
     "kind": "pipeline",
     "name": "{0}-{1}-py{2}".format(os, arch, py_version),
