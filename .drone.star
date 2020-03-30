@@ -27,7 +27,7 @@ def make_step(os, arch, py_version):
     "platform": {
         "os": os,
         "arch": arch,
-    }
+    },
     "steps": [
       {
         "name": "clone external dependencies",
