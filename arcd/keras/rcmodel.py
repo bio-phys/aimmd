@@ -35,7 +35,7 @@ class KerasRCModel(RCModel):
     """Wraps a Keras model for use with arcd."""
 
     # need to have it here, such that we can get it without instantiating
-    save_nnet_suffix = '_keras.h5'
+    save_nnet_suffix = '_keras.h5'  # TODO: OSOLETE/OLD SAVING API
 
     def __init__(self, nnet, descriptor_transform=None, cache_file=None):
         self.nnet = nnet

@@ -16,7 +16,7 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
 import numpy as np
-from openpathsampling.shooting import ShootingPointSelector
+from openpathsampling import ShootingPointSelector
 
 
 logger = logging.getLogger(__name__)
