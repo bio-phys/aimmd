@@ -49,8 +49,8 @@ def make_pipeline(os, arch, py_version):
           "name": "test",
           "image": "python:{0}".format(py_version),
           "commands": [
-              "which pip",
               "pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
+              "pip install numpy cython",  # install setup dependecies
               "pip install .[test]",
               "pytest .",
           ]
