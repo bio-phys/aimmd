@@ -17,6 +17,7 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 
 def main(ctx):
   return [
+    make_pipeline(os="linux", arch="amd64", py_version="3.6"),
     make_pipeline(os="linux", arch="amd64", py_version="3.7"),
   ]
 
@@ -29,29 +30,27 @@ def make_pipeline(os, arch, py_version):
         "arch": arch,
     },
     "steps": [
-      {
-        "name": "clone external dependencies",
-        "image": "alpine/git",
-        "commands": [
+      # NOTE: we can use pip directly to achieve that!
+      #{
+      #  "name": "clone external dependencies",
+      #  "image": "alpine/git",
+      #  "commands": [
             # TODO: this only works for linux,
             # but there must be a drone-plugin to do this!?
             # make directory for dependencies and change there
-            "mkdir external_git_deps",
-            "cd external_git_deps",
-            "git clone https://github.com/hejung/openpathsampling.git",
-            "cd openpathsampling",
-            "git checkout PathSampling_Hooks",
-            "ls",
-            "pwd",
-        ]
-      },
+      #      "mkdir external_git_deps",
+      #      "cd external_git_deps",
+      #      "git clone https://github.com/hejung/openpathsampling.git",
+      #      "cd openpathsampling",
+      #      "git checkout PathSampling_Hooks",
+      #  ]
+      #},
       {
           "name": "test",
           "image": "python:{0}".format(py_version),
           "commands": [
-              "cd external_git_deps/openpathsampling",
-              "pip install .",
-              "cd ../..",
+              "pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
+              "pip install .[test]",
               "pytest .",
           ]
       }
