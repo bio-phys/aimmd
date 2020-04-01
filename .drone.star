@@ -26,39 +26,28 @@ def make_pipeline(os, arch, py_version):
     "kind": "pipeline",
     "name": "{0}-{1}-py{2}".format(os, arch, py_version),
     "platform": {
-        "os": os,
-        "arch": arch,
+      "os": os,
+      "arch": arch,
     },
     "steps": [
-      # NOTE: we can use pip directly to achieve that!
-      #{
-      #  "name": "clone external dependencies",
-      #  "image": "alpine/git",
-      #  "commands": [
-            # TODO: this only works for linux,
-            # but there must be a drone-plugin to do this!?
-            # make directory for dependencies and change there
-      #      "mkdir external_git_deps",
-      #      "cd external_git_deps",
-      #      "git clone https://github.com/hejung/openpathsampling.git",
-      #      "cd openpathsampling",
-      #      "git checkout PathSampling_Hooks",
-      #  ]
-      #},
       {
-          "name": "test",
-          "image": "python:{0}".format(py_version),
-          "commands": [
-              # install ops pathsampling hooks branch
-              "pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
-              # TODO: this is hardcoded and not nice for maintenance
-              # install deep learning packages
-              "pip install torch==1.4.0+cpu torchvision==0.5.0+cpu -f https://download.pytorch.org/whl/torch_stable.html",
-              "pip install tensorflow",
-              "pip install numpy cython",  # install setup dependecies
-              "pip install .[test]",
-              "pytest .",
-          ]
-      }
+        "name": "test",
+        "image": "python:{0}".format(py_version),
+        "commands": [
+          "pip --upgrade pip",
+          "python --version",
+          "pip --version",
+          "pip list",
+          # install ops pathsampling hooks branch
+          "pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
+          # TODO: this is hardcoded and not nice for maintenance
+          # install deep learning packages
+          "pip install torch==1.4.0+cpu torchvision==0.5.0+cpu -f https://download.pytorch.org/whl/torch_stable.html",
+          "pip install tensorflow",
+          "pip install numpy cython",  # install setup dependecies
+          "pip install -v .[test]",
+          "pytest -v -rs .",
+        ]
+      },
     ]
   }
