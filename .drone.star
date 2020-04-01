@@ -34,7 +34,7 @@ def make_pipeline(os, arch, py_version):
         "name": "test",
         "image": "python:{0}".format(py_version),
         "commands": [
-          "pip --upgrade pip",
+          "pip install --upgrade pip",
           "python --version",
           "pip --version",
           "pip list",
