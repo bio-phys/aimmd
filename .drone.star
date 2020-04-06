@@ -72,7 +72,7 @@ def make_conda_pipeline(os, arch, py_version):
           "conda info -e",
           "python --version",
           "conda create -n test_env python={0}".format(py_version),
-          "conda activate test_env",
+          "source activate test_env",
           # install ops pathsampling hooks branch
           "pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
           # install deep learning packages
