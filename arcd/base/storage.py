@@ -77,7 +77,7 @@ class BytesStreamtoH5pyBuffered:
     NOTE: TRUNCATES the dataset to zero length prior to writing.
     """
 
-    def __init__(self, dataset, buffsize=2**30):
+    def __init__(self, dataset, buffsize=2**29):
         """
         Initialize BytesStreamtoH5pyBuffered file-like object.
 
@@ -113,13 +113,15 @@ class BytesStreamtoH5pyBuffered:
         add_len = len(byts)
         if self.buffsize - self._buffpointer >= add_len:
             # fits in buffer -> write to buffer
-            self._buff[self._buffpointer:self._buffpointer+add_len] = np.frombuffer(byts, dtype=np.uint8)
+            self._buff[self._buffpointer:self._buffpointer + add_len
+                       ] = np.frombuffer(byts, dtype=np.uint8)
             self._buffpointer += add_len
         else:
             # write buffer to file
             old_len = len(self.dataset)
-            self.dataset.resize((old_len+self._buffpointer,))
-            self.dataset[old_len:old_len+self._buffpointer] = self._buff[:self._buffpointer]
+            self.dataset.resize((old_len + self._buffpointer,))
+            self.dataset[old_len:old_len + self._buffpointer
+                         ] = self._buff[:self._buffpointer]
             # I think we can just overwrite the existing buffer,
             # no need to recreate, just set self._buffpointer to zero
             # self._buff = np.zeros((self.buffsize,), dtype=np.uint8)
@@ -130,19 +132,21 @@ class BytesStreamtoH5pyBuffered:
                 self._buff[:add_len] = np.frombuffer(byts, dtype=np.uint8)
                 self._buffpointer += add_len
             else:
-                # TODO: FIXME: I think this can go way beyond buffsize? since we make an array out of it
+                # TODO/FIXME: I think this can go way beyond buffsize?!
+                # TODO/FIXME: since we make an array out of it
                 # or directly to file if 'too big'
-                self.dataset.resize((old_len+self._buffpointer+add_len,))
-                self.dataset[old_len+self._buffpointer:] = np.frombuffer(byts,
-                                                                         dtype=np.uint8)
+                self.dataset.resize((old_len + self._buffpointer + add_len,))
+                self.dataset[old_len + self._buffpointer:
+                             ] = np.frombuffer(byts, dtype=np.uint8)
 
         return add_len
 
     def close(self):
         # write buffer to file
         old_len = len(self.dataset)
-        self.dataset.resize((old_len+self._buffpointer,))
-        self.dataset[old_len:old_len+self._buffpointer] = self._buff[:self._buffpointer]
+        self.dataset.resize((old_len + self._buffpointer,))
+        self.dataset[old_len:old_len + self._buffpointer
+                     ] = self._buff[:self._buffpointer]
 
 
 class H5pytoBytesStream:
@@ -154,15 +158,15 @@ class H5pytoBytesStream:
         .readline() -> bytes object with rest of current line
     """
 
-    def __init__(self, dataset, buffsize=2**30):
+    def __init__(self, dataset, buffsize=2**29):
         """
         Initialize H5pytoBytesStream.
 
         Parameters:
         -----------
         dataset - existing 1d h5py datset with dtype=uint8 and maxshape=(None,)
-                  ProTip: Can be anything 1d supporting .resize(shape=(new_len,))
-                          and sliced access
+                  Tip: Can be anything 1d supporting .resize(shape=(new_len,))
+                       and sliced access
         buffsize - int, maximum buffer size/approximate memory footprint
                    measured in bytes, the maximum size of the internal
                    reading cache is (buffsize,) and dtype=uint8 resulting in
@@ -287,8 +291,11 @@ class H5pytoBytesStream:
 
 class MutableObjectShelf:
     """
-    Interface between a h5py group and pythons pickle to store arbitrary python objects.
+    Interface between a h5py group and pythons pickle.
+
+    Can be used to store arbitrary python objects to h5py files.
     """
+
     def __init__(self, group):
         self.group = group
 
@@ -324,8 +331,8 @@ class MutableObjectShelf:
             # TODO?: if it exists we assume that it is a dset of the right
             # TODO?: dtype, shape and maxshape. should we check?
         # TODO: use buffered version or not?
-        # with BytesStreamtoH5pyBuffered(dset) as stream_file:
-        with BytesStreamtoH5py(dset) as stream_file:
+        #with BytesStreamtoH5py(dset) as stream_file:
+        with BytesStreamtoH5pyBuffered(dset) as stream_file:
             # using pickle protocol 4 means python>=3.4!
             pickle.dump(obj, stream_file, protocol=4)
 
@@ -369,13 +376,23 @@ class RCModelRack(collections.abc.MutableMapping):
         return iter(self._group.keys())
 
 
-#TODO: define 'paths' to datasets in storage as constants!
-#      this makes them useable in all of arcd!
 class Storage:
     """
-    Store all arcd RCModels and data belonging to a TPS simulation in the arcd_data HDF5 group.
-    Store arbitrary data with h5py in the rest of the file by accessing it through self.file.
+    Store all arcd RCModels and data belonging to one TPS simulation.
+
+    Note: Everything belonging to arcd is stored in the arcd_data HDF5 group.
+          You can store arbitrary data using h5py in the rest of the file
+          through accessing it as Storage.file.
     """
+    # setup dictionary mapping descriptive strings to 'paths' in HDF5 file
+    h5py_path_dict = {"level0": "/arcd_data"}  # toplevel arcd group
+    h5py_path_dict["cache"] = h5py_path_dict["level0"] + "/cache"  # cache
+    h5py_path_dict.update({  # these depend on cache and level0 to be defined
+        "rcmodel_store": h5py_path_dict["level0"] + "/RCModels",
+        "trainset_store": h5py_path_dict["level0"] + "/TrainSet",
+        "tra_dc_cache": h5py_path_dict["cache"] + "/TrajectoryDensityCollectors",
+                           })
+
     # TODO: should we require descriptor_dim as input on creation? to make clear that you can not change it?!
     def __init__(self, fname, mode='a'):
         """
@@ -394,10 +411,9 @@ class Storage:
         """
         self.file = h5py.File(fname, mode=mode)
         # TODO: write arcd version string if first creation, i.e. 'w' in mode or 'a' in mode and not fexists
-        self._store = self.file.require_group('/arcd_storage')
-        self.rcmodels = RCModelRack(
-            rcmodel_group=self._store.require_group('RCModels'),
-                                    )
+        self._store = self.file.require_group(self.h5py_path_dict["level0"])
+        rcm_grp = self.file.require_group(self.h5py_path_dict["rcmodel_store"])
+        self.rcmodels = RCModelRack(rcmodel_group=rcm_grp)
         self._empty_cache()  # TODO: should be empty anyways?
 
     def __del__(self):
@@ -407,8 +423,8 @@ class Storage:
 
     def _empty_cache(self):
         # empty TrajectoryDensityCollector_cache
-        traDC_cache_grp = self._store.require_group(
-                        name="cache/TrajectoryDensityCollectors"
+        traDC_cache_grp = self.file.require_group(
+                                name=self.h5py_path_dict["tra_dc_cache"]
                                                   )
         traDC_cache_grp.clear()
 
@@ -432,10 +448,12 @@ class Storage:
         sr_shape = trainset.shot_results.shape
         w_shape = trainset.weights.shape
         try:
-            ts_group = self._store['TrainSet']
+            ts_group = self.file[self.h5py_path_dict["trainset_store"]]
         except KeyError:
             # we never stored a TrainSet here before, so setup datasets
-            ts_group = self._store.create_group('TrainSet')
+            ts_group = self.file.create_group(
+                                        self.h5py_path_dict["trainset_store"]
+                                              )
             des_group = ts_group.create_dataset(name='descriptors',
                                                 dtype=trainset.descriptors.dtype,
                                                 shape=d_shape,
@@ -505,7 +523,7 @@ class Storage:
               we load from the ``openpathsampling.Storage``.
         """
         try:
-            ts_group = self._store['TrainSet']
+            ts_group = self.file[self.h5py_path_dict["trainset_store"]]
         except KeyError:
             raise KeyError('No TrainSet in file.')
         descriptors = ts_group['descriptors'][:]
@@ -515,7 +533,7 @@ class Storage:
         py_state = MutableObjectShelf(ts_group).load()
         des_trans_loaded = py_state["descriptor_transform"]
         states_loaded = py_state["states"].copy()
-        if ops_storage is not None:
+        if (ops_storage is not None) and py_state["ops_objects"]:
             # we only replace the states and descriptor_transform if we believe
             # they are from ops, this way we can still combine 'normal'
             # pickleable state and descriptor_transform functions with ops objs
@@ -524,13 +542,12 @@ class Storage:
             for i, s in enumerate(states_loaded):
                 if isinstance(s, str):
                     states_loaded[i] = ops_storage.volumes.find(s)
-        else:
-            if py_state["ops_objects"]:
-                logger.warn("TrainSet was saved with ops objects (states and/"
-                            + "or descriptor_transform) but no ops_storage "
-                            + "was passed to load_trainset(). You will have to"
-                            + " reset them manually. They are still the names "
-                            + "of the ops objects at savetime.")
+        elif py_state["ops_objects"]:
+            logger.warn("TrainSet was saved with ops objects (states and/"
+                        + "or descriptor_transform) but no ops_storage "
+                        + "was passed to load_trainset(). You will have to"
+                        + " reset them manually. They are still the names "
+                        + "of the ops objects at savetime.")
         # now sort out if we were given something that takes precedence
         if descriptor_transform is None:
             # FIXME: this way we can never overwrite the descriptor_transform

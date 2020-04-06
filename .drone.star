@@ -42,10 +42,10 @@ def make_pipeline(os, arch, py_version):
           "pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
           # TODO: this is hardcoded and not nice for maintenance
           # install deep learning packages
-          "pip install torch==1.4.0+cpu torchvision==0.5.0+cpu -f https://download.pytorch.org/whl/torch_stable.html",
+          "pip install torch==1.4.0+cpu -f https://download.pytorch.org/whl/torch_stable.html",
           "pip install tensorflow",
           "pip install numpy cython",  # install setup dependecies
-          "pip install -v .[test]",
+          "pip install .[test]",
           "pytest -v -rs .",
         ]
       },

@@ -22,6 +22,7 @@ from openpathsampling.engines.snapshot import BaseSnapshot as OPSBaseSnapshot
 from openpathsampling.engines.trajectory import Trajectory as OPSTrajectory
 from openpathsampling.collectivevariable import CollectiveVariable
 from abc import ABC, abstractmethod
+from .storage import Storage
 
 
 logger = logging.getLogger(__name__)
@@ -411,7 +412,7 @@ class TrajectoryDensityCollector:
         #       and ONLY ONCE, so it is probably best to have them defined in
         #       storage.py (?) as constants and import them from there
         traDC_cache_grp = cache_file.require_group(
-                            "/arcd_storage/cache/TrajectoryDensityCollectors"
+                                        Storage.h5py_path_dict["tra_dc_cache"]
                                                    )
         if copy_from is None:
             self._cache = traDC_cache_grp.create_group(id_str)
@@ -529,9 +530,11 @@ class TrajectoryDensityCollector:
 
     def add_density_for_trajectories(self, model, trajectories, counts=None):
         """
-        Evaluate the density on the given trajectories, only **add** the counts
-        for the added trajectories according to the current models predictions
-        to the existing histogram in probability space.
+        Evaluate the density on the given trajectories.
+
+        Only **add** the counts for the added trajectories according to the
+        current models predictions to the existing histogram in probability
+        space.
         Additionally store trajectories/descriptors for later reevaluation.
 
         See self.reevaluate_density() to only recreate the density estimate
