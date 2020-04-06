@@ -65,7 +65,7 @@ def make_conda_pipeline(os, arch, py_version):
     "steps": [
       {
         "name": "test",
-        "image": "miniconda3",
+        "image": "continuumio/miniconda3",
         "commands": [
           "conda update -n base conda",
           "conda --version",
