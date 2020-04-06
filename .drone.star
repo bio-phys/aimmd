@@ -68,7 +68,8 @@ def make_conda_pipeline(os, arch, py_version):
         "image": "continuumio/miniconda3",
         "commands": [
           "conda init bash",
-          "source ~/.bashrc",
+          "bash",
+          #"source ~/.bashrc",
           "conda update -n base conda",
           "conda --version",
           "conda info -e",
