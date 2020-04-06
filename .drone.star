@@ -17,11 +17,13 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 
 def main(ctx):
   return [
-    make_pipeline(os="linux", arch="amd64", py_version="3.6"),
-    make_pipeline(os="linux", arch="amd64", py_version="3.7"),
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.7"),
+    make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
+    make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
   ]
 
-def make_pipeline(os, arch, py_version):
+def make_pip_pipeline(os, arch, py_version):
   return {
     "kind": "pipeline",
     "name": "{0}-{1}-py{2}".format(os, arch, py_version),
@@ -45,6 +47,40 @@ def make_pipeline(os, arch, py_version):
           "pip install torch==1.4.0+cpu -f https://download.pytorch.org/whl/torch_stable.html",
           "pip install tensorflow",
           "pip install numpy cython",  # install setup dependecies
+          "pip install .[test]",
+          "pytest -v -rs .",
+        ]
+      },
+    ]
+  }
+
+def make_conda_pipeline(os, arch, py_version):
+  return {
+    "kind": "pipeline",
+    "name": "{0}-{1}-conda-py{2}".format(os, arch, py_version),
+    "platform": {
+      "os": os,
+      "arch": arch,
+    },
+    "steps": [
+      {
+        "name": "test",
+        "image": "miniconda3",
+        "commands": [
+          "conda update -n base conda",
+          "conda --version",
+          "conda info -e",
+          "python --version",
+          "conda create -n test_env python={0}".format{py_version},
+          "conda activate test_env",
+          # install ops pathsampling hooks branch
+          "pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
+          # install deep learning packages
+          "conda install tensorflow",
+          # TODO: this is CPUonly hardcoded...
+          "conda install pytorch torchvision cpuonly -c pytorch",
+          "conda install numpy cython",  # install setup dependecies
+          "conda list",
           "pip install .[test]",
           "pytest -v -rs .",
         ]
