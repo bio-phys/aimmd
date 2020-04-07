@@ -17,10 +17,12 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 
 def main(ctx):
   return [
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.4"),
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.5"),
     make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
     make_pip_pipeline(os="linux", arch="amd64", py_version="3.7"),
-    make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
-    make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
+    #make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
+    #make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
   ]
 
 def make_pip_pipeline(os, arch, py_version):
@@ -48,12 +50,16 @@ def make_pip_pipeline(os, arch, py_version):
           "pip install tensorflow",
           "pip install numpy cython",  # install setup dependecies
           "pip install .[test]",
+          "pip list",
           "pytest -v -rs .",
         ]
       },
     ]
   }
 
+# NOTE: we can not use conda activate, because we are on /bin/sh
+#       but also not 'conda run', it does not propagate the exit code
+#       ...so we could have sliently failing tests!
 def make_conda_pipeline(os, arch, py_version):
   return {
     "kind": "pipeline",
@@ -67,10 +73,10 @@ def make_conda_pipeline(os, arch, py_version):
         "name": "test",
         "image": "continuumio/miniconda3",
         "commands": [
+          # NOTE: need to use conda run, because conda activate does not work
           "conda update -n base conda -q",
           "conda --version",
           "conda create -n test_env -q python={0}".format(py_version),
-          #"conda activate test_env",
           "conda info -e",
           "conda run -n test_env python --version",
           "conda install -n test_env tensorflow -y -q",

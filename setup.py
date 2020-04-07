@@ -148,10 +148,10 @@ setup(
 
         # Specify the Python versions you support here. In particular, ensure
         # that you indicate whether you support Python 2, Python 3 or both.
-        'Programming Language :: Python :: 3.4',  # should work, not tested
-        'Programming Language :: Python :: 3.5',  # should work, not tested
-        'Programming Language :: Python :: 3.6',  # works, (tested)
-        'Programming Language :: Python :: 3.7',  # works, tested
+        'Programming Language :: Python :: 3.4',  # CI tested
+        'Programming Language :: Python :: 3.5',  # CI tested
+        'Programming Language :: Python :: 3.6',  # CI tested, prodcution use
+        'Programming Language :: Python :: 3.7',  # CI tested, production use
         # NOTE: python 2 will most likely not work as intended:
         # 1. we did not take care of integer division vs float division
         # 2. we use binary pickle formats for storing the trainers

@@ -15,10 +15,12 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
+import os
 import pickle
 import collections.abc
 import h5py
 import numpy as np
+from pkg_resources import parse_version
 from openpathsampling import CollectiveVariable as OPSCollectiveVariable
 from openpathsampling import Volume as OPSVolume
 from .trainset import TrainSet
@@ -339,9 +341,11 @@ class MutableObjectShelf:
 
 class ArcdObjectShelf(MutableObjectShelf):
     """
-    Specialized MutableObjectShelf for arcd objects,
-    i.e. objects with .from_h5py_group and a .ready_for_pickle methods.
+    Specialized MutableObjectShelf for arcd objects.
+
+    Stores any object with a .from_h5py_group and a .ready_for_pickle method.
     """
+
     def load(self):
         obj = super().load()
         obj = obj.complete_from_h5py_group(self.group)
@@ -353,9 +357,8 @@ class ArcdObjectShelf(MutableObjectShelf):
 
 
 class RCModelRack(collections.abc.MutableMapping):
-    """
-    Dictionary like interface to RCModels stored in an arcd storage file.
-    """
+    """Dictionary like interface to RCModels stored in an arcd storage file."""
+
     def __init__(self, rcmodel_group):
         self._group = rcmodel_group
 
@@ -384,6 +387,7 @@ class Storage:
           You can store arbitrary data using h5py in the rest of the file
           through accessing it as Storage.file.
     """
+
     # setup dictionary mapping descriptive strings to 'paths' in HDF5 file
     h5py_path_dict = {"level0": "/arcd_data"}  # toplevel arcd group
     h5py_path_dict["cache"] = h5py_path_dict["level0"] + "/cache"  # cache
@@ -392,8 +396,12 @@ class Storage:
         "trainset_store": h5py_path_dict["level0"] + "/TrainSet",
         "tra_dc_cache": h5py_path_dict["cache"] + "/TrajectoryDensityCollectors",
                            })
+    # if the current arcd version is higher than the compatibility_version
+    # we expect to be able to read the storage
+    _compatibility_version = parse_version("0.7")  # introduced h5py storage
 
-    # TODO: should we require descriptor_dim as input on creation? to make clear that you can not change it?!
+    # TODO: should we require descriptor_dim as input on creation?
+    #       to make clear that you can not change it?!
     def __init__(self, fname, mode='a'):
         """
         Initialize (open/create) a Storage.
@@ -409,12 +417,22 @@ class Storage:
             a       : read/write if exists, create otherwise (default)
 
         """
+        fexists = os.path.exists(fname)
         self.file = h5py.File(fname, mode=mode)
-        # TODO: write arcd version string if first creation, i.e. 'w' in mode or 'a' in mode and not fexists
         self._store = self.file.require_group(self.h5py_path_dict["level0"])
+        if ("w" in mode) or ("a" in mode and not fexists):
+            # first creation of file: write arcd compatibility version string
+            self._store.attrs["storage_version"] = np.string_(self._compatibility_version)
+        else:
+            store_version = parse_version(self._store.attrs["storage_version"])
+            if self._compatibility_version < store_version:
+                raise RuntimeError(
+                        "The storage file was written with a newer version of "
+                        + "arcd than the current one. You need at least arcd "
+                        + "v{:s}".format(str(store_version)) + " to open it.")
         rcm_grp = self.file.require_group(self.h5py_path_dict["rcmodel_store"])
         self.rcmodels = RCModelRack(rcmodel_group=rcm_grp)
-        self._empty_cache()  # TODO: should be empty anyways?
+        self._empty_cache()  # should be empty, but to be sure
 
     def __del__(self):
         self._empty_cache()
