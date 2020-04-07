@@ -67,23 +67,22 @@ def make_conda_pipeline(os, arch, py_version):
         "name": "test",
         "image": "continuumio/miniconda3",
         "commands": [
-          "conda update -n base --all",
-          "conda install python={0} -y".format(py_version),
-          #". /root/.bashrc",
-          #"conda activate test_env",
+          "conda update -n base conda",
           "conda --version",
+          "conda create -n test_env python={0}".format(py_version),
+          #"conda activate test_env",
           "conda info -e",
-          "python --version",
-          "conda install tensorflow -y",
+          "conda run -n test_env python --version",
+          "conda install -n test_env tensorflow -y",
           # TODO: this is CPUonly hardcoded...
-          "conda install pytorch torchvision cpuonly -c pytorch -y",
-          "conda install numpy cython -y",  # install setup dependecies
+          "conda install -n test_env pytorch torchvision cpuonly -c pytorch -y",
+          "conda install -n test_env numpy cython -y",  # install setup dependecies
           # install ops pathsampling hooks branch
-          "pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
+          "conda run -n test_env pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
           # install deep learning packages
-          "conda list",
-          "pip install .[test]",
-          "pytest -v -rs .",
+          "conda run -n test_env conda list",
+          "conda run -n test_env pip install .[test]",
+          "conda run -n test_env pytest -v -rs .",
         ]
       },
     ]
