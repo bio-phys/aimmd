@@ -15,9 +15,16 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
+import sys
 
 
 logger = logging.getLogger(__name__)
+
+
+if sys.version_info.minor < 6:
+    # ModuleNotFoundError was introduced in python v3.6
+    # need to check only minor version since we require py3 anyway
+    ModuleNotFoundError = ImportError
 
 
 from .__about__ import (__version__, __title__, __author__,
