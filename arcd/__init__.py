@@ -34,15 +34,15 @@ from .base.utils import (emulate_production_from_trainset,
 
 try:
     from . import pytorch
-except (ModuleNotFoundError, ImportError):
+except (ImportError, ModuleNotFoundError):
     logger.warning("Pytorch not available")
 
 try:
     from . import symreg
-except(ModuleNotFoundError, ImportError):
+except(ImportError, ModuleNotFoundError):
     logger.warning('dCGPy not found. SymReg will not be available.')
 
 try:
     from . import keras
-except (ModuleNotFoundError, ImportError):
+except (ImportError, ModuleNotFoundError):
     logger.warning("Tensorflow/Keras not available")
