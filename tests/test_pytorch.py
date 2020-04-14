@@ -16,7 +16,6 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import pytest
 import arcd
-import os
 import numpy as np
 import openpathsampling as paths
 import torch
@@ -28,7 +27,7 @@ class Test_pytorch:
                              )
     def test_save_load_model(self, tmp_path, n_states, model_type):
         p = tmp_path / 'Test_load_save_model.pckl'
-        fname = str(os.path.abspath(p))
+        fname = str(p)
 
         states = ['A', 'B']
         if n_states == 'multinomial':

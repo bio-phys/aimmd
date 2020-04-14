@@ -35,7 +35,6 @@ else:
 
 import pytest
 import arcd
-import os
 import numpy as np
 import openpathsampling as paths
 from tensorflow.keras import optimizers
@@ -45,7 +44,7 @@ class Test_keras:
     @pytest.mark.parametrize("n_states", ['binomial', 'multinomial'])
     def test_save_load_model(self, tmp_path, n_states):
         p = tmp_path / 'Test_load_save_model.pckl'
-        fname = str(os.path.abspath(p))
+        fname = str(p)
 
         hidden_parms = [{'units_factor': 1,  # test units_fact key
                          'activation': 'elu',  # should be fixed to selu
