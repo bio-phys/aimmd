@@ -21,8 +21,10 @@ def main(ctx):
     make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
     make_pip_pipeline(os="linux", arch="amd64", py_version="3.7"),
     make_pip_pipeline(os="linux", arch="amd64", py_version="3.8"),
-    #make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
-    #make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
+    make_conda_pipeline(os="linux", arch="amd64", py_version="3.5"),
+    make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
+    make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
+    make_conda_pipeline(os="linux", arch="amd64", py_version="3.8"),
   ]
 
 def make_pip_pipeline(os, arch, py_version):
@@ -71,7 +73,7 @@ def make_conda_pipeline(os, arch, py_version):
     "steps": [
       {
         "name": "test",
-        "image": "continuumio/miniconda3",
+        "image": "conda3-drone",
         "commands": [
           # NOTE: need to use conda run, because conda activate does not work
           "conda update -n base conda -q",
