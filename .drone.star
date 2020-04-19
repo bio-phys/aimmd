@@ -20,6 +20,7 @@ def main(ctx):
     make_pip_pipeline(os="linux", arch="amd64", py_version="3.5"),
     make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
     make_pip_pipeline(os="linux", arch="amd64", py_version="3.7"),
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.8"),
     #make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
     #make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
   ]

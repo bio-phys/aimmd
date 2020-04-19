@@ -178,7 +178,7 @@ setup(
         'openpathsampling',
         'mdtraj',
         'networkx',
-        #'dcgpy',
+        'dcgpy',
         'sympy',  # only used for dcgpy atm
         'h5py',  # for loading and saving of keras models
     ],
