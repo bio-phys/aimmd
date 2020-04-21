@@ -80,7 +80,7 @@ def make_conda_pipeline(os, arch, py_version):
           "conda update -n base conda -q -y",
           "conda --version",
           "conda create -n test_env -q -y python={0}".format(py_version),
-          "conda activate test_env",
+          "source activate test_env",
           "conda info -e",
           "python --version",
           "conda install tensorflow -y -q",
