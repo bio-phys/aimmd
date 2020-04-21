@@ -17,10 +17,10 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 
 def main(ctx):
   return [
-    make_pip_pipeline(os="linux", arch="amd64", py_version="3.5"),
-    make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
+    #make_pip_pipeline(os="linux", arch="amd64", py_version="3.5"),
+    #make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
     make_pip_pipeline(os="linux", arch="amd64", py_version="3.7"),
-    make_pip_pipeline(os="linux", arch="amd64", py_version="3.8"),
+    #make_pip_pipeline(os="linux", arch="amd64", py_version="3.8"),
     make_conda_pipeline(os="linux", arch="amd64", py_version="3.5"),
     make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
     make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
@@ -82,7 +82,7 @@ def make_conda_pipeline(os, arch, py_version):
           "conda config --append channels omnia",
           "conda update -n base conda -q -y",
           "conda --version",
-          "conda create -n test_env -q -y python={0} compliers".format(py_version),
+          "conda create -n test_env -q -y python={0} compilers".format(py_version),
           "source activate test_env",
           "conda info -e",
           "python --version",
