@@ -59,8 +59,9 @@ def make_pip_pipeline(os, arch, py_version):
     ]
   }
 
-# NOTE: we can not use conda activate, because we are on /bin/sh
-#       but also not 'conda run', it does not propagate the exit code
+# NOTE: we use our own docker repo where we have a conda container
+#         where /bin/sh is a symlink to /bin/bash, this gets conda to work
+# NOTE 2: Do **not** use conda activate, it does not propagate the exit code
 #       ...so we could have sliently failing tests!
 def make_conda_pipeline(os, arch, py_version):
   return {
@@ -73,24 +74,25 @@ def make_conda_pipeline(os, arch, py_version):
     "steps": [
       {
         "name": "test",
-        "image": "conda3-drone",
+        "image": "hejung/conda3-drone",
         "commands": [
           # NOTE: need to use conda run, because conda activate does not work
-          "conda update -n base conda -q",
+          "conda update -n base conda -q -y",
           "conda --version",
-          "conda create -n test_env -q python={0}".format(py_version),
+          "conda create -n test_env -q -y python={0}".format(py_version),
+          "conda activate test_env",
           "conda info -e",
-          "conda run -n test_env python --version",
-          "conda install -n test_env tensorflow -y -q",
+          "python --version",
+          "conda install tensorflow -y -q",
           # TODO: this is CPUonly hardcoded...
-          "conda install -q -n test_env pytorch torchvision cpuonly -c pytorch -y",
-          "conda install -q -n test_env numpy cython -y",  # install setup dependecies
+          "conda install -q torchvision cpuonly -c pytorch -y",
+          "conda install -q numpy cython -y",  # install setup dependecies
           # install ops pathsampling hooks branch
-          "conda run -n test_env pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
+          "pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
           # install deep learning packages
-          "conda run -n test_env conda list",
-          "conda run -n test_env pip install .[test]",
-          "conda run -n test_env pytest -v -rs .",
+          "conda list",
+          "pip install .[test]",
+          "pytest -v -rs .",
         ]
       },
     ]
