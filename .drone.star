@@ -24,7 +24,8 @@ def main(ctx):
     make_conda_pipeline(os="linux", arch="amd64", py_version="3.5"),
     make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
     make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
-    make_conda_pipeline(os="linux", arch="amd64", py_version="3.8"),
+    # no tensorflow conda package for py3.8 yet
+    #make_conda_pipeline(os="linux", arch="amd64", py_version="3.8"),
   ]
 
 def make_pip_pipeline(os, arch, py_version):
@@ -77,9 +78,11 @@ def make_conda_pipeline(os, arch, py_version):
         "image": "hejung/conda3-drone",
         "commands": [
           # NOTE: need to use conda run, because conda activate does not work
+          "conda channels --prepend conda-forge",
+          "conda channels --append omnia",
           "conda update -n base conda -q -y",
           "conda --version",
-          "conda create -n test_env -q -y python={0}".format(py_version),
+          "conda create -n test_env -q -y python={0} compliers".format(py_version),
           "source activate test_env",
           "conda info -e",
           "python --version",
