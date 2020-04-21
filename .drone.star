@@ -78,8 +78,8 @@ def make_conda_pipeline(os, arch, py_version):
         "image": "hejung/conda3-drone",
         "commands": [
           # NOTE: need to use conda run, because conda activate does not work
-          "conda channels --prepend conda-forge",
-          "conda channels --append omnia",
+          "conda config --prepend channels conda-forge",
+          "conda config --append channels omnia",
           "conda update -n base conda -q -y",
           "conda --version",
           "conda create -n test_env -q -y python={0} compliers".format(py_version),
