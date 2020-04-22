@@ -43,7 +43,8 @@ Currently supported backends are (model types in brackets):
 - [pytorch] (neural network)
 - [tensorflow]/keras (neural network)
 - [dcgpy] (symbolic regression expressions) [Currently no iterative/on-the-fly training possible]
-You can install all of them using pip or conda. Please refer to their respective documentations for detailed installation instructions.
+
+You should be able to install all of them using pip and/or conda. Please refer to their respective documentations for detailed installation instructions.
 
 ## API Reference
 
