@@ -15,4 +15,5 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 from .selector import RCModelSelector
-from .traininghook import TrainingHook
+from .traininghook import TrainingHook as TrainingHookLegacy
+from .hooks import TrainingHook, ArcdStorageHook, DensityCollectionHook

@@ -17,11 +17,11 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 
 def main(ctx):
   return [
-    #make_pip_pipeline(os="linux", arch="amd64", py_version="3.5"),
-    #make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.5"),
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
     make_pip_pipeline(os="linux", arch="amd64", py_version="3.7"),
-    #make_pip_pipeline(os="linux", arch="amd64", py_version="3.8"),
-    make_conda_pipeline(os="linux", arch="amd64", py_version="3.5"),
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.8"),
+    #make_conda_pipeline(os="linux", arch="amd64", py_version="3.5"),
     make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
     make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
     # no tensorflow conda package for py3.8 yet
@@ -77,15 +77,13 @@ def make_conda_pipeline(os, arch, py_version):
         "name": "test",
         "image": "hejung/conda3-drone",
         "commands": [
-          # NOTE: need to use conda run, because conda activate does not work
           "conda config --prepend channels conda-forge",
           "conda config --append channels omnia",
-          "conda update -n base conda -q -y",
+          "conda update -n base conda -q -y -c defaults",
           "conda --version",
           "conda create -n test_env -q -y python={0} compilers".format(py_version),
           "source activate test_env",
           "conda info -e",
-          "python --version",
           "conda install tensorflow -y -q",
           # TODO: this is CPUonly hardcoded...
           "conda install -q torchvision cpuonly -c pytorch -y",
@@ -94,6 +92,7 @@ def make_conda_pipeline(os, arch, py_version):
           "pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
           # install deep learning packages
           "conda list",
+          "python --version",
           "pip install .[test]",
           "pytest -v -rs .",
         ]

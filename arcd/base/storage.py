@@ -351,23 +351,31 @@ class ArcdObjectShelf(MutableObjectShelf):
         obj = obj.complete_from_h5py_group(self.group)
         return obj
 
-    def save(self, obj, overwrite=True):
-        obj_to_save = obj.object_for_pickle(self.group, overwrite=overwrite)
+    def save(self, obj, overwrite=True, **kwargs):
+        # kwargs make it possible to pass arcd object specific keyword args
+        # to the object_for_pickle functions
+        obj_to_save = obj.object_for_pickle(self.group,
+                                            overwrite=overwrite,
+                                            **kwargs)
         super().save(obj=obj_to_save, overwrite=overwrite)
 
 
 class RCModelRack(collections.abc.MutableMapping):
     """Dictionary like interface to RCModels stored in an arcd storage file."""
 
-    def __init__(self, rcmodel_group):
+    def __init__(self, rcmodel_group, store_checkpoints=False):
         self._group = rcmodel_group
+        self.store_checkpoints = store_checkpoints
 
     def __getitem__(self, key):
         return ArcdObjectShelf(self._group[key]).load()
 
     def __setitem__(self, key, value):
         group = self._group.require_group(key)
-        ArcdObjectShelf(group).save(obj=value, overwrite=True)
+        ArcdObjectShelf(group).save(obj=value,
+                                    overwrite=True,
+                                    checkpoint=self.store_checkpoints,
+                                    )
 
     def __delitem__(self, key):
         del self._group[key]
@@ -393,6 +401,7 @@ class Storage:
     h5py_path_dict["cache"] = h5py_path_dict["level0"] + "/cache"  # cache
     h5py_path_dict.update({  # these depend on cache and level0 to be defined
         "rcmodel_store": h5py_path_dict["level0"] + "/RCModels",
+        "rcmodel_chkpts": h5py_path_dict["level0"] + "/RCModel_checkpoints",
         "trainset_store": h5py_path_dict["level0"] + "/TrainSet",
         "tra_dc_cache": h5py_path_dict["cache"] + "/TrajectoryDensityCollectors",
                            })
@@ -431,7 +440,13 @@ class Storage:
                         + "arcd than the current one. You need at least arcd "
                         + "v{:s}".format(str(store_version)) + " to open it.")
         rcm_grp = self.file.require_group(self.h5py_path_dict["rcmodel_store"])
-        self.rcmodels = RCModelRack(rcmodel_group=rcm_grp)
+        self.rcmodels = RCModelRack(rcmodel_group=rcm_grp,
+                                    store_checkpoints=False,
+                                    )
+        chkpts_grp = self.file.require_group(self.h5py_path_dict["rcmodel_chkpts"])
+        self.rcmodel_checkpoints = RCModelRack(rcmodel_group=chkpts_grp,
+                                               store_checkpoints=True,
+                                               )
         self._empty_cache()  # should be empty, but to be sure
 
     def __del__(self):

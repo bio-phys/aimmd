@@ -151,7 +151,7 @@ class Test_pytorch:
                                                     descriptor_transform=setup_dict['descriptor_transform'])
         # create trainset and trainhook
         trainset = arcd.TrainSet(setup_dict['states'], setup_dict['descriptor_transform'])
-        trainhook = arcd.ops.TrainingHook(model, trainset)
+        trainhook = arcd.ops.TrainingHookLegacy(model, trainset)
         if save_trainset == 'recreate_trainset':
             # we simply change the name under which the trainset is saved
             # this should result in the new trainhook not finding the saved data
@@ -181,7 +181,7 @@ class Test_pytorch:
         load_storage = paths.Storage(fname, 'a')
         load_sampler = load_storage.pathsimulators[0]
         load_sampler.restart_at_step(load_storage.steps[-1])
-        load_trainhook = arcd.ops.TrainingHook(None, None)
+        load_trainhook = arcd.ops.TrainingHookLegacy(None, None)
         load_sampler.attach_hook(load_trainhook)
         load_sampler.run(1)
         # check that the two trainsets are the same
