@@ -465,9 +465,17 @@ class Storage:
                                                )
         self._empty_cache()  # should be empty, but to be sure
 
-    def __del__(self):
+    # make possible to use in with statements
+    def __enter__(self):
+        return self
+
+    # and automagically close wwhen exiting the with
+    def __exit__(self):
+        self.close()
+
+    def close(self):
         self._empty_cache()
-        self.file.flush()  # TODO: do we need this? or does close() do it?
+        self.file.flush()
         self.file.close()
 
     def _empty_cache(self):
