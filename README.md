@@ -1,5 +1,7 @@
 # arcd
 
+[![Build Status](https://drone.kotspeicher.de/api/badges/hejung/arcd/status.svg)](https://drone.kotspeicher.de/hejung/arcd)
+
 ## Synopsis
 
 arcd - Automatic Reaction Coordinate Discovery: Machine learning the reaction coordinate from shooting results.
