@@ -54,12 +54,8 @@ class ArcdStorageHook(PathSimulatorHook):
         # these should essentially be a no-ops if it is already in storage
         # but circumvents unhappy users that forgot to save the states/transform
         if sim.storage is not None:
-            # save the trainset states
-            for s in self.trainset.states:
-                if isinstance(s, Volume):
-                    # we check if it is a volume because only ops volumes are guranteed
-                    # to save and load as expected
-                    sim.storage.save(s)
+            # Note: the traisnet.states should all already be in ops storage,
+            #       since they are also used as ops states for the TPS/TIS
             # save the descriptor_transform
             if isinstance(self.model.descriptor_transform, CollectiveVariable):
                 sim.storage.save(self.model.descriptor_transform)
