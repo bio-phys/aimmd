@@ -208,7 +208,7 @@ class RCModel(ABC):
             self.descriptor_transform = ops_storage.cvs.find(self.descriptor_transform)
             return self
         else:
-            raise ValueError("self.descriptor_transform does not seem to be a"
+            raise ValueError("self.descriptor_transform does not seem to be a "
                              + "string indicating the name of the ops CV.")
 
     @abstractmethod
@@ -388,9 +388,7 @@ class TrajectoryDensityCollector:
             self._descriptors = np.empty((0, 0))
             self._cache = None
         else:
-            # the next line looks weird, but ensures the user can pass either
-            # arcd storages or h5py files directly
-            self._create_h5py_cache(cache_file=cache_file.file)
+            self._create_h5py_cache(cache_file=cache_file)
             self._counts = None
             self._descriptors = None
 
@@ -406,11 +404,39 @@ class TrajectoryDensityCollector:
         n_forbidden_bins = len(np.where(sums > 1)[0])
         self._n_allowed_bins = bins**self.n_dim - n_forbidden_bins
 
+    @property
+    def cached(self):
+        """Return True if we cache the descriptors on file."""
+        return (self._cache is not None)
+
+    @property
+    def cache_file(self):
+        return self._cache_file
+
+    @cache_file.setter
+    def cache_file(self, val):
+        if self.cached:
+            # we already have a cache, so copy it
+            self._create_h5py_cache(val, copy_from=self._cache)
+            self._cache_file = val
+        else:
+            # need to copty the in memory numpy cache to h5py
+            # get a ref to descriptors and counts
+            descriptors = self._descriptors[:self._fill_pointer]
+            counts = self._counts[:self._fill_pointer]
+            # create cache, also replaces self._descriptors
+            self._create_h5py_cache(val)
+            self._fill_pointer = 0  # reset fill pointer so we can use append
+            self.append(tra_descriptors=descriptors, multiplicity=counts)
+
     def _create_h5py_cache(self, cache_file, copy_from=None):
+        # the next line looks weird, but ensures the user can pass either
+        # arcd storages or h5py files directly
+        cache_file = cache_file.file
         id_str = str(id(self))
-        # TODO: we should keep the path to the cache at a central location
-        #       and ONLY ONCE, so it is probably best to have them defined in
-        #       storage.py (?) as constants and import them from there
+        # we should keep the path to the cache at a central location
+        # and ONLY ONCE, so it is probably best to have them defined in
+        # storage.py (?) as constants and import them from there
         traDC_cache_grp = cache_file.require_group(
                                         Storage.h5py_path_dict["tra_dc_cache"]
                                                    )

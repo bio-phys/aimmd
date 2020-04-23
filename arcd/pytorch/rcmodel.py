@@ -171,7 +171,7 @@ class PytorchRCModel(RCModel):
         state['optimizer'] = self.optimizer.state_dict()
         if not checkpoint:
             state['optimizer'] = optimizer_state_to_device(state['optimizer'],
-                                                           torch.device('CPU'),
+                                                           torch.device('cpu'),
                                                            )
             # move back to initial torch device
             self.nnet = self.nnet.to(self._device)

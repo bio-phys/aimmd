@@ -24,6 +24,7 @@ from pkg_resources import parse_version
 from openpathsampling import CollectiveVariable as OPSCollectiveVariable
 from openpathsampling import Volume as OPSVolume
 from .trainset import TrainSet
+from .. import __about__
 
 
 logger = logging.getLogger(__name__)
@@ -371,6 +372,13 @@ class RCModelRack(collections.abc.MutableMapping):
         return ArcdObjectShelf(self._group[key]).load()
 
     def __setitem__(self, key, value):
+        try:
+            # make sure the RCmodel group is empty, we overwrite anyway
+            # but this avoids issues, e.g. if the density collector tries to
+            # write to an old and existing group
+            del self._group[key]
+        except KeyError:
+            pass
         group = self._group.require_group(key)
         ArcdObjectShelf(group).save(obj=value,
                                     overwrite=True,
@@ -405,6 +413,7 @@ class Storage:
         "trainset_store": h5py_path_dict["level0"] + "/TrainSet",
         "tra_dc_cache": h5py_path_dict["cache"] + "/TrajectoryDensityCollectors",
                            })
+    # NOTE: update this below if we introduce breaking API changes!
     # if the current arcd version is higher than the compatibility_version
     # we expect to be able to read the storage
     _compatibility_version = parse_version("0.7")  # introduced h5py storage
@@ -431,9 +440,16 @@ class Storage:
         self._store = self.file.require_group(self.h5py_path_dict["level0"])
         if ("w" in mode) or ("a" in mode and not fexists):
             # first creation of file: write arcd compatibility version string
-            self._store.attrs["storage_version"] = np.string_(self._compatibility_version)
+            self._store.attrs["storage_version"] = np.string_(
+                                                    self._compatibility_version
+                                                              )
+            self._store.attrs["arcd_version"] = np.string_(
+                                                    __about__.__version__
+                                                           )
         else:
-            store_version = parse_version(self._store.attrs["storage_version"])
+            store_version = parse_version(
+                                    str(self._store.attrs["storage_version"])
+                                          )
             if self._compatibility_version < store_version:
                 raise RuntimeError(
                         "The storage file was written with a newer version of "

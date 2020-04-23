@@ -67,7 +67,7 @@ class ArcdStorageHook(PathSimulatorHook):
     def after_step(self, sim, step_number, step_info, state, results, hook_state):
         if step_number % self.interval == 0:
             # save the model
-            save_name = self.name_prefix + "after_step_{:d}".format(step_number)
+            save_name = self.name_prefix + "_after_step_{:d}".format(step_number)
             if self.checkpoints:
                 self.storage.rcmodel_checkpoints[save_name] = self.model
             else:
@@ -79,7 +79,7 @@ class ArcdStorageHook(PathSimulatorHook):
     def after_simulation(self, sim):
         # save model
         step_number = sim.step
-        save_name = self.name_prefix + "after_step_{:d}".format(step_number)
+        save_name = self.name_prefix + "_after_step_{:d}".format(step_number)
         self.storage.rcmodels[save_name] = self.model
         # also save as 'most_recent' to make restarting easier
         self.storage.rcmodels["most_recent"] = self.model
@@ -134,6 +134,9 @@ class DensityCollectionHook(PathSimulatorHook):
                 # reevaluation time
                 dc.reevaluate_density(model=self.model)
 
+    # TODO: maybe we want this to be public?
+    #       or add a function to collect all density/TPs from storage
+    #       (for the case that we later add a DensityCollectionHook to the simulation)
     def _get_tps_from_ops_storage(self, storage, start=0):
         # find the last accepted TP to be able to add it again
         # instead of the rejects we could find
