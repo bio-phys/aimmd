@@ -20,8 +20,8 @@ pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hook
 git clone https://gitea.kotspeicher.de/hejung/arcd.git
 pip install -e arcd/
 ```
-Additionally you will need to install at least one of the machine learning backends, i.e. pytorch, tensorflow and/or dcgpy.
-Note also that you might want to install additional engines for openpathsampling, i.e. openMM and/or gromacs.
+Additionally you will need to install at least one of the machine learning backends, i.e. [pytorch], [tensorflow] and/or [dcgpy].
+Note also that you might want to install additional engines for openpathsampling, i.e. [openMM] and/or [GROMACS].
 
 ### Detailed and customizable (still best to use a venv or conda environment):
 arcd interacts with openpathsampling through hooks which are called at predefined points during the TPS simulation, e.g. after every MC step. Until merged into ops master this feature is only available on my ops fork on github.
@@ -30,7 +30,7 @@ To make it available you can either directly install the PathSampling_Hooks bran
 pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks
 ```
 or clone the repo/add it as additional remote to your git local and then checkout the PathSampling_Hooks branch.
-You should also install any molecular dynamics engines you want to use with openpathsampling for TPS, i.e. openMM and/or gromacs.
+You should also install any molecular dynamics engines you want to use with openpathsampling for TPS, i.e. [openMM] and/or [GROMACS].
 
 Now cd whereever you want to keep your local copy of arcd, clone the repository and install arcd using pip, e.g.
 ```bash
@@ -72,3 +72,5 @@ GPL v3
 [pytorch]: https://pytorch.org
 [tensorflow]: https://www.tensorflow.org
 [dcgpy]: http://darioizzo.github.io/dcgp/
+[openMM]: http://openmm.org/
+[GROMACS]: http://www.gromacs.org/
