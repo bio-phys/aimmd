@@ -21,6 +21,7 @@ import arcd
 
 class Test_RCModel:
     def test_save_fix_load(self, oneout_rcmodel_notrans, tmp_path):
+        # NOTE: OLD LOADING/SAVING API
         p = tmp_path / 'Test_RCModel_test_save_fix_load'
         fname = str(p)
         model = oneout_rcmodel_notrans
