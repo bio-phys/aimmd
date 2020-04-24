@@ -112,6 +112,21 @@ class BytesStreamtoH5pyBuffered:
         # always write buffer to file
         self.close()
 
+    def _buffer_to_dset(self):
+        if self._buffpointer > 0:
+            # write buffer to file
+            old_len = len(self.dataset)
+            self.dataset.resize((old_len + self._buffpointer,))
+            self.dataset[old_len:old_len + self._buffpointer
+                         ] = self._buff[:self._buffpointer]
+            self._buffpointer = 0
+            # I think we can just overwrite the existing buffer,
+            # no need to recreate, just set self._buffpointer to zero
+            # self._buff = np.zeros((self.buffsize,), dtype=np.uint8)
+
+    def close(self):
+        self._buffer_to_dset()
+
     def write(self, byts):
         add_len = len(byts)
         if self.buffsize - self._buffpointer >= add_len:
@@ -120,36 +135,26 @@ class BytesStreamtoH5pyBuffered:
                        ] = np.frombuffer(byts, dtype=np.uint8)
             self._buffpointer += add_len
         else:
-            # write buffer to file
-            old_len = len(self.dataset)
-            self.dataset.resize((old_len + self._buffpointer,))
-            self.dataset[old_len:old_len + self._buffpointer
-                         ] = self._buff[:self._buffpointer]
-            # I think we can just overwrite the existing buffer,
-            # no need to recreate, just set self._buffpointer to zero
-            # self._buff = np.zeros((self.buffsize,), dtype=np.uint8)
-            self._buffpointer = 0
-            # write data either
-            if add_len < self.buffsize/2:
-                # to new buffer if 'small enough'
-                self._buff[:add_len] = np.frombuffer(byts, dtype=np.uint8)
-                self._buffpointer += add_len
-            else:
-                # TODO/FIXME: I think this can go way beyond buffsize?!
-                # TODO/FIXME: since we make an array out of it
-                # or directly to file if 'too big'
-                self.dataset.resize((old_len + self._buffpointer + add_len,))
-                self.dataset[old_len + self._buffpointer:
-                             ] = np.frombuffer(byts, dtype=np.uint8)
+            # first write out buffer
+            self._buffer_to_dset()
+            remains = add_len
+            written = 0
+            while remains > self.buffsize:
+                # write a whole buffer directly to file
+                self._buff[:] = np.frombuffer(byts[written:written+self.buffsize],
+                                              dtype=np.uint8,
+                                              )
+                self._buffpointer += self.buffsize
+                written += self.buffsize
+                remains -= self.buffsize
+                self._buffer_to_dset()
+            # now what remains should fit into the buffer
+            self._buff[:remains] = np.frombuffer(byts[-remains:],
+                                                 dtype=np.uint8,
+                                                 )
+            self._buffpointer += remains
 
         return add_len
-
-    def close(self):
-        # write buffer to file
-        old_len = len(self.dataset)
-        self.dataset.resize((old_len + self._buffpointer,))
-        self.dataset[old_len:old_len + self._buffpointer
-                     ] = self._buff[:self._buffpointer]
 
 
 class H5pytoBytesStream:
@@ -302,17 +307,20 @@ class MutableObjectShelf:
     def __init__(self, group):
         self.group = group
 
-    def load(self):
+    def load(self, buffsize=2**29):
         try:
             dset = self.group['pickle_data']
         except KeyError:
             raise KeyError('No object stored yet.')
-
-        with H5pytoBytesStream(dset) as stream_file:
-            obj = pickle.load(stream_file)
+        if buffsize is not None:
+            with H5pytoBytesStream(dset, buffsize=buffsize) as stream_file:
+                obj = pickle.load(stream_file)
+        else:
+            with H5pytoBytesStream(dset) as stream_file:
+                obj = pickle.load(stream_file)
         return obj
 
-    def save(self, obj, overwrite=True):
+    def save(self, obj, overwrite=True, buffsize=2**29):
         exists = True
         try:
             dset = self.group['pickle_data']
@@ -333,11 +341,14 @@ class MutableObjectShelf:
                 raise RuntimeError('Object exists but overwrite=False.')
             # TODO?: if it exists we assume that it is a dset of the right
             # TODO?: dtype, shape and maxshape. should we check?
-        # TODO: use buffered version or not?
-        #with BytesStreamtoH5py(dset) as stream_file:
-        with BytesStreamtoH5pyBuffered(dset) as stream_file:
-            # using pickle protocol 4 means python>=3.4!
-            pickle.dump(obj, stream_file, protocol=4)
+        if buffsize is not None:
+            with BytesStreamtoH5pyBuffered(dset, buffsize) as stream_file:
+                # using pickle protocol 4 means python>=3.4!
+                pickle.dump(obj, stream_file, protocol=4)
+        else:
+            with BytesStreamtoH5py(dset) as stream_file:
+                # using pickle protocol 4 means python>=3.4!
+                pickle.dump(obj, stream_file, protocol=4)
 
 
 class ArcdObjectShelf(MutableObjectShelf):

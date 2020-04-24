@@ -20,6 +20,36 @@ import numpy as np
 
 
 class Test_storage:
+    @pytest.mark.parametrize("buffsize", [None,  # use unbuffered version
+                                          2**17,  # 130 KiB buffer
+                                          2**29,  # 530 MiB default
+                                          ]
+                             )
+    def test_MutableObjectShelf(self, tmp_path, buffsize):
+        fname = str(tmp_path / "test_store.h5")
+        storage = arcd.Storage(fname=fname)
+        grp_name = "/testdata"
+        grp = storage.file.require_group(grp_name)
+        shelf = arcd.base.storage.MutableObjectShelf(grp)
+        objs = [np.random.random_sample(size=(10000, 400))]
+        objs += ["test"]
+        shelf.save(objs, buffsize=buffsize)
+        loaded_objs = shelf.load(buffsize=buffsize)
+        for o_true, o_loaded in zip(objs, loaded_objs):
+            assert np.all(o_true == o_loaded)
+        storage.close()
+        storage = arcd.Storage(fname=fname, mode="a")
+        grp = storage.file.require_group(grp_name)
+        shelf = arcd.base.storage.MutableObjectShelf(grp)
+        with pytest.raises(RuntimeError):
+            # we already stored and set overwrite=False, so we expect an error
+            shelf.save(objs, overwrite=False, buffsize=buffsize)
+        # and now test if overwriting works
+        shelf.save(objs, overwrite=True, buffsize=buffsize)
+        loaded_objs2 = shelf.load(buffsize=buffsize)
+        for o_true, o_loaded in zip(objs, loaded_objs2):
+            assert np.all(o_true == o_loaded)
+
     def test_trainset(self, tmp_path):
         # TODO: test saving and loading of states + descrptor_transform?!
         fname = str(tmp_path / "test_store.h5")
@@ -33,6 +63,8 @@ class Test_storage:
                                 shot_results=np.random.randint(0, 2, size=(n_p, 2)),
                                 )
         storage.save_trainset(ts_true)
+        storage.close()
+        storage = arcd.Storage(fname=fname, mode='a')
         ts_loaded = storage.load_trainset()
         assert np.allclose(ts_true.descriptors, ts_loaded.descriptors)
         assert np.allclose(ts_true.shot_results, ts_loaded.shot_results)
