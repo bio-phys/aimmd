@@ -51,9 +51,8 @@ class Test_storage:
         assert np.allclose(ts_true.weights, ts_loaded2.weights)
 
     def test_base_model(self, tmp_path,
-                        oneout_rcmodel,
                         oneout_rcmodel_notrans,
-                        oneout_rcmodel_opstrans,
+                        twoout_rcmodel_notrans,
                         ):
         def assert_model_equal(true, test):
             for key, val in true.__dict__.items():
@@ -66,9 +65,8 @@ class Test_storage:
 
         fname = str(tmp_path / "test_store.h5")
         storage = arcd.Storage(fname=fname)
-        models = [oneout_rcmodel,
-                  oneout_rcmodel_notrans,
-                  oneout_rcmodel_opstrans,
+        models = [oneout_rcmodel_notrans,
+                  twoout_rcmodel_notrans,
                   ]
         # save the models
         for i, mod in enumerate(models):
