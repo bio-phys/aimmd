@@ -71,9 +71,9 @@ class RCModel(ABC):
     # NOTE: Everything here only makes it possible to collect TP densities
     # by attaching a TrajectoryDensityCollector, however for this feature
     # to have any effect we need to regularly update the density estimate!
-    # Updating the density estimate is done by the corresponding TrainingHook,
-    # and unless using the density is enabled there we will not waste
-    # computing power with unecessary updates of the density
+    # Updating the density estimate is done by the corresponding Hook,
+    # and unless using the density is enabled by attaching the hook, we will
+    # not waste computing power with unecessary updates of the density
     density_collection_n_bins = 10
 
     def __init__(self, descriptor_transform=None, cache_file=None):
