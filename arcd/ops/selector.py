@@ -39,14 +39,14 @@ class RCModelSelector(ShootingPointSelector):
                    'lorentzian': p_{sel}(x) ~ gamma**2
                                               / (gamma**2 + z_{sel}(x)**2)
     scale - float, 'softness' parameter of the selection distribution,
-            higher values result in a boader spread of SPs around the TSE,
+            higher values result in a broader spread of SPs around the TSE,
             1/alpha for 'gaussian' and gamma for 'lorentzian'
     density_adaptation - bool, whether we try to correct for imbalances in
                          the density of points on TPs to achieve a more uniform
                          SP density along the reaction coordinate,
                          NOTE: updating the density estimate needs to be
-                         enabled in the arcd.TrainingHook for this feature
-                         to have an effect
+                         enabled by adding the arcd.ops.DensityCollectionHook
+                         for this feature to have an effect
 
     Notes
     -----
@@ -83,9 +83,7 @@ class RCModelSelector(ShootingPointSelector):
                   density_adaptation=dct.get('density_adaptation', False)
                   )
         logger.warning('Restoring RCModelSelector without model.'
-                       + 'If used together with arcd.TrainingHook you can '
-                       + 'ignore this warning, otherwise please take care of '
-                       + 'resetting the model yourself.')
+                       + 'Please take care of resetting the model yourself.')
         return obj
 
     def to_dict(self):
