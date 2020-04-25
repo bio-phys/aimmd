@@ -92,8 +92,8 @@ class Test_storage:
                     test_dc = test.__dict__['density_collector']
                     for skey, sval in val.__dict__.items():
                         assert np.all(test_dc.__dict__[skey] == sval)
-            else:
-                assert np.all(test.__dict__[key] == val)
+                else:
+                    assert np.all(test.__dict__[key] == val)
 
         fname = str(tmp_path / "test_store.h5")
         storage = arcd.Storage(fname=fname)
