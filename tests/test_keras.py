@@ -35,7 +35,6 @@ else:
 
 import pytest
 import arcd
-import os
 import numpy as np
 import openpathsampling as paths
 from tensorflow.keras import optimizers
@@ -45,7 +44,7 @@ class Test_keras:
     @pytest.mark.parametrize("n_states", ['binomial', 'multinomial'])
     def test_save_load_model(self, tmp_path, n_states):
         p = tmp_path / 'Test_load_save_model.pckl'
-        fname = str(os.path.abspath(p))
+        fname = str(p)
 
         hidden_parms = [{'units_factor': 1,  # test units_fact key
                          'activation': 'elu',  # should be fixed to selu
@@ -104,7 +103,7 @@ class Test_keras:
         setup_dict = ops_toy_sim_setup
 
         hidden_parms = [{'units_factor': 1,  # test units_fact key
-                         'activation': 'elu',  # should be fixed to selu
+                         'activation': 'elu',  # should be changed to selu automatically
                          'use_bias': True,
                          'kernel_initializer': 'lecun_normal',
                          'bias_initializer': 'lecun_normal',
@@ -128,11 +127,11 @@ class Test_keras:
                                                ee_params={'lr_0': 1e-3,
                                                           'lr_min': 1e-4,
                                                           'epochs_per_train': 1,
-                                                          'interval': 3,
+                                                          'interval': 1,
                                                           'window': 100}
                                                )
         trainset = arcd.TrainSet(setup_dict['states'], setup_dict['descriptor_transform'])
-        trainhook = arcd.ops.TrainingHook(model, trainset)
+        trainhook = arcd.ops.TrainingHookLegacy(model, trainset)
         if save_trainset == 'recreate_trainset':
             # we simply change the name under which the trainset is saved
             # this should result in the new trainhook not finding the saved data
@@ -154,7 +153,7 @@ class Test_keras:
         sampler = paths.PathSampling(storage=storage, sample_set=initial_conditions, move_scheme=move_scheme)
         sampler.attach_hook(trainhook)
         # generate some steps
-        sampler.run(5)
+        sampler.run(10)
         # close the storage
         storage.sync_all()
         storage.close()
@@ -162,7 +161,7 @@ class Test_keras:
         load_storage = paths.Storage(fname, 'a')
         load_sampler = load_storage.pathsimulators[0]
         load_sampler.restart_at_step(load_storage.steps[-1])
-        load_trainhook = arcd.ops.TrainingHook(None, None)
+        load_trainhook = arcd.ops.TrainingHookLegacy(None, None)
         load_sampler.attach_hook(load_trainhook)
         load_sampler.run(1)
         # check that the two trainsets are the same

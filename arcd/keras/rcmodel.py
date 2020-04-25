@@ -15,8 +15,9 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
-import os
 import copy
+import os
+import h5py
 import numpy as np
 from abc import abstractmethod
 from tensorflow.keras import backend as K
@@ -31,25 +32,26 @@ logger = logging.getLogger(__name__)
 
 
 class KerasRCModel(RCModel):
-    """
-    Wraps a Keras model for use with arcd.
-    """
-    # need to have it here, such that we can get it without instantiating
-    save_nnet_suffix = '_keras.h5'
+    """Wraps a Keras model for use with arcd."""
 
-    def __init__(self, nnet, descriptor_transform=None):
+    # need to have it here, such that we can get it without instantiating
+    save_nnet_suffix = '_keras.h5'  # TODO: OSOLETE/OLD SAVING API
+
+    def __init__(self, nnet, descriptor_transform=None, cache_file=None):
         self.nnet = nnet
         self.log_train_decision = []
         self.log_train_loss = []
         self._count_train_hook = 0
         # need to call super __init__ last such that it can make use of
         # the properties and methods we implement here
-        super().__init__(descriptor_transform)
+        super().__init__(descriptor_transform=descriptor_transform,
+                         cache_file=cache_file)
 
     @property
     def n_out(self):
         return self.nnet.output_shape[1]
 
+    # TODO: OBSOLETE/OLD LOADING-SAVING API
     @classmethod
     def set_state(cls, state):
         obj = cls(nnet=state['nnet'])
@@ -84,6 +86,48 @@ class KerasRCModel(RCModel):
         super().save(fname, overwrite)
         # and restore the nnet such that self stays functional
         self.nnet = nnet
+
+    # NOTE: NEW LOADING-SAVING API
+    def object_for_pickle(self, group, overwrite=True, checkpoint=False):
+        try:
+            model_grp = group['KerasRCModel']
+        except KeyError:
+            # group does not exist yet, create it
+            model_grp = group.create_group("KerasRCModel")
+        else:
+            if overwrite:
+                # remove everything so we can let keras recreate from scratch
+                model_grp.clear()
+            else:
+                raise RuntimeError(
+                            "KerasRCModel group exists but overwrite=False."
+                                   )
+        # save NN
+        # NOTE: this is a dirty hack, tf checks if the file is a h5py.File
+        #       but it uses only methods of the h5py.Group, so we set the
+        #       class to File and reset to group after saving the model :)
+        model_grp.__class__ = h5py.File
+        self.nnet.save(model_grp, include_optimizer=True)
+        model_grp.__class__ = h5py.Group
+        # create return object which can be pickled, i.e. self without NN
+        state = self.__dict__.copy()
+        state["nnet"] = None
+        ret_obj = self.__class__.__new__(self.__class__)
+        ret_obj.__dict__.update(state)
+        # and call supers object_for_pickle in case there is something left
+        # in ret_obj.__dict__ that we can not pickle
+        return super(KerasRCModel,
+                     ret_obj).object_for_pickle(group, overwrite=overwrite,
+                                                checkpoint=checkpoint)
+
+    def complete_from_h5py_group(self, group):
+        model_grp = group["KerasRCModel"]
+        # NOTE: same hack as for saving: pretend it is a h5py.File to tensorflow
+        model_grp.__class__ = h5py.File
+        self.nnet = load_keras_model(model_grp)
+        model_grp.__class__ = h5py.Group
+        # see if there is something left to do for super
+        return super(KerasRCModel, self).complete_from_h5py_group(group)
 
     def _log_prob(self, descriptors):
         return self.nnet.predict(descriptors)
@@ -144,8 +188,9 @@ class EEScaleKerasRCModel(KerasRCModel):
     __doc__ += _train_decision_docs['EEscale']
 
     def __init__(self, nnet, descriptor_transform=None,
-                 ee_params=_train_decision_defaults["EEscale"]):
-        super().__init__(nnet, descriptor_transform)
+                 ee_params=_train_decision_defaults["EEscale"], cache_file=None):
+        super().__init__(nnet=nnet, descriptor_transform=descriptor_transform,
+                         cache_file=cache_file)
         # make it possible to pass only the altered values in dictionary
         ee_params_defaults = copy.deepcopy(_train_decision_defaults['EEscale'])
         ee_params_defaults.update(ee_params)
@@ -158,10 +203,10 @@ class EERandKerasRCModel(KerasRCModel):
     """Expected efficiency randomized KerasRCModel."""
     __doc__ += _train_decision_docs['EErand']
 
-    def __init__(self, nnet, optimizer,
-                 ee_params=_train_decision_defaults['EErand'],
-                 descriptor_transform=None, loss=None):
-        super().__init__(nnet, optimizer, descriptor_transform, loss)
+    def __init__(self, nnet, descriptor_transform=None,
+                 ee_params=_train_decision_defaults['EErand'], cache_file=None):
+        super().__init__(nnet=nnet, descriptor_transform=descriptor_transform,
+                         cache_file=cache_file)
         # make it possible to pass only the altered values in dictionary
         defaults = copy.deepcopy(_train_decision_defaults['EErand'])
         defaults.update(ee_params)

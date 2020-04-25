@@ -17,9 +17,9 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 import os
 import logging
 import numpy as np
-from openpathsampling.pathsimulators.hooks import PathSimulatorHook
-from openpathsampling.collectivevariable import CollectiveVariable
-from openpathsampling.volume import Volume
+from openpathsampling.beta.hooks import PathSimulatorHook
+from openpathsampling import CollectiveVariable
+from openpathsampling import Volume
 from .selector import RCModelSelector
 from ..base.rcmodel import RCModel
 from ..base.trainset import TrainSet
@@ -232,7 +232,7 @@ class TrainingHook(PathSimulatorHook):
 
     def _get_model_from_sim(self, sim):
         if sim.storage is not None:
-            spath = sim.storage.abspath
+            spath = sim.storage.filename
             sdir = os.path.dirname(spath)
             sname = os.path.basename(spath)
             content = os.listdir(sdir)
@@ -365,7 +365,7 @@ class TrainingHook(PathSimulatorHook):
         if sim.storage is not None:
             if step_number % self.save_model_interval == 0:
                 # save the model every save_model_interval MCSteps
-                spath = sim.storage.abspath
+                spath = sim.storage.filename
                 fname = (spath + self.save_model_suffix
                          + '_at_step{:d}'.format(step_number)
                          )
@@ -382,19 +382,19 @@ class TrainingHook(PathSimulatorHook):
                     if step_number - first == 0:
                         # first collection
                         tps, counts = get_tps(sim.storage, start=-first)
-                        dc.evaluate_density_on_trajectories(
+                        dc.add_density_for_trajectories(
                                             model=self.model,
                                             trajectories=tps,
                                             counts=counts
-                                                            )
+                                                        )
                     elif step_number % interval == 0:
                         # add only the last interval steps
                         tps, counts = get_tps(sim.storage, start=-interval)
-                        dc.evaluate_density_on_trajectories(
+                        dc.add_density_for_trajectories(
                                             model=self.model,
                                             trajectories=tps,
                                             counts=counts
-                                                            )
+                                                        )
                     # Note that this is an if because reevaluation should be
                     # independent of adding new TPs in the same MCStep
                     if step_number % recreate == 0:
@@ -404,7 +404,7 @@ class TrainingHook(PathSimulatorHook):
     def after_simulation(self, sim):
         """Will be called by OPS PathSimulator once after the simulation."""
         if sim.storage is not None:
-            spath = sim.storage.abspath
+            spath = sim.storage.filename
             # save without step-suffix to reload at simulation start
             fname = spath + self.save_model_suffix
             # we want to overwrite the last final model,

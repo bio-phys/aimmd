@@ -15,7 +15,6 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import tensorflow as tf
-from tensorflow.keras.models import Model
 from tensorflow.keras.utils import CustomObjectScope
 from tensorflow.keras import layers
 from tensorflow.keras import backend as K
@@ -213,14 +212,14 @@ def create_snn(ndim, hidden_parms, optimizer, n_states, multi_state=True):
         rc = layers.Dense(n_states,
                           activation='linear',
                           name='rc')(h)
-        model = Model(inputs=coords, outputs=rc)
+        model = tf.keras.models.Model(inputs=coords, outputs=rc)
         model.compile(optimizer=optimizer, loss=multinomial_loss)
     else:
         # we use a binomial output
         rc = layers.Dense(1,
                           activation='linear',
                           name='rc')(h)
-        model = Model(inputs=coords, outputs=rc)
+        model = tf.keras.models.Model(inputs=coords, outputs=rc)
         model.compile(optimizer=optimizer, loss=binomial_loss)
 
     return model
@@ -381,9 +380,9 @@ def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True,
         except KeyError:
             partial_norm = False
         # sort out which kind of norm layer we use
-        if learn_norm is '1for1':
+        if learn_norm == '1for1':
             norm_lay = custom_layers.InputNorm1for1(activation=act, **norm_lay_kwargs)
-        elif learn_norm is '1forAll':
+        elif learn_norm == '1forAll':
             norm_lay = custom_layers.InputNorm1forAll(activation=act, **norm_lay_kwargs)
         else:
             raise ValueError("'learn_norm' must be one of '1for1' or '1forAll'.")
@@ -413,7 +412,7 @@ def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True,
         rc = layers.Dense(n_states,
                           activation='linear',
                           name='rc')(h)
-        model = Model(inputs=coords, outputs=rc)
+        model = tf.keras.models.Model(inputs=coords, outputs=rc)
         model.compile(optimizer=optimizer, loss=multinomial_loss)
     else:
         # we use a binomial output
@@ -421,7 +420,7 @@ def create_resnet(ndim, hidden_parms, optimizer, n_states, multi_state=True,
         rc = layers.Dense(1,
                           activation='linear',
                           name='rc')(h)
-        model = Model(inputs=coords, outputs=rc)
+        model = tf.keras.models.Model(inputs=coords, outputs=rc)
         model.compile(optimizer=optimizer, loss=binomial_loss)
 
     return model

@@ -15,9 +15,16 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
+import sys
 
 
 logger = logging.getLogger(__name__)
+
+
+if sys.version_info.minor < 6:
+    # ModuleNotFoundError was introduced in python v3.6
+    # need to check only minor version since we require py3 anyway
+    ModuleNotFoundError = ImportError
 
 
 from .__about__ import (__version__, __title__, __author__,
@@ -25,6 +32,7 @@ from .__about__ import (__version__, __title__, __author__,
                         )
 from . import ops, coords, analysis
 from .base.trainset import TrainSet
+from .base.storage import Storage
 from .base.utils import (emulate_production_from_trainset,
                          emulate_production_from_storage,
                          load_model,
@@ -33,15 +41,15 @@ from .base.utils import (emulate_production_from_trainset,
 
 try:
     from . import pytorch
-except (ModuleNotFoundError, ImportError):
+except (ImportError, ModuleNotFoundError):
     logger.warning("Pytorch not available")
 
 try:
     from . import symreg
-except(ModuleNotFoundError, ImportError):
+except(ImportError, ModuleNotFoundError):
     logger.warning('dCGPy not found. SymReg will not be available.')
 
 try:
     from . import keras
-except (ModuleNotFoundError, ImportError):
+except (ImportError, ModuleNotFoundError):
     logger.warning("Tensorflow/Keras not available")

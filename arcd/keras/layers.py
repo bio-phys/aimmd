@@ -14,9 +14,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
+# Note: these are imported from tensorflow.python.keras (which is not equal to
+#       tf.keras), because we want to stay as close as possible to the tf.keras
+#       linear layer from which we derived these layers here
 from tensorflow.python.keras import layers
 from tensorflow.python.keras import activations
-#from tensorflow.python.keras import backend as K
+from tensorflow.python.keras import backend as K
 from tensorflow.python.keras import constraints
 from tensorflow.python.keras import initializers
 from tensorflow.python.keras import regularizers
@@ -68,7 +71,7 @@ class InputNorm1for1(layers.Layer):
             raise ValueError('The last dimension of the inputs to `Dense` '
                              'should be defined. Found `None`.')
         last_dim = tensor_shape.dimension_value(input_shape[-1])
-        
+
         self.kernel = self.add_weight('kernel',
                                       shape=[last_dim,],
                                       initializer=self.kernel_initializer,
@@ -159,7 +162,6 @@ class InputNorm1forAll(layers.Layer):
         if tensor_shape.dimension_value(input_shape[-1]) is None:
             raise ValueError('The last dimension of the inputs to `Dense` '
                              'should be defined. Found `None`.')
-        last_dim = tensor_shape.dimension_value(input_shape[-1])
 
         self.kernel = self.add_weight('kernel',
                                       shape=[1,],

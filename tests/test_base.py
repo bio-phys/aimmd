@@ -21,6 +21,7 @@ import arcd
 
 class Test_RCModel:
     def test_save_fix_load(self, oneout_rcmodel_notrans, tmp_path):
+        # NOTE: OLD LOADING/SAVING API
         p = tmp_path / 'Test_RCModel_test_save_fix_load'
         fname = str(p)
         model = oneout_rcmodel_notrans
@@ -96,6 +97,10 @@ class Test_RCModel:
                                         twoout_rcmodel_notrans):
         mod_oneout = oneout_rcmodel_notrans
         mod_twoout = twoout_rcmodel_notrans
+        # set minimum points for ee-factor calculation to zero, such that we
+        # can test easily
+        mod_oneout.min_points_ee_factor = 0
+        mod_twoout.min_points_ee_factor = 0
         # expect 1 TP from two times p(TP|SP) = 1/2
         # expect 0 TPs from two times p(TP|SP) = 0
         sps = [np.array([[200.]]), np.array([[0.]]),
@@ -128,3 +133,9 @@ class Test_RCModel:
         # window smaller than len(model.expected_p)
         assert np.allclose(1., mod_oneout.train_expected_efficiency_factor(ts2, len(sps)-1))
         assert np.allclose(1., mod_twoout.train_expected_efficiency_factor(ts2, len(sps)-1))
+        # set minimum number of points for ee-factor calculation to a large value
+        # to test that we get a 1 back for a 'too short' trainingset
+        mod_oneout.min_points_ee_factor = 100
+        mod_twoout.min_points_ee_factor = 100
+        assert np.allclose(1., mod_oneout.train_expected_efficiency_factor(ts1, len(sps)))
+        assert np.allclose(1., mod_twoout.train_expected_efficiency_factor(ts1, len(sps)))

@@ -52,9 +52,11 @@ try:
     import Cython
     from Cython.Build import cythonize
     Cython.Compiler.Options.get_directive_defaults()['language_level'] = 3
-except ImportError:
+except (ImportError, ModuleNotFoundError):
     # need cython to build symmetry functions
-    raise
+    raise ModuleNotFoundError("Cython not found. Cython is needed to build the"
+                              + " symmetry functions. Please install it and "
+                              + "then rerun this setup.")
 
 if LINETRACE:
     Cython.Compiler.Options.get_directive_defaults()['linetrace'] = True
@@ -64,9 +66,11 @@ if LINETRACE:
 # prepare Cython modules
 try:
     import numpy
-except ImportError:
+except (ImportError, ModuleNotFoundError):
     # need numpy to build symmetry functions
-    raise
+    raise ModuleNotFoundError("Numpy not found. Numpy is needed to build the"
+                              + " symmetry functions. Please install it and "
+                              + "then rerun this setup.")
 else:
     # include_dirs must contains the '.' for setup to search
     # all the subfolders of the project root
@@ -144,10 +148,9 @@ setup(
 
         # Specify the Python versions you support here. In particular, ensure
         # that you indicate whether you support Python 2, Python 3 or both.
-        'Programming Language :: Python :: 3.4',  # should work, not tested
-        'Programming Language :: Python :: 3.5',  # should work, not tested
-        'Programming Language :: Python :: 3.6',  # works, (tested)
-        'Programming Language :: Python :: 3.7',  # works, tested
+        'Programming Language :: Python :: 3.5',  # CI tested
+        'Programming Language :: Python :: 3.6',  # CI tested, prodcution use
+        'Programming Language :: Python :: 3.7',  # CI tested, production use
         # NOTE: python 2 will most likely not work as intended:
         # 1. we did not take care of integer division vs float division
         # 2. we use binary pickle formats for storing the trainers
