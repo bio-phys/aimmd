@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 # TODO: standardtize the outputs of the get_involved function(s)
-def get_involved(idx, pairs, triples, quadrouples):
+def get_involved(idx, pairs, triples, quadruples):
     """
     For a given index to internal coordinates array
     return the atom indices of the involved atoms
@@ -39,7 +39,7 @@ def get_involved(idx, pairs, triples, quadrouples):
             cos_sin = 'sin'
         else:
             cos_sin = 'cos'
-        return cos_sin, quadrouples[int(idx/2)]
+        return cos_sin, quadruples[int(idx/2)]
 
 
 def generate_indices(topology, source_idx, exclude_atom_names=None):
@@ -63,12 +63,12 @@ def generate_indices(topology, source_idx, exclude_atom_names=None):
 
     Returns
     -------
-    pairs, triples, quadrouples - tuple of lists of lists with index
-                                  pairs/triples/quadrouples
+    pairs, triples, quadruples - tuple of lists of lists with index
+                                  pairs/triples/quadruples
     """
     pairs = []
     triples = []
-    quadrouples = []
+    quadruples = []
     bfs_bondgraph = nx.bfs_tree(topology.to_bondgraph(),
                                 topology.atom(source_idx))
     succ_dict = dict(nx.bfs_successors(bfs_bondgraph,
@@ -108,20 +108,20 @@ def generate_indices(topology, source_idx, exclude_atom_names=None):
                                 # no exclusions, we just take the first one
                                 dihed_at = dihed_ats[0]
                             if dihed_at is not None:
-                                quadrouples.append([origin_at.index,
+                                quadruples.append([origin_at.index,
                                                     middle_at.index,
                                                     target_at.index,
                                                     dihed_at.index])
 
-    return pairs, triples, quadrouples
+    return pairs, triples, quadruples
 
 
 # TODO: do we want to scale the bondlength?
 # TODO: we would need to define l_0 and a sigma for every bond/ bond_type
-def ic(mdtra, pairs, triples, quadrouples):
+def ic(mdtra, pairs, triples, quadruples):
     """
     Calculates internal coordinate representation consisting of distances,
-    angles and dihedrals given by pairs, triples and quadrouples.
+    angles and dihedrals given by pairs, triples and quadruples.
 
     NOTE: Angular coordinates are 1/2*(cos(angle)+1) to capture the
     periodicity and scale to [0,1]. We make use of the symmerty here
@@ -134,13 +134,13 @@ def ic(mdtra, pairs, triples, quadrouples):
     ----------
     mdtra - :class:`mdtraj.Trajectory` object
     pairs, triples,
-    quadrouples     - lists of lists with index pairs/triples/quadrouples,
+    quadruples     - lists of lists with index pairs/triples/quadruples,
                       output of `ic_generate_idxs(topology, source_idx)`
 
     Returns
     -------
     internal_coords - np.array of internal coordinate values,
-                      shape = (n_frames, n_pairs + n_triples + n_quadrouples)
+                      shape = (n_frames, n_pairs + n_triples + n_quadruples)
     """
     import mdtraj as md
     import numpy as np
@@ -152,7 +152,7 @@ def ic(mdtra, pairs, triples, quadrouples):
     # it should be 0 or pi depending on sign
     # but at least cos(0) = cos(pi)
     angles = md.compute_angles(mdtra, triples)
-    diheds = md.compute_dihedrals(mdtra, quadrouples)
+    diheds = md.compute_dihedrals(mdtra, quadruples)
     if not np.all(np.isfinite(angles)):
         logger.warn('Used np.nan_to_num() on the angles because they were not finite.')
         angles = np.nan_to_num(angles)

@@ -51,7 +51,7 @@ def _get_git_version():
     return git_revision
 
 
-base_version = "0.6"
+base_version = "0.7"
 git_version = _get_git_version()
 if git_version is None:
     # no git installed
