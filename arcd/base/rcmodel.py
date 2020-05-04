@@ -420,7 +420,7 @@ class TrajectoryDensityCollector:
             self._create_h5py_cache(val, copy_from=self._cache)
             self._cache_file = val
         else:
-            # need to copty the in memory numpy cache to h5py
+            # need to copy the in memory numpy cache to h5py
             # get a ref to descriptors and counts
             descriptors = self._descriptors[:self._fill_pointer]
             counts = self._counts[:self._fill_pointer]
@@ -445,8 +445,14 @@ class TrajectoryDensityCollector:
         else:
             cache_file.copy(copy_from, traDC_cache_grp, name=id_str)
             self._cache = traDC_cache_grp[id_str]
-            self._descriptors = traDC_cache_grp[id_str + "/descriptors"]
-            self._counts = traDC_cache_grp[id_str + "/counts"]
+            if self._fill_pointer > 0:
+                # we can only copy if we already have something in the datasets
+                self._descriptors = traDC_cache_grp[id_str + "/descriptors"]
+                self._counts = traDC_cache_grp[id_str + "/counts"]
+            else:
+                # we set to None to create the datsets the first time we access
+                self._descriptors = None
+                self._counts = None
 
     def object_for_pickle(self, group, overwrite=True):
         if self._cache_file is None:
