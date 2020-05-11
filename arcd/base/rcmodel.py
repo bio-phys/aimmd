@@ -442,6 +442,15 @@ class TrajectoryDensityCollector:
                                                    )
         if copy_from is None:
             self._cache = traDC_cache_grp.create_group(id_str)
+        elif cache_file.mode == 'r':
+            # file open in read only mode
+            # TODO: for now we just make them available, any appending will fail
+            #       also it is not straightforward to change the cache file
+            logger.warn("arcd storage passed as denisty collector cache file "
+                        + "is open in read-only mode. "
+                        + "No appending will be possible.")
+            self._descriptors = copy_from["descriptors"]
+            self._counts = copy_from["counts"]
         else:
             cache_file.copy(copy_from, traDC_cache_grp, name=id_str)
             self._cache = traDC_cache_grp[id_str]
