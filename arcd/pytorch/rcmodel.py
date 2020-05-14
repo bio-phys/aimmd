@@ -175,6 +175,9 @@ class PytorchRCModel(RCModel):
                                                            )
             # move back to initial torch device
             self.nnet = self.nnet.to(self._device)
+            # need to reinitialize optimizer on correct device
+            self.optimizer = state['optimizer_class'](self.nnet.parameters())
+            self.optimizer.load_state_dict(state['optimizer'])
         ret_obj = self.__class__.__new__(self.__class__)
         ret_obj.__dict__.update(state)
         # and call supers object_for_pickle in case there is something left
@@ -478,6 +481,14 @@ class EnsemblePytorchRCModel(RCModel):
             # move back to initial torch device
             self.nnets = [net.to(dev)
                           for net, dev in zip(self.nnets, self._devices)]
+            # We need to reinstatiate the optimizers on the right devices again
+            self.optimizers = [
+                clas(nnet.parameters())
+                for clas, nnet in zip(state['optimizers_classes'], self.nnets)
+                               ]
+            for opt, s in zip(self.optimizers, state['optimizers']):
+                opt.load_state_dict(s)
+
         ret_obj = self.__class__.__new__(self.__class__)
         ret_obj.__dict__.update(state)
         # and call supers object_for_pickle in case there is something left
@@ -855,6 +866,15 @@ class MultiDomainPytorchRCModel(RCModel):
             # move back to initial devices
             self.pnets = [pn.to(d) for pn, d in zip(self.pnets, self._pdevices)]
             self.cnet = self.cnet.to(self._cdevice)
+            # reinitialize optimizers on correct devices
+            self.poptimizer = state['poptimizer_class'](
+                                            [{'params': pnet.parameters()}
+                                             for pnet in self.pnets]
+                                                        )
+            self.poptimizer.load_state_dict(state['poptimizer'])
+            self.coptimizer = state['coptimizer_class'](self.cnet.parameters())
+            self.coptimizer.load_state_dict(state['coptimizer'])
+
         ret_obj = self.__class__.__new__(self.__class__)
         ret_obj.__dict__.update(state)
         # and call supers object_for_pickle in case there is something left
@@ -862,6 +882,52 @@ class MultiDomainPytorchRCModel(RCModel):
         return super(MultiDomainPytorchRCModel,
                      ret_obj).object_for_pickle(group, overwrite=overwrite,
                                                 checkpoint=checkpoint)
+
+    def complete_from_h5py_group(self, group, pdevices=None, cdevice=None):
+        """
+        Restore working state.
+
+        Parameters:
+        -----------
+        group - h5py group with optional additional data
+        devices - None or list of torch devices, if given will overwrite the
+                  torch models restore locations, if None will try to restore
+                  to a device 'close' to where they were initially saved from
+        """
+        # instatiate and load the neural networks
+        pnets = [nc(**kwargs) for nc, kwargs in zip(self.pnets_class,
+                                                    self.pnets_call_kwargs)]
+        del self.pnets_class
+        del self.pnets_call_kwargs
+        if pdevices is None:
+            pdevices = [get_closest_pytorch_device(d) for d in self._pdevices]
+        self._pdevices = pdevices
+        for net, d, s in zip(pnets, pdevices, self.pnets):
+            net.load_state_dict(s)
+            net.to(d)
+        self.pnets = pnets
+        # now cnet
+        cnet = self.cnet_class(**self.cnet_call_kwargs)
+        del self.cnet_class
+        del self.cnet_call_kwargs
+        cnet.load_state_dict(self.cnet)
+        if cdevice is None:
+            cdevice = get_closest_pytorch_device(cdevice)
+        self._cdevice = cdevice
+        cnet.to(cdevice)
+        self.cnet = cnet
+        # now load the optimizers
+        poptimizer = self.poptimizer_class([{'params': pnet.parameters()}
+                                            for pnet in self.pnets]
+                                           )
+        poptimizer.load_state_dict(self.poptimizer)
+        self.poptimizer = poptimizer
+        coptimizer = self.coptimizer_class(self.cnet.parameters())
+        coptimizer.load_state_dict(self.coptimizer)
+        self.coptimizer = coptimizer
+        del self.poptimizer_class
+        del self.coptimizer_class
+        return super(MultiDomainPytorchRCModel, self).complete_from_h5py_group(group)
 
     # TODO: OBSOLETE: Old saving/loading API
     @classmethod
