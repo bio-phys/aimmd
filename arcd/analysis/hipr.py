@@ -71,15 +71,17 @@ class HIPRanalysis:
                       replacing the ith input descriptor with random noise,
                       while hipr_losses[-1] is the reference loss over the
                       unmodified TrainSet
+        hipr_losses_std - same shape as hipr_losses, array of standard
+                          deviations calculated over the n_redraw repetitions
 
         """
-        # last entry is for true loss
-        hipr_losses = np.zeros((self.trainset.descriptors.shape[1] + 1,))
-        maxes = np.max(self.trainset.descriptors, axis=0)
-        mins = np.min(self.trainset.descriptors, axis=0)
         if n_redraw is None:
             n_redraw = self.n_redraw
-        for _ in range(n_redraw):
+        # last entry is for true loss
+        hipr_losses = np.zeros((n_redraw, self.trainset.descriptors.shape[1] + 1))
+        maxes = np.max(self.trainset.descriptors, axis=0)
+        mins = np.min(self.trainset.descriptors, axis=0)
+        for draw_num in range(n_redraw):
             for i in range(len(maxes)):
                 descriptors = self.trainset.descriptors.copy()
                 descriptors[:, i] = ((maxes[i] - mins[i])
@@ -93,14 +95,18 @@ class HIPRanalysis:
                        shot_results=self.trainset.shot_results,
                        weights=self.trainset.weights
                               )
-                hipr_losses[i] += self.model.test_loss(ts, **self.call_kwargs)
+                hipr_losses[draw_num, i] = self.model.test_loss(ts,
+                                                                **self.call_kwargs,
+                                                                )
         # take the mean
-        hipr_losses /= n_redraw
+        hipr_losses_mean = np.sum(hipr_losses, axis=0) / n_redraw
         # and add reference loss
-        hipr_losses[-1] = self.model.test_loss(self.trainset,
-                                               **self.call_kwargs)
-        self.hipr_losses = hipr_losses
-        return hipr_losses
+        hipr_losses_mean[-1] = self.model.test_loss(self.trainset,
+                                                    **self.call_kwargs)
+        hipr_losses_std = np.std(hipr_losses, axis=0)
+        self.hipr_losses = hipr_losses_mean
+        self.hipr_losses_std = hipr_losses_std
+        return hipr_losses, hipr_losses_std
 
     def do_hipr_plus(self, n_redraw=None):
         """
@@ -128,14 +134,16 @@ class HIPRanalysis:
                            suffered by permutating the ith input descriptor,
                            while hipr_losses[-1] is the reference loss over the
                            unmodified TrainSet
+        hipr_losses_plus_std - same shape as hipr_losses, array of standard
+                               deviations calculated over the n_redraw repetitions
 
         """
-        # last entry is for true loss
-        hipr_losses_plus = np.zeros((self.trainset.descriptors.shape[1] + 1,))
         if n_redraw is None:
             n_redraw = self.n_redraw
+        # last entry is for true loss
+        hipr_losses_plus = np.zeros((n_redraw, self.trainset.descriptors.shape[1] + 1))
         n_dim = self.trainset.descriptors.shape[1]
-        for _ in range(n_redraw):
+        for draw_num in range(n_redraw):
             for i in range(n_dim):
                 descriptors = self.trainset.descriptors.copy()
                 permut_idxs = np.random.permutation(len(self.trainset))
@@ -147,17 +155,19 @@ class HIPRanalysis:
                        shot_results=self.trainset.shot_results,
                        weights=self.trainset.weights
                               )
-                hipr_losses_plus[i] += self.model.test_loss(ts,
-                                                            **self.call_kwargs
-                                                            )
+                hipr_losses_plus[draw_num, i] = self.model.test_loss(ts,
+                                                                     **self.call_kwargs,
+                                                                     )
         # take the mean
-        hipr_losses_plus /= n_redraw
+        hipr_losses_plus_mean = np.sum(hipr_losses_plus, axis=0) / n_redraw
         # and add reference loss
         hipr_losses_plus[-1] = self.model.test_loss(self.trainset,
                                                     **self.call_kwargs
                                                     )
-        self.hipr_losses_plus = hipr_losses_plus
-        return hipr_losses_plus
+        hipr_losses_plus_std = np.std(hipr_losses_plus, axis=0)
+        self.hipr_losses_plus_std = hipr_losses_plus_std
+        self.hipr_losses_plus = hipr_losses_plus_mean
+        return hipr_losses_plus_mean, hipr_losses_plus_std
 
     def do_hipr_plus_correlations(self, indices, n_redraw=None):
         """
