@@ -106,7 +106,7 @@ class HIPRanalysis:
         hipr_losses_std = np.std(hipr_losses, axis=0)
         self.hipr_losses = hipr_losses_mean
         self.hipr_losses_std = hipr_losses_std
-        return hipr_losses, hipr_losses_std
+        return hipr_losses_mean, hipr_losses_std
 
     def do_hipr_plus(self, n_redraw=None):
         """
@@ -161,9 +161,9 @@ class HIPRanalysis:
         # take the mean
         hipr_losses_plus_mean = np.sum(hipr_losses_plus, axis=0) / n_redraw
         # and add reference loss
-        hipr_losses_plus[-1] = self.model.test_loss(self.trainset,
-                                                    **self.call_kwargs
-                                                    )
+        hipr_losses_plus_mean[-1] = self.model.test_loss(self.trainset,
+                                                         **self.call_kwargs
+                                                         )
         hipr_losses_plus_std = np.std(hipr_losses_plus, axis=0)
         self.hipr_losses_plus_std = hipr_losses_plus_std
         self.hipr_losses_plus = hipr_losses_plus_mean
