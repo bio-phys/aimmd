@@ -407,7 +407,7 @@ class TrajectoryDensityCollector:
     @property
     def cached(self):
         """Return True if we cache the descriptors on file."""
-        return (self._cache is not None)
+        return (self._cache_file is not None)
 
     @property
     def cache_file(self):
@@ -426,6 +426,7 @@ class TrajectoryDensityCollector:
             counts = self._counts[:self._fill_pointer]
             # create cache, also replaces self._descriptors
             self._create_h5py_cache(val)
+            self._cache_file = val
             self._fill_pointer = 0  # reset fill pointer so we can use append
             self.append(tra_descriptors=descriptors, multiplicity=counts)
 
@@ -433,35 +434,44 @@ class TrajectoryDensityCollector:
         # the next line looks weird, but ensures the user can pass either
         # arcd storages or h5py files directly
         cache_file = cache_file.file
-        id_str = str(id(self))
-        # we should keep the path to the cache at a central location
-        # and ONLY ONCE, so it is probably best to have them defined in
-        # storage.py (?) as constants and import them from there
-        traDC_cache_grp = cache_file.require_group(
-                                        Storage.h5py_path_dict["tra_dc_cache"]
-                                                   )
-        if copy_from is None:
-            self._cache = traDC_cache_grp.create_group(id_str)
-        elif cache_file.mode == 'r':
+        if cache_file.mode == 'r':
             # file open in read only mode
-            # TODO: for now we just make them available, any appending will fail
-            #       also it is not straightforward to change the cache file
-            logger.warn("arcd storage passed as denisty collector cache file "
+            # TODO(?): for now we just make them available, any appending will fail
+            #          we can change the cachefile as self.cache_file = new_file
+            logger.warn("arcd storage passed as density collector cache file "
                         + "is open in read-only mode. "
                         + "No appending will be possible.")
-            self._descriptors = copy_from["descriptors"]
-            self._counts = copy_from["counts"]
+            # copy_from can be None, but we don't care since we check
+            # self._fill_pointer every time before trying to copy
+            # (if nothing is there we don't try to copy)
+            self._cache = copy_from
         else:
-            cache_file.copy(copy_from, traDC_cache_grp, name=id_str)
-            self._cache = traDC_cache_grp[id_str]
-            if self._fill_pointer > 0:
-                # we can only copy if we already have something in the datasets
-                self._descriptors = traDC_cache_grp[id_str + "/descriptors"]
-                self._counts = traDC_cache_grp[id_str + "/counts"]
+            # file open in write/append modes: copy from storage to cache area
+            id_str = str(id(self))
+            # we keep the path to the cache at a central location
+            # and ONLY ONCE, so it is probably best to have them defined in
+            # storage.py (?) as constants and import them from there
+            traDC_cache_grp = cache_file.require_group(
+                                        Storage.h5py_path_dict["tra_dc_cache"]
+                                                       )
+            if copy_from is None:
+                # nothing to copy, create empty group
+                self._cache = traDC_cache_grp.create_group(id_str)
             else:
-                # we set to None to create the datsets the first time we access
-                self._descriptors = None
-                self._counts = None
+                # copy saved stuff to cache while creating
+                cache_file.copy(copy_from, traDC_cache_grp, name=id_str)
+                self._cache = traDC_cache_grp[id_str]
+        # same for all file modes
+        if self._fill_pointer > 0:
+            # we can only access if we already have something in the datasets
+            # (since we create them on first append)
+            self._descriptors = self._cache["descriptors"]
+            self._counts = self._cache["counts"]
+        else:
+            # we set to None to (try to) create the datsets the first time we access
+            # creation will fail for read-only arcd storages
+            self._descriptors = None
+            self._counts = None
 
     def object_for_pickle(self, group, overwrite=True):
         if self._cache_file is None:
