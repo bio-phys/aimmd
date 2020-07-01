@@ -778,8 +778,9 @@ class MultiDomainPytorchRCModel(RCModel):
                  by Wu + Tegmark (arXiv:1810.10525)
     """
     def __init__(self, pnets, cnet, poptimizer, coptimizer,
-                 descriptor_transform=None, gamma=-1, loss=None):
-        # pnets = list of predicting newtworks
+                 descriptor_transform=None, gamma=-1, loss=None,
+                 one_hot_classify=False):
+        # pnets = list of predicting networks
         # poptimizer = optimizer for prediction networks
         # cnet = classifier deciding which network to take
         # coptimizer optimizer for classification networks
@@ -789,6 +790,11 @@ class MultiDomainPytorchRCModel(RCModel):
         self.poptimizer = poptimizer
         self.coptimizer = coptimizer
         self.gamma = gamma
+        # TODO: make this a property such that we can not (re-) set it during object livetime?
+        # TODO: would this prevent users from doing stupid stuff? or does it not matter anyways because
+        # TODO: we also change the classification during trainign anyways?
+        # TODO: I think it does not matter...(?)
+        self.one_hot_classify = one_hot_classify
         self.log_train_decision = []
         self.log_train_loss = []
         self.log_ctrain_decision = []
@@ -1080,7 +1086,7 @@ class MultiDomainPytorchRCModel(RCModel):
         Note that batch_size is ignored for loss='L_pred'.
 
         """
-        if loss is 'L_pred':
+        if loss == 'L_pred':
             return self._test_loss_pred(trainset)
         elif 'L_mod' in loss:
             mod_num = int(loss.lstrip('L_mod'))
@@ -1088,9 +1094,9 @@ class MultiDomainPytorchRCModel(RCModel):
                 raise ValueError('Can only calculate "L_mod" for a model index'
                                  + ' that is smaller than len(self.pnets).')
             return self._test_loss_pnets(trainset, batch_size)[mod_num]
-        elif loss is 'L_gamma':
+        elif loss == 'L_gamma':
             return self._test_loss_pnets(trainset, batch_size)[-1]
-        elif loss is 'L_class':
+        elif loss == 'L_class':
             return self._test_loss_cnet(trainset, batch_size)
         else:
             raise ValueError("'loss' must be one of 'L_pred', 'L_mod{:d}', "
@@ -1416,6 +1422,11 @@ class MultiDomainPytorchRCModel(RCModel):
 
         # get the probabilities for each model from classifier
         p_c = self._classify(descriptors)  # returns p_c on self._cdevice
+        if self.one_hot_classify:
+            # TODO: can we do this smarter?
+            max_idxs = p_c.argmax(dim=1)
+            p_c = torch.zeros_like(p_c)
+            p_c[torch.arange(max_idxs.shape[0]), max_idxs] = 1
         p_c = p_c.cpu().numpy()
         self.pnets = [pn.eval() for pn in self.pnets]  # pnets to evaluation
         # now committement probabilities
@@ -1498,9 +1509,11 @@ class EEMDPytorchRCModel(MultiDomainPytorchRCModel):
                  #               'epochs_per_train': 5,
                  #               'interval': 3,
                  #               'max_interval': 20},
-                 descriptor_transform=None, loss=None):
+                 descriptor_transform=None, loss=None,
+                 one_hot_classify=False):
         super().__init__(pnets, cnet, poptimizer, coptimizer,
-                         descriptor_transform, gamma, loss)
+                         descriptor_transform, gamma, loss,
+                         one_hot_classify)
         # make it possible to pass only the altered values in dictionary
         ee_params_defaults = {'lr_0': 1e-3,
                               'lr_min': 1e-4,
