@@ -199,6 +199,8 @@ class H5pytoBytesStream:
         # do not catch any exceptions
         pass
 
+    # TODO/FIXME: this is not used at all..?!
+    # TODO: replace it with seek and tell if anything, don't need truncate
     @property
     def readpointer(self):
         return self._readpointer
