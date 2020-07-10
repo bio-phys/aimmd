@@ -23,6 +23,9 @@ from ..base.rcmodel import RCModel
 from ..base.rcmodel_train_decision import (_train_decision_funcs,
                                            _train_decision_defaults,
                                            _train_decision_docs)
+# TODO: Buffered version or non-buffered version?
+from ..base.storage import (BytesStreamtoH5py, BytesStreamtoH5pyBuffered,
+                            H5pytoBytesStream)
 from .utils import get_closest_pytorch_device, optimizer_state_to_device
 
 
@@ -160,24 +163,51 @@ class PytorchRCModel(RCModel):
                      the pytorch device as is (faster) or change to CPU before
                      saving (better portability)
         """
-        if not checkpoint:
-            # move to CPU before saving
-            self.nnet = self.nnet.cpu()
+        # TODO/FIXME: I think we can ignore the device and checkpoint-stuff
+        # TODO/FIXME: torch load does this all for us, i.e. it will do CPU
+        #              if the original device is not available
+        #if not checkpoint:
+        #    # move to CPU before saving
+        #    self.nnet = self.nnet.cpu()
+        
         state = self.__dict__.copy()
         state['nnet_class'] = self.nnet.__class__
         state['optimizer_class'] = self.optimizer.__class__
         state['nnet_call_kwargs'] = self.nnet.call_kwargs
-        state['nnet'] = self.nnet.state_dict()
-        state['optimizer'] = self.optimizer.state_dict()
-        if not checkpoint:
-            state['optimizer'] = optimizer_state_to_device(state['optimizer'],
-                                                           torch.device('cpu'),
-                                                           )
-            # move back to initial torch device
-            self.nnet = self.nnet.to(self._device)
-            # need to reinitialize optimizer on correct device
-            self.optimizer = state['optimizer_class'](self.nnet.parameters())
-            self.optimizer.load_state_dict(state['optimizer'])
+        # we set them to None because we know to load them from h5py
+        state['nnet'] = None
+        state['optimizer'] = None
+        if (not overwrite) and ('nnet' in group):
+            # make sure we only overwrite if we want to
+            raise RuntimeError("Model already exists but overwrite=False.")
+        # we can just require the dsets, if they exist it is ok to overwrite
+        nnet_dset = group.require_dataset('nnet', dtype=np.uint8,
+                                          maxshape=(None,), shape=(0,),
+                                          chunks=True,
+                                         )
+        optim_dset = group.require_dataset('optim', dtype=np.uint8,
+                                           maxshape=(None,), shape=(0,),
+                                           chunks=True,
+                                          )
+        nnet_state = self.nnet.state_dict()
+        optim_state = self.optimizer.state_dict()
+        
+        #if not checkpoint:
+        #    optim_state = optimizer_state_to_device(optim_state,
+        #                                            torch.device('cpu'),
+        #                                            )
+        #    # move back to initial torch device
+        #    self.nnet = self.nnet.to(self._device)
+        #    # need to reinitialize optimizer on correct device
+        #    self.optimizer = state['optimizer_class'](self.nnet.parameters())
+        #    self.optimizer.load_state_dict(optim_state)
+        
+        # save nnet and optimizer to the h5py group
+        # TODO: unbuffered for now: do we want buffer? which size?
+        with BytesStreamtoH5py(nnet_dset) as stream_file:
+            torch.save(nnet_state, stream_file)
+        with BytesStreamtoH5py(optim_dset) as stream_file:
+            torch.save(optim_state, stream_file)
         ret_obj = self.__class__.__new__(self.__class__)
         ret_obj.__dict__.update(state)
         # and call supers object_for_pickle in case there is something left
@@ -197,21 +227,25 @@ class PytorchRCModel(RCModel):
                  restore location, if None will try to restore to a device
                  'close' to where it was saved from
         """
-        # instatiate and load the neural network
-        nnet = self.nnet_class(**self.nnet_call_kwargs)
-        nnet.load_state_dict(self.nnet)
-        del self.nnet_class
-        del self.nnet_call_kwargs
         if device is None:
             device = get_closest_pytorch_device(self._device)
-        self.nnet = nnet.to(device)
+        # instatiate and load the neural network
+        nnet = self.nnet_class(**self.nnet_call_kwargs)
+        with H5pytoBytesStream(group['nnet']) as stream_file:
+            nnet_state = torch.load(stream_file, map_location=device)
+        nnet.load_state_dict(nnet_state)
+        del self.nnet_class
+        del self.nnet_call_kwargs
+        self.nnet = nnet.to(device)  # should be a no-op?!
         # now load the optimizer
         # first initialize with defaults
         optimizer = self.optimizer_class(self.nnet.parameters())
         del self.optimizer_class
-        # TODO: do we need this?: put optimizer state on correct device
-        opt_sdict = optimizer_state_to_device(self.optimizer, device)
-        optimizer.load_state_dict(opt_sdict)
+        with H5pytoBytesStream(group['optim']) as stream_file:
+            optim_state = torch.load(stream_file, map_location=device)
+        # i think we do not need this?: put optimizer state on correct device
+        #opt_sdict = optimizer_state_to_device(self.optimizer, device)
+        optimizer.load_state_dict(optim_state)
         self.optimizer = optimizer
         return super(PytorchRCModel, self).complete_from_h5py_group(group)
 

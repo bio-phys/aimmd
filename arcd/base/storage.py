@@ -16,6 +16,7 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
 import os
+import io
 import pickle
 import collections.abc
 import h5py
@@ -61,6 +62,10 @@ class BytesStreamtoH5py:
         # do not catch any exceptions
         pass
 
+    def flush(self):
+        # no write buffer, so nothing to do
+        pass
+
     def write(self, byts):
         old_len = len(self.dataset)
         add_len = len(byts)
@@ -75,7 +80,7 @@ class BytesStreamtoH5pyBuffered:
     """
     'Translate' from python bytes objects to arrays of uint8. Buffered Version.
 
-    Implement (as required by pickle):
+    Implement (as required e.g. by pickle):
         .write(bytes object) -> int:len(bytes object)
     NOTE: TRUNCATES the dataset to zero length prior to writing.
     """
@@ -111,6 +116,10 @@ class BytesStreamtoH5pyBuffered:
     def __exit__(self, exc_type, exc_value, traceback):
         # always write buffer to file
         self.close()
+
+    def flush(self):
+        # flush write buffers
+        self._buffer_to_dset()
 
     def _buffer_to_dset(self):
         if self._buffpointer > 0:
@@ -199,16 +208,24 @@ class H5pytoBytesStream:
         # do not catch any exceptions
         pass
 
-    # TODO/FIXME: this is not used at all..?!
-    # TODO: replace it with seek and tell if anything, don't need truncate
-    @property
-    def readpointer(self):
-        return self._readpointer
-
-    @readpointer.setter
-    def readpointer(self, val):
-        self._readpointer = int(val)
+    def seek(self, offset, whence=io.SEEK_SET):
+        if whence == 0:
+            # start of the stream (the default);
+            # offset should be zero or positive
+            self._readpointer = offset
+        elif whence == 1:
+            # current stream position; offset may be negative
+            self._readpointer += offset
+        elif whence == 2:
+            # end of the stream; offset is usually negative
+            self._readpointer = self._dset_len + offset
+        else:
+            raise ValueError("whence must be 0, 1 or 2.")
+        # now fill the buffer
         self._fill_data()
+
+    def tell(self):
+        return self._readpointer
 
     def _fill_data(self):
         if self._dset_len - self._readpointer <= self.buffsize:
