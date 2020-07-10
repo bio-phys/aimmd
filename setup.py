@@ -180,7 +180,7 @@ setup(
         'networkx',
         #'dcgpy',
         'sympy',  # only used for dcgpy atm
-        'h5py',  # for loading and saving of keras models
+        'h5py',  # for asrcd.Storage and for old loading/saving of keras models
     ],
 
     # List additional groups of dependencies here (e.g. development
@@ -189,6 +189,10 @@ setup(
     # $ pip install -e .[test]
     extras_require={
         'test': ['pytest'],
-        'dev': ['coverage', 'pytest', 'pytest-cov'],
+        'dev': ['coverage', 'pytest', 'pytest-cov',
+                'flake8', 'flake8-alfred', 'flake8-comprehensions',
+                'flake8-docstrings', 'flake8-imports', 'flake8-logging-format',
+                'flake8-polyfill', 'flake8-todo'
+                ],
     }
 )
