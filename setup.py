@@ -191,8 +191,8 @@ setup(
         'test': ['pytest'],
         'dev': ['coverage', 'pytest', 'pytest-cov',
                 'flake8', 'flake8-alfred', 'flake8-comprehensions',
-                'flake8-docstrings', 'flake8-imports', 'flake8-logging-format',
-                'flake8-polyfill', 'flake8-todo'
+                'flake8-docstrings', 'flake8-if-statements',
+                'flake8-logging-format', 'flake8-todo'
                 ],
     }
 )

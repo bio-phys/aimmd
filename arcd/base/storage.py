@@ -394,9 +394,8 @@ class ArcdObjectShelf(MutableObjectShelf):
 class RCModelRack(collections.abc.MutableMapping):
     """Dictionary like interface to RCModels stored in an arcd storage file."""
 
-    def __init__(self, rcmodel_group, store_checkpoints=False):
+    def __init__(self, rcmodel_group):
         self._group = rcmodel_group
-        self.store_checkpoints = store_checkpoints
 
     def __getitem__(self, key):
         return ArcdObjectShelf(self._group[key]).load()
@@ -410,10 +409,7 @@ class RCModelRack(collections.abc.MutableMapping):
         except KeyError:
             pass
         group = self._group.require_group(key)
-        ArcdObjectShelf(group).save(obj=value,
-                                    overwrite=True,
-                                    checkpoint=self.store_checkpoints,
-                                    )
+        ArcdObjectShelf(group).save(obj=value, overwrite=True)
 
     def __delitem__(self, key):
         del self._group[key]
@@ -439,14 +435,18 @@ class Storage:
     h5py_path_dict["cache"] = h5py_path_dict["level0"] + "/cache"  # cache
     h5py_path_dict.update({  # these depend on cache and level0 to be defined
         "rcmodel_store": h5py_path_dict["level0"] + "/RCModels",
-        "rcmodel_chkpts": h5py_path_dict["level0"] + "/RCModel_checkpoints",
         "trainset_store": h5py_path_dict["level0"] + "/TrainSet",
         "tra_dc_cache": h5py_path_dict["cache"] + "/TrajectoryDensityCollectors",
                            })
     # NOTE: update this below if we introduce breaking API changes!
     # if the current arcd version is higher than the compatibility_version
     # we expect to be able to read the storage
-    _compatibility_version = parse_version("0.7")  # introduced h5py storage
+    # if the storages version is smaller than the current compatibility version
+    # we expect to NOT be able to read the storage
+    ## introduced h5py storage
+    #_compatibility_version = parse_version("0.7")
+    ## removed checkpoints, changed the way we store pytorch models
+    _compatibility_version = parse_version("0.8")
 
     # TODO: should we require descriptor_dim as input on creation?
     #       to make clear that you can not change it?!
@@ -478,28 +478,28 @@ class Storage:
                                                            )
         else:
             store_version = parse_version(
-                                    str(self._store.attrs["storage_version"])
+                            self._store.attrs["storage_version"].decode("ASCII")
                                           )
-            if self._compatibility_version < store_version:
+            if parse_version(__about__.base_version) < store_version:
                 raise RuntimeError(
                         "The storage file was written with a newer version of "
                         + "arcd than the current one. You need at least arcd "
-                        + "v{:s}".format(str(store_version)) + " to open it.")
+                        + f"v{str(store_version)}" + " to open it.")
+            elif self._compatibility_version > store_version:
+                raise RuntimeError(
+                        "The storage file was written with an older version of"
+                        + " arcd than the current one. Try installing arcd "
+                        + f"v{str(store_version)}" + " to open it.")
+
         rcm_grp = self.file.require_group(self.h5py_path_dict["rcmodel_store"])
-        self.rcmodels = RCModelRack(rcmodel_group=rcm_grp,
-                                    store_checkpoints=False,
-                                    )
-        chkpts_grp = self.file.require_group(self.h5py_path_dict["rcmodel_chkpts"])
-        self.rcmodel_checkpoints = RCModelRack(rcmodel_group=chkpts_grp,
-                                               store_checkpoints=True,
-                                               )
+        self.rcmodels = RCModelRack(rcmodel_group=rcm_grp)
         self._empty_cache()  # should be empty, but to be sure
 
     # make possible to use in with statements
     def __enter__(self):
         return self
 
-    # and automagically close wwhen exiting the with
+    # and automagically close when exiting the with
     def __exit__(self):
         self.close()
 
