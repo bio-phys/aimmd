@@ -148,10 +148,11 @@ setup(
 
         # Specify the Python versions you support here. In particular, ensure
         # that you indicate whether you support Python 2, Python 3 or both.
-        'Programming Language :: Python :: 3.5',  # CI tested
-        'Programming Language :: Python :: 3.6',  # CI tested, prodcution use
-        'Programming Language :: Python :: 3.7',  # CI tested, production use
-        # NOTE: python 2 will most likely not work as intended:
+        'Programming Language :: Python :: 3.6',  # CI tested
+        'Programming Language :: Python :: 3.7',  # CI tested
+        'Programming Language :: Python :: 3.8',  # CI tested
+        # NOTE: we use f-strings and therfore require python >= 3.6
+        # NOTE: even without f-strings python 2 will not work as intended:
         # 1. we did not take care of integer division vs float division
         # 2. we use binary pickle formats for storing the trainers
         # 3. we use cython with language_level=3
