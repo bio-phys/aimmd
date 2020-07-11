@@ -14,10 +14,10 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
+import pytest
 # TODO/BUG: weird stuff: if not importing mdtraj before RCModel
 # the tests segfault....!?
 import mdtraj
-import pytest
 import numpy as np
 import openpathsampling as paths
 import openpathsampling.engines.toy as toys
@@ -76,7 +76,7 @@ def ops_toy_sim_setup():
     stateA = paths.CVDefinedVolume(opA, 0.0, 0.15).named('StateA')
     stateB = paths.CVDefinedVolume(opB, 0.0, 0.15).named('StateB')
     descriptor_transform = paths.FunctionCV('descriptor_transform', lambda s: s.coordinates[0], cv_wrap_numpy_array=True)
-    initAB = paths.Trajectory([toys.Snapshot(coordinates=np.array([[-0.75 + i/700., -0.5 + i/1000] + [0. for _ in range(n_harmonics)]]), 
+    initAB = paths.Trajectory([toys.Snapshot(coordinates=np.array([[-0.75 + i/700., -0.5 + i/1000] + [0. for _ in range(n_harmonics)]]),
                                              velocities=np.array([[1.0, 0.0] + [0. for _ in range(n_harmonics)]]),
                                              engine=toy_eng
                                              )

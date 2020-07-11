@@ -14,8 +14,10 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
+import pytest
+
+tf = pytest.importorskip("tensorflow")
 # we use this to be able to run tests when GPU in use
-import tensorflow as tf
 if tf.version.VERSION.startswith('2.'):
     # tell tf to use only the GPU mem it needs
     gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -33,7 +35,6 @@ else:
     from tensorflow.keras import backend as K
     K.set_session(sess)
 
-import pytest
 import arcd
 import numpy as np
 import openpathsampling as paths

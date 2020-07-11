@@ -18,7 +18,9 @@ import pytest
 import arcd
 import numpy as np
 import openpathsampling as paths
-import torch
+
+
+torch = pytest.importorskip("torch")
 
 
 class Test_pytorch:
