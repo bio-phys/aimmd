@@ -24,6 +24,7 @@ torch = pytest.importorskip("torch")
 
 
 class Test_pytorch:
+    @pytest.mark.old
     @pytest.mark.parametrize("n_states,model_type", [('binomial', 'EEMultiDomain'), ('multinomial', 'EEMultiDomain'),
                                                      ('binomial', 'EESingleDomain'), ('multinomial', 'EESingleDomain')]
                              )
@@ -105,7 +106,8 @@ class Test_pytorch:
         assert np.allclose(predictions_before, predictions_after)
         assert np.allclose(test_loss_before, test_loss_after)
 
-
+    @pytest.mark.old
+    @pytest.mark.slow
     @pytest.mark.parametrize("save_trainset, model_type",
                              [('load_trainset', 'EESingleDomain'),
                               ('recreate_trainset', 'EESingleDomain'),

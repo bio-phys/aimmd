@@ -42,6 +42,7 @@ from tensorflow.keras import optimizers
 
 
 class Test_keras:
+    @pytest.mark.old
     @pytest.mark.parametrize("n_states", ['binomial', 'multinomial'])
     def test_save_load_model(self, tmp_path, n_states):
         p = tmp_path / 'Test_load_save_model.pckl'
@@ -97,6 +98,8 @@ class Test_keras:
         assert np.allclose(predictions_before, predictions_after)
         assert np.allclose(test_loss_before, test_loss_after)
 
+    @pytest.mark.old
+    @pytest.mark.slow
     @pytest.mark.parametrize("save_trainset", ['load_trainset', 'recreate_trainset'])
     def test_toy_sim_snn(self, tmp_path, ops_toy_sim_setup, save_trainset):
         p = tmp_path / 'Test_OPS_test_toy_sim_snn.nc'

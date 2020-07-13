@@ -26,6 +26,43 @@ from functools import reduce
 from arcd.base.rcmodel import RCModel
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--runslow", action="store_true", default=True, help="run slow tests"
+    )
+    parser.addoption(
+        "--runold", action="store_true", default=False,
+        help="run tests for deprecated code"
+    )
+    parser.addoption(
+        "--runall", action="store_true", default=False, help="run all tests"
+    )
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "slow: mark test as slow to run")
+    config.addinivalue_line("markers", "old: mark test for deprecated code")
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--runall"):
+        # --runall given in cli: do not skip any tests
+        return
+    old = False
+    skip_old = pytest.mark.skip(reason="need --runold option to run")
+    slow = False
+    skip_slow = pytest.mark.skip(reason="need --runslow option to run")
+    if config.getoption("--runslow"):
+        slow = True
+    if config.getoption("--runold"):
+        old = True
+    for item in items:
+        if not slow and "slow" in item.keywords:
+            item.add_marker(skip_slow)
+        if not old and "old" in item.keywords:
+            item.add_marker(skip_old)
+
+
 @pytest.fixture
 def ops_toy_sim_setup():
     # construct PES
@@ -127,6 +164,7 @@ def twoout_rcmodel_notrans():
     return TwoOutRCModel(None)
 
 
+# Test helper classes
 class OneOutRCModel(RCModel):
     def __init__(self, transform=None):
         # work on numpy arrays directly, but test the use of transform

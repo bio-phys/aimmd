@@ -17,16 +17,16 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 
 def main(ctx):
   return [
-    make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
-    make_pip_pipeline(os="linux", arch="amd64", py_version="3.7"),
-    make_pip_pipeline(os="linux", arch="amd64", py_version="3.8"),
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.6", runall=True),
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.7", runall=True),
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.8", runall=True),
     make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
     make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
     # no tensorflow conda package for py3.8 yet
     #make_conda_pipeline(os="linux", arch="amd64", py_version="3.8"),
   ]
 
-def make_pip_pipeline(os, arch, py_version):
+def make_pip_pipeline(os, arch, py_version, runall):
   return {
     "kind": "pipeline",
     "name": "{0}-{1}-py{2}".format(os, arch, py_version),
@@ -52,7 +52,10 @@ def make_pip_pipeline(os, arch, py_version):
           "pip install numpy cython",  # install setup dependecies
           "pip install .[test]",
           "pip list",
-          "pytest -v -rs .",
+          if runall:
+            "pytest -v -rs --runall .",
+          else:
+            "pytest -v -rs .",
         ]
       },
     ]
@@ -92,7 +95,7 @@ def make_conda_pipeline(os, arch, py_version):
           "conda list",
           "python --version",
           "pip install .[test]",
-          "pytest -v -rs .",
+          "pytest -v -rs --runall .",
         ]
       },
     ]
