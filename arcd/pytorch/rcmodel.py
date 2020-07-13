@@ -937,7 +937,7 @@ class MultiDomainPytorchRCModel(RCModel):
         del self.cnet_class
         del self.cnet_call_kwargs
         if cdevice is None:
-            cdevice = get_closest_pytorch_device(cdevice)
+            cdevice = get_closest_pytorch_device(self._cdevice)
         self._cdevice = cdevice
         with H5pytoBytesStream(group['cnet']) as stream_file:
             cnet_state = torch.load(stream_file, map_location=cdevice)
