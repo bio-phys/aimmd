@@ -52,8 +52,8 @@ def make_pip_pipeline(os, arch, py_version, runall):
           "pip install numpy cython",  # install setup dependecies
           "pip install .[test]",
           "pip list",
-          ("pytest -v -rs --runall .", if runall
-           else "pytest -v -rs .",)
+          ("pytest -v -rs --runall ." if runall
+           else "pytest -v -rs ."),
         ]
       },
     ]
