@@ -69,7 +69,7 @@ def make_pip_pipeline(os, arch, py_version, runall=False):
 def make_conda_pipeline(os, arch, py_version, runall=False):
   return {
     "kind": "pipeline",
-    "name": ("{0}-{1}-py{2}-full".format(os, arch, py_version) if runall
+    "name": ("{0}-{1}-conda-py{2}-full".format(os, arch, py_version) if runall
              else "{0}-{1}-py{2}".format(os, arch, py_version)),
     "platform": {
       "os": os,
