@@ -17,19 +17,22 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 
 def main(ctx):
   return [
-    make_pip_pipeline(os="linux", arch="amd64", py_version="3.6", runall=True),
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.7"),
     make_pip_pipeline(os="linux", arch="amd64", py_version="3.7", runall=True),
-    make_pip_pipeline(os="linux", arch="amd64", py_version="3.8", runall=True),
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.8"),
     make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
     make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
+    make_conda_pipeline(os="linux", arch="amd64", py_version="3.7", runall=True),
     # no tensorflow conda package for py3.8 yet
     #make_conda_pipeline(os="linux", arch="amd64", py_version="3.8"),
   ]
 
-def make_pip_pipeline(os, arch, py_version, runall):
+def make_pip_pipeline(os, arch, py_version, runall=False):
   return {
     "kind": "pipeline",
-    "name": "{0}-{1}-py{2}".format(os, arch, py_version),
+    "name": ("{0}-{1}-py{2}-full".format(os, arch, py_version) if runall
+             else "{0}-{1}-py{2}".format(os, arch, py_version)),
     "platform": {
       "os": os,
       "arch": arch,
@@ -63,10 +66,11 @@ def make_pip_pipeline(os, arch, py_version, runall):
 #         where /bin/sh is a symlink to /bin/bash, this gets conda to work
 # NOTE 2: Do **not** use conda activate, it does not propagate the exit code
 #       ...so we could have sliently failing tests!
-def make_conda_pipeline(os, arch, py_version):
+def make_conda_pipeline(os, arch, py_version, runall=False):
   return {
     "kind": "pipeline",
-    "name": "{0}-{1}-conda-py{2}".format(os, arch, py_version),
+    "name": ("{0}-{1}-py{2}-full".format(os, arch, py_version) if runall
+             else "{0}-{1}-py{2}".format(os, arch, py_version)),
     "platform": {
       "os": os,
       "arch": arch,
@@ -93,7 +97,8 @@ def make_conda_pipeline(os, arch, py_version):
           "conda list",
           "python --version",
           "pip install .[test]",
-          "pytest -v -rs --runall .",
+          ("pytest -v -rs --runall ." if runall
+           else "pytest -v -rs"),
         ]
       },
     ]
