@@ -29,7 +29,7 @@ class ArcdStorageHook(PathSimulatorHook):
     implemented_for = ["before_simulation", "after_step", "after_simulation"]
 
     def __init__(self, storage, model, trainset, interval=500,
-                 name_prefix="RCModel", checkpoints=True):
+                 name_prefix="RCModel"):
         """
         Parameters
         ----------
@@ -40,12 +40,6 @@ class ArcdStorageHook(PathSimulatorHook):
         name_prefix - str (default="RCModel"), models will be saved named as
                       this prefix plus the suffix "_after_step_$STEPNUMBER",
                       where "$STEPNUMBER" is replaced with the MCStep at save
-        checkpoints - bool (default=True), whether to save intermediate models
-                      as checkpoints under storage.rcmodel_checkpoints, however
-                      the model saved after the simulation ends will always be
-                      saved under storage.rcmodels["most_recent"]
-                      Note: checkpoints are less/not portable bewteen machines,
-                            but usually faster to save and load
         """
         # TODO?: do we want the option to have different saving intervals for
         #        trainset and model?
@@ -54,7 +48,6 @@ class ArcdStorageHook(PathSimulatorHook):
         self.trainset = trainset
         self.interval = interval
         self.name_prefix = name_prefix
-        self.checkpoints = checkpoints
 
     def before_simulation(self, sim):
         # TODO: load old model?! Or should we let the user do that explicitly?
@@ -76,10 +69,7 @@ class ArcdStorageHook(PathSimulatorHook):
             save_name = (self.name_prefix
                          + "_after_step_{:d}".format(step_number)
                          )
-            if self.checkpoints:
-                self.storage.rcmodel_checkpoints[save_name] = self.model
-            else:
-                self.storage.rcmodels[save_name] = self.model
+            self.storage.rcmodels[save_name] = self.model
             # save the trainset
             self.storage.save_trainset(self.trainset)
             logger.info("Saved RCModel and TrainSet to arcd-Storage.")
