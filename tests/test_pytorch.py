@@ -90,7 +90,7 @@ class Test_pytorch:
 
         # predict before
         predictions_before = model(descriptors, use_transform=False)
-        if model_type == 'EEMultiDomain':
+        if model_type == 'MultiDomain':
             # test all possible losses for MultiDomain networks
             losses = ['L_pred', 'L_gamma', 'L_class']
             losses += ['L_mod{:d}'.format(i) for i in range(len(pnets))]
@@ -102,7 +102,7 @@ class Test_pytorch:
         model_loaded = arcd_store.rcmodels["test"]
         # predict after loading
         predictions_after = model_loaded(descriptors, use_transform=False)
-        if model_type == 'EEMultiDomain':
+        if model_type == 'MultiDomain':
             losses = ['L_pred', 'L_gamma', 'L_class']
             losses += ['L_mod{:d}'.format(i) for i in range(len(pnets))]
             test_loss_after = [model.test_loss(trainset, loss=l) for l in losses]
