@@ -14,12 +14,28 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
+import pytest
 import numpy as np
 from openpathsampling.engines import BaseSnapshot
 import arcd
 
 
 class Test_RCModel:
+    def test_store_model(self, oneout_rcmodel_notrans, tmp_path):
+        arcd_store = arcd.Storage(tmp_path / 'Test.h5')
+        model = oneout_rcmodel_notrans
+        model.expected_p.append('test')
+        arcd_store.rcmodels['test'] = model
+        loaded_model = arcd_store.rcmodels['test']
+        for key, val in model.__dict__.items():
+            if key == 'density_collector':
+                loaded_dc = loaded_model.__dict__['density_collector']
+                for skey, sval in val.__dict__.items():
+                    assert np.all(loaded_dc.__dict__[skey] == sval)
+            else:
+                assert np.all(loaded_model.__dict__[key] == val)
+
+    @pytest.mark.old
     def test_save_fix_load(self, oneout_rcmodel_notrans, tmp_path):
         # NOTE: OLD LOADING/SAVING API
         p = tmp_path / 'Test_RCModel_test_save_fix_load'

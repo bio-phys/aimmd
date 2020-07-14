@@ -57,8 +57,9 @@ def make_pip_pipeline(os, arch, py_version, runall=False):
           "pip install numpy cython",  # install setup dependecies
           "pip install .[test]",
           "pip list",
+          # runall runs slow tests and tests for deprecated code
           ("pytest -v -rs --runall ." if runall
-           else "pytest -v -rs ."),
+           else "pytest -v -rs --runslow ."),
         ]
       },
     ]
@@ -99,8 +100,9 @@ def make_conda_pipeline(os, arch, py_version, runall=False):
           "conda list",
           "python --version",
           "pip install .[test]",
+          # runall runs slow tests and tests for deprecated code
           ("pytest -v -rs --runall ." if runall
-           else "pytest -v -rs"),
+           else "pytest -v -rs --runslow ."),
         ]
       },
     ]

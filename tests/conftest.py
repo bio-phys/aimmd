@@ -28,7 +28,7 @@ from arcd.base.rcmodel import RCModel
 
 def pytest_addoption(parser):
     parser.addoption(
-        "--runslow", action="store_true", default=True, help="run slow tests"
+        "--runslow", action="store_true", default=False, help="run slow tests"
     )
     parser.addoption(
         "--runold", action="store_true", default=False,
