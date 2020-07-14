@@ -41,7 +41,7 @@ import openpathsampling as paths
 from tensorflow.keras import optimizers
 
 
-class Test_keras:
+class Test_RCModel:
     @pytest.mark.parametrize("n_states", ['binomial', 'multinomial'])
     def test_store_model(self, tmp_path, n_states):
         arcd_store = arcd.Storage(tmp_path / 'Test_load_save_model.h5')

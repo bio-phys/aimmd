@@ -23,7 +23,7 @@ import openpathsampling as paths
 torch = pytest.importorskip("torch")
 
 
-class Test_pytorch:
+class Test_RCModel:
     @pytest.mark.parametrize("n_states,model_type", [('binomial', 'MultiDomain'), ('multinomial', 'MultiDomain'),
                                                      ('binomial', 'EnsembleNet'), ('multinomial', 'EnsembleNet'),
                                                      ('binomial', 'SingleNet'), ('multinomial', 'SingleNet'),

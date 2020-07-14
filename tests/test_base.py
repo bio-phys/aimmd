@@ -21,6 +21,7 @@ import arcd
 
 
 class Test_RCModel:
+    # NOTE: we test something very similar in storage tests
     def test_store_model(self, oneout_rcmodel_notrans, tmp_path):
         arcd_store = arcd.Storage(tmp_path / 'Test.h5')
         model = oneout_rcmodel_notrans
