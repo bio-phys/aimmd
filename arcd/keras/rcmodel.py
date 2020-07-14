@@ -88,7 +88,7 @@ class KerasRCModel(RCModel):
         self.nnet = nnet
 
     # NOTE: NEW LOADING-SAVING API
-    def object_for_pickle(self, group, overwrite=True, checkpoint=False):
+    def object_for_pickle(self, group, overwrite=True):
         try:
             model_grp = group['KerasRCModel']
         except KeyError:
@@ -117,8 +117,7 @@ class KerasRCModel(RCModel):
         # and call supers object_for_pickle in case there is something left
         # in ret_obj.__dict__ that we can not pickle
         return super(KerasRCModel,
-                     ret_obj).object_for_pickle(group, overwrite=overwrite,
-                                                checkpoint=checkpoint)
+                     ret_obj).object_for_pickle(group, overwrite=overwrite)
 
     def complete_from_h5py_group(self, group):
         model_grp = group["KerasRCModel"]

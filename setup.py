@@ -148,10 +148,11 @@ setup(
 
         # Specify the Python versions you support here. In particular, ensure
         # that you indicate whether you support Python 2, Python 3 or both.
-        'Programming Language :: Python :: 3.5',  # CI tested
-        'Programming Language :: Python :: 3.6',  # CI tested, prodcution use
-        'Programming Language :: Python :: 3.7',  # CI tested, production use
-        # NOTE: python 2 will most likely not work as intended:
+        'Programming Language :: Python :: 3.6',  # CI tested
+        'Programming Language :: Python :: 3.7',  # CI tested
+        'Programming Language :: Python :: 3.8',  # CI tested
+        # NOTE: we use f-strings and therfore require python >= 3.6
+        # NOTE: even without f-strings python 2 will not work as intended:
         # 1. we did not take care of integer division vs float division
         # 2. we use binary pickle formats for storing the trainers
         # 3. we use cython with language_level=3
@@ -180,7 +181,7 @@ setup(
         'networkx',
         #'dcgpy',
         'sympy',  # only used for dcgpy atm
-        'h5py',  # for loading and saving of keras models
+        'h5py',  # for asrcd.Storage and for old loading/saving of keras models
     ],
 
     # List additional groups of dependencies here (e.g. development
@@ -189,6 +190,10 @@ setup(
     # $ pip install -e .[test]
     extras_require={
         'test': ['pytest'],
-        'dev': ['coverage', 'pytest', 'pytest-cov'],
+        'dev': ['coverage', 'pytest', 'pytest-cov',
+                'flake8', 'flake8-alfred', 'flake8-comprehensions',
+                'flake8-docstrings', 'flake8-if-statements',
+                'flake8-logging-format', 'flake8-todo'
+                ],
     }
 )

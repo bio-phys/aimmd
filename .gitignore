@@ -7,7 +7,7 @@ arcd/**/*.html
 *.nc
 
 # VSCode settings folder
-.vscode/*
+.vscode
 
 # Spyder project files
 .spyproject/*

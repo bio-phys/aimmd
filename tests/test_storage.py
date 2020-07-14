@@ -31,6 +31,9 @@ class Test_storage:
         grp_name = "/testdata"
         grp = storage.file.require_group(grp_name)
         shelf = arcd.base.storage.MutableObjectShelf(grp)
+        # test that accessing an empty shelf raises the correct error
+        with pytest.raises(KeyError):
+            _ = shelf.load(buffsize=buffsize)
         objs = [np.random.random_sample(size=(10000, 400))]
         objs += ["test"]
         shelf.save(objs, buffsize=buffsize)
@@ -103,13 +106,27 @@ class Test_storage:
         # save the models
         for i, mod in enumerate(models):
             storage.rcmodels[str(i)] = mod
-        # loaded and test they are equal
+        # load and test that they are equal
         loaded_models = [storage.rcmodels[str(i)] for i in range(len(models))]
         for true_mod, test_mod in zip(models, loaded_models):
             assert_model_equal(true=true_mod, test=test_mod)
-        # and again to test overwriting etc
+        # and again to test overwriting
         for i, mod in enumerate(models):
             storage.rcmodels[str(i)] = mod
         loaded_models2 = [storage.rcmodels[str(i)] for i in range(len(models))]
         for true_mod, test_mod in zip(models, loaded_models2):
             assert_model_equal(true=true_mod, test=test_mod)
+        # now yet another way: by iterating over the dictionary
+        loaded_models3 = [None for _ in range(len(storage.rcmodels))]
+        # need to make sure the order is the same as when saving
+        # but we used the indices ans key anyways
+        for key, val in storage.rcmodels.items():
+            loaded_models3[int(key)] = storage.rcmodels[key]
+        # check that they are equal again
+        for true_mod, test_mod in zip(models, loaded_models3):
+            assert_model_equal(true=true_mod, test=test_mod)
+        # test removing model(s)
+        del storage.rcmodels["0"]
+        assert len(storage.rcmodels) == len(models) - 1
+        del storage.rcmodels["1"]
+        assert len(storage.rcmodels) == len(models) - 2

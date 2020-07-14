@@ -21,12 +21,6 @@ import sys
 logger = logging.getLogger(__name__)
 
 
-if sys.version_info.minor < 6:
-    # ModuleNotFoundError was introduced in python v3.6
-    # need to check only minor version since we require py3 anyway
-    ModuleNotFoundError = ImportError
-
-
 from .__about__ import (__version__, __title__, __author__,
                         __license__, __copyright__
                         )

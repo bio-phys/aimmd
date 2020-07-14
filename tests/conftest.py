@@ -14,16 +14,53 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
+import pytest
 # TODO/BUG: weird stuff: if not importing mdtraj before RCModel
 # the tests segfault....!?
 import mdtraj
-import pytest
 import numpy as np
 import openpathsampling as paths
 import openpathsampling.engines.toy as toys
 from openpathsampling.engines import Trajectory as OPSTrajectory
 from functools import reduce
 from arcd.base.rcmodel import RCModel
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--runslow", action="store_true", default=False, help="run slow tests"
+    )
+    parser.addoption(
+        "--runold", action="store_true", default=False,
+        help="run tests for deprecated code"
+    )
+    parser.addoption(
+        "--runall", action="store_true", default=False, help="run all tests"
+    )
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "slow: mark test as slow to run")
+    config.addinivalue_line("markers", "old: mark test for deprecated code")
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--runall"):
+        # --runall given in cli: do not skip any tests
+        return
+    old = False
+    skip_old = pytest.mark.skip(reason="need --runold option to run")
+    slow = False
+    skip_slow = pytest.mark.skip(reason="need --runslow option to run")
+    if config.getoption("--runslow"):
+        slow = True
+    if config.getoption("--runold"):
+        old = True
+    for item in items:
+        if not slow and "slow" in item.keywords:
+            item.add_marker(skip_slow)
+        if not old and "old" in item.keywords:
+            item.add_marker(skip_old)
 
 
 @pytest.fixture
@@ -76,7 +113,7 @@ def ops_toy_sim_setup():
     stateA = paths.CVDefinedVolume(opA, 0.0, 0.15).named('StateA')
     stateB = paths.CVDefinedVolume(opB, 0.0, 0.15).named('StateB')
     descriptor_transform = paths.FunctionCV('descriptor_transform', lambda s: s.coordinates[0], cv_wrap_numpy_array=True)
-    initAB = paths.Trajectory([toys.Snapshot(coordinates=np.array([[-0.75 + i/700., -0.5 + i/1000] + [0. for _ in range(n_harmonics)]]), 
+    initAB = paths.Trajectory([toys.Snapshot(coordinates=np.array([[-0.75 + i/700., -0.5 + i/1000] + [0. for _ in range(n_harmonics)]]),
                                              velocities=np.array([[1.0, 0.0] + [0. for _ in range(n_harmonics)]]),
                                              engine=toy_eng
                                              )
@@ -127,6 +164,7 @@ def twoout_rcmodel_notrans():
     return TwoOutRCModel(None)
 
 
+# Test helper classes
 class OneOutRCModel(RCModel):
     def __init__(self, transform=None):
         # work on numpy arrays directly, but test the use of transform

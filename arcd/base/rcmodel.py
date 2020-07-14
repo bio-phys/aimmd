@@ -182,7 +182,7 @@ class RCModel(ABC):
             pickle.dump(state, pfile, protocol=4)
 
     # NOTE: NEW LOADING/SAVING API
-    def object_for_pickle(self, group, overwrite=True, checkpoint=True):
+    def object_for_pickle(self, group, overwrite=True):
         state = self.__dict__.copy()
         if isinstance(state['descriptor_transform'], CollectiveVariable):
             # replace OPS CVs by their name to reload from OPS storage
@@ -383,6 +383,8 @@ class TrajectoryDensityCollector:
         self.n_dim = n_dim
         self.bins = bins
         self.density_histogram = np.zeros(tuple(bins for _ in range(n_dim)))
+        self._cache_file = cache_file
+        self._fill_pointer = 0
         if cache_file is None:
             self._counts = np.empty((0, 0))
             self._descriptors = np.empty((0, 0))
@@ -392,8 +394,6 @@ class TrajectoryDensityCollector:
             self._counts = None
             self._descriptors = None
 
-        self._cache_file = cache_file
-        self._fill_pointer = 0
         # need to know the number of forbidden bins, i.e. where sum_prob > 1
         bounds = np.arange(0., 1., 1./bins)
         # this magic line creates all possible combinations of probs

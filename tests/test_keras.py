@@ -14,8 +14,10 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
+import pytest
+
+tf = pytest.importorskip("tensorflow")
 # we use this to be able to run tests when GPU in use
-import tensorflow as tf
 if tf.version.VERSION.startswith('2.'):
     # tell tf to use only the GPU mem it needs
     gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -33,14 +35,66 @@ else:
     from tensorflow.keras import backend as K
     K.set_session(sess)
 
-import pytest
 import arcd
 import numpy as np
 import openpathsampling as paths
 from tensorflow.keras import optimizers
 
 
-class Test_keras:
+class Test_RCModel:
+    @pytest.mark.parametrize("n_states", ['binomial', 'multinomial'])
+    def test_store_model(self, tmp_path, n_states):
+        arcd_store = arcd.Storage(tmp_path / 'Test_load_save_model.h5')
+
+        hidden_parms = [{'units_factor': 1,  # test units_fact key
+                         'activation': 'elu',  # should be fixed to selu
+                         'use_bias': True,
+                         'kernel_initializer': 'lecun_normal',
+                         'bias_initializer': 'lecun_normal',
+                         }
+                        ]
+        hidden_parms += [{'units': 20,  # test units key
+                          'activation': 'selu',
+                          'use_bias': True,
+                          'kernel_initializer': 'lecun_normal',
+                          'bias_initializer': 'lecun_normal',
+                          'dropout': 0.1,
+                          }
+                         for i in range(1, 4)]
+        states = ['A', 'B']
+        multi_state = False
+        if n_states == 'multinomial':
+            states += ['C']
+            multi_state = True
+        cv_ndim = 200
+        # create random descriptors to predict probabilities for them
+        descriptors = np.random.normal(size=(20, cv_ndim))
+        if n_states == 'multinomial':
+            shot_results = np.array([[1, 0, 1] for _ in range(20)])
+        elif n_states == 'binomial':
+            shot_results = np.array([[1, 1] for _ in range(20)])
+        # a trainset for test_loss testing
+        trainset = arcd.TrainSet(states, descriptors=descriptors,
+                                 shot_results=shot_results)
+        # model creation
+        optim = optimizers.Adam(lr=1e-3)
+        snn = arcd.keras.create_snn(cv_ndim, hidden_parms, optim, len(states),
+                                    multi_state=multi_state
+                                    )
+        model = arcd.keras.EEScaleKerasRCModel(snn, descriptor_transform=None)
+        # predict before
+        predictions_before = model(descriptors, use_transform=False)
+        test_loss_before = model.test_loss(trainset)
+        # save the model and check that the loaded model predicts the same
+        arcd_store.rcmodels["test"] = model
+        model_loaded = arcd_store.rcmodels["test"]
+        # predict after loading
+        predictions_after = model_loaded(descriptors, use_transform=False)
+        test_loss_after = model_loaded.test_loss(trainset)
+        assert np.allclose(predictions_before, predictions_after)
+        assert np.allclose(test_loss_before, test_loss_after)
+
+    @pytest.mark.old
     @pytest.mark.parametrize("n_states", ['binomial', 'multinomial'])
     def test_save_load_model(self, tmp_path, n_states):
         p = tmp_path / 'Test_load_save_model.pckl'
@@ -96,6 +150,8 @@ class Test_keras:
         assert np.allclose(predictions_before, predictions_after)
         assert np.allclose(test_loss_before, test_loss_after)
 
+    @pytest.mark.old
+    @pytest.mark.slow
     @pytest.mark.parametrize("save_trainset", ['load_trainset', 'recreate_trainset'])
     def test_toy_sim_snn(self, tmp_path, ops_toy_sim_setup, save_trainset):
         p = tmp_path / 'Test_OPS_test_toy_sim_snn.nc'

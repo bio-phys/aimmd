@@ -17,21 +17,22 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 
 def main(ctx):
   return [
-    make_pip_pipeline(os="linux", arch="amd64", py_version="3.5"),
     make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
     make_pip_pipeline(os="linux", arch="amd64", py_version="3.7"),
+    make_pip_pipeline(os="linux", arch="amd64", py_version="3.7", runall=True),
     make_pip_pipeline(os="linux", arch="amd64", py_version="3.8"),
-    #make_conda_pipeline(os="linux", arch="amd64", py_version="3.5"),
     make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
     make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
+    make_conda_pipeline(os="linux", arch="amd64", py_version="3.7", runall=True),
     # no tensorflow conda package for py3.8 yet
     #make_conda_pipeline(os="linux", arch="amd64", py_version="3.8"),
   ]
 
-def make_pip_pipeline(os, arch, py_version):
+def make_pip_pipeline(os, arch, py_version, runall=False):
   return {
     "kind": "pipeline",
-    "name": "{0}-{1}-py{2}".format(os, arch, py_version),
+    "name": ("{0}-{1}-py{2}-full".format(os, arch, py_version) if runall
+             else "{0}-{1}-py{2}".format(os, arch, py_version)),
     "platform": {
       "os": os,
       "arch": arch,
@@ -47,14 +48,18 @@ def make_pip_pipeline(os, arch, py_version):
           "pip list",
           # install ops pathsampling hooks branch
           "pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
-          # TODO: this is hardcoded and not nice for maintenance
           # install deep learning packages
-          "pip install torch==1.4.0+cpu -f https://download.pytorch.org/whl/torch_stable.html",
+          # TODO: this is hardcoded and not nice for maintenance
+          #"pip install torch==1.4.0+cpu -f https://download.pytorch.org/whl/torch_stable.html",
+          # this tries to install the most recent pytorch with cuda support
+          "pip install torch",
           "pip install tensorflow",
           "pip install numpy cython",  # install setup dependecies
           "pip install .[test]",
           "pip list",
-          "pytest -v -rs .",
+          # runall runs slow tests and tests for deprecated code
+          ("pytest -v -rs --runall ." if runall
+           else "pytest -v -rs --runslow ."),
         ]
       },
     ]
@@ -64,10 +69,11 @@ def make_pip_pipeline(os, arch, py_version):
 #         where /bin/sh is a symlink to /bin/bash, this gets conda to work
 # NOTE 2: Do **not** use conda activate, it does not propagate the exit code
 #       ...so we could have sliently failing tests!
-def make_conda_pipeline(os, arch, py_version):
+def make_conda_pipeline(os, arch, py_version, runall=False):
   return {
     "kind": "pipeline",
-    "name": "{0}-{1}-conda-py{2}".format(os, arch, py_version),
+    "name": ("{0}-{1}-conda-py{2}-full".format(os, arch, py_version) if runall
+             else "{0}-{1}-conda-py{2}".format(os, arch, py_version)),
     "platform": {
       "os": os,
       "arch": arch,
@@ -94,7 +100,9 @@ def make_conda_pipeline(os, arch, py_version):
           "conda list",
           "python --version",
           "pip install .[test]",
-          "pytest -v -rs .",
+          # runall runs slow tests and tests for deprecated code
+          ("pytest -v -rs --runall ." if runall
+           else "pytest -v -rs --runslow ."),
         ]
       },
     ]

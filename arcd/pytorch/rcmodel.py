@@ -23,6 +23,9 @@ from ..base.rcmodel import RCModel
 from ..base.rcmodel_train_decision import (_train_decision_funcs,
                                            _train_decision_defaults,
                                            _train_decision_docs)
+# TODO: Buffered version or non-buffered version?
+from ..base.storage import (BytesStreamtoH5py, BytesStreamtoH5pyBuffered,
+                            H5pytoBytesStream)
 from .utils import get_closest_pytorch_device, optimizer_state_to_device
 
 
@@ -145,7 +148,7 @@ class PytorchRCModel(RCModel):
         return self.nnet.n_out
 
     # NOTE: NEW LOADING-SAVING API
-    def object_for_pickle(self, group, overwrite=True, checkpoint=True):
+    def object_for_pickle(self, group, overwrite=True):
         """
         Return pickleable object equivalent to self.
 
@@ -155,36 +158,40 @@ class PytorchRCModel(RCModel):
         -----------
         group - h5py group to write additional data to
         overwrite - bool, wheter to overwrite existing data in h5pygroup
-        checkpoint - bool, if True will create a fast checkpoint instead of a
-                     portable save, for pytorch this means to decide if we keep
-                     the pytorch device as is (faster) or change to CPU before
-                     saving (better portability)
         """
-        if not checkpoint:
-            # move to CPU before saving
-            self.nnet = self.nnet.cpu()
         state = self.__dict__.copy()
         state['nnet_class'] = self.nnet.__class__
         state['optimizer_class'] = self.optimizer.__class__
         state['nnet_call_kwargs'] = self.nnet.call_kwargs
-        state['nnet'] = self.nnet.state_dict()
-        state['optimizer'] = self.optimizer.state_dict()
-        if not checkpoint:
-            state['optimizer'] = optimizer_state_to_device(state['optimizer'],
-                                                           torch.device('cpu'),
-                                                           )
-            # move back to initial torch device
-            self.nnet = self.nnet.to(self._device)
-            # need to reinitialize optimizer on correct device
-            self.optimizer = state['optimizer_class'](self.nnet.parameters())
-            self.optimizer.load_state_dict(state['optimizer'])
+        nnet_state = self.nnet.state_dict()
+        optim_state = self.optimizer.state_dict()
+        # we set them to None because we know to load them from h5py
+        state['nnet'] = None
+        state['optimizer'] = None
+        if (not overwrite) and ('nnet' in group):
+            # make sure we only overwrite if we want to
+            raise RuntimeError("Model already exists but overwrite=False.")
+        # save nnet and optimizer to the h5py group
+        # we can just require the dsets, if they exist it is ok to overwrite
+        nnet_dset = group.require_dataset('nnet', dtype=np.uint8,
+                                          maxshape=(None,), shape=(0,),
+                                          chunks=True,
+                                          )
+        optim_dset = group.require_dataset('optim', dtype=np.uint8,
+                                           maxshape=(None,), shape=(0,),
+                                           chunks=True,
+                                           )
+        # TODO: unbuffered for now: do we want buffer? which size?
+        with BytesStreamtoH5py(nnet_dset) as stream_file:
+            torch.save(nnet_state, stream_file)
+        with BytesStreamtoH5py(optim_dset) as stream_file:
+            torch.save(optim_state, stream_file)
         ret_obj = self.__class__.__new__(self.__class__)
         ret_obj.__dict__.update(state)
         # and call supers object_for_pickle in case there is something left
         # in ret_obj.__dict__ that we can not pickle
         return super(PytorchRCModel,
-                     ret_obj).object_for_pickle(group, overwrite=overwrite,
-                                                checkpoint=checkpoint)
+                     ret_obj).object_for_pickle(group, overwrite=overwrite)
 
     def complete_from_h5py_group(self, group, device=None):
         """
@@ -197,21 +204,25 @@ class PytorchRCModel(RCModel):
                  restore location, if None will try to restore to a device
                  'close' to where it was saved from
         """
-        # instatiate and load the neural network
-        nnet = self.nnet_class(**self.nnet_call_kwargs)
-        nnet.load_state_dict(self.nnet)
-        del self.nnet_class
-        del self.nnet_call_kwargs
         if device is None:
             device = get_closest_pytorch_device(self._device)
-        self.nnet = nnet.to(device)
+        # instatiate and load the neural network
+        nnet = self.nnet_class(**self.nnet_call_kwargs)
+        with H5pytoBytesStream(group['nnet']) as stream_file:
+            nnet_state = torch.load(stream_file, map_location=device)
+        nnet.load_state_dict(nnet_state)
+        del self.nnet_class
+        del self.nnet_call_kwargs
+        self.nnet = nnet.to(device)  # should be a no-op?!
         # now load the optimizer
         # first initialize with defaults
         optimizer = self.optimizer_class(self.nnet.parameters())
         del self.optimizer_class
-        # TODO: do we need this?: put optimizer state on correct device
-        opt_sdict = optimizer_state_to_device(self.optimizer, device)
-        optimizer.load_state_dict(opt_sdict)
+        with H5pytoBytesStream(group['optim']) as stream_file:
+            optim_state = torch.load(stream_file, map_location=device)
+        # i think we do not need this?: put optimizer state on correct device
+        #opt_sdict = optimizer_state_to_device(self.optimizer, device)
+        optimizer.load_state_dict(optim_state)
         self.optimizer = optimizer
         return super(PytorchRCModel, self).complete_from_h5py_group(group)
 
@@ -450,7 +461,7 @@ class EnsemblePytorchRCModel(RCModel):
         return self.nnets[0].n_out
 
     # NOTE: NEW LOADING-SAVING API
-    def object_for_pickle(self, group, overwrite=True, checkpoint=True):
+    def object_for_pickle(self, group, overwrite=True):
         """
         Return pickleable object equivalent to self.
 
@@ -460,42 +471,39 @@ class EnsemblePytorchRCModel(RCModel):
         -----------
         group - h5py group to write additional data to
         overwrite - bool, wheter to overwrite existing data in h5pygroup
-        checkpoint - bool, if True will create a fast checkpoint instead of a
-                     portable save, for pytorch this means to decide if we keep
-                     the pytorch device as is (faster) or change to CPU before
-                     saving (better portability)
         """
-        if not checkpoint:
-            # move to CPU before saving
-            self.nnets = [net.cpu() for net in self.nnets]
         state = self.__dict__.copy()
-        state['nnet_classes'] = [net.__class__ for net in self.nnets]
+        state['nnets_classes'] = [net.__class__ for net in self.nnets]
         state['nnets_call_kwargs'] = [net.call_kwargs for net in self.nnets]
-        state['nnets'] = [net.state_dict() for net in self.nnets]
+        state['nnets'] = None
+        nnets_state = [net.state_dict() for net in self.nnets]
         state['optimizers_classes'] = [o.__class__ for o in self.optimizers]
-        state['optimizers'] = [o.state_dict() for o in self.optimizers]
-        if not checkpoint:
-            # move optimizer states to cpu for saving
-            state['optimizers'] = [optimizer_state_to_device(opt, device='cpu')
-                                   for opt in state['optimizers']]
-            # move back to initial torch device
-            self.nnets = [net.to(dev)
-                          for net, dev in zip(self.nnets, self._devices)]
-            # We need to reinstatiate the optimizers on the right devices again
-            self.optimizers = [
-                clas(nnet.parameters())
-                for clas, nnet in zip(state['optimizers_classes'], self.nnets)
-                               ]
-            for opt, s in zip(self.optimizers, state['optimizers']):
-                opt.load_state_dict(s)
-
+        state['optimizers'] = None
+        optims_state = [o.state_dict() for o in self.optimizers]
+        if (not overwrite) and ('nnets' in group):
+            # make sure we only overwrite if we want to
+            raise RuntimeError("Model already exists but overwrite=False.")
+        # save nnets and optimizers to the h5py group
+        # we can just require the dsets, if they exist it is ok to overwrite
+        nnet_dset = group.require_dataset('nnets', dtype=np.uint8,
+                                          maxshape=(None,), shape=(0,),
+                                          chunks=True,
+                                          )
+        optim_dset = group.require_dataset('optims', dtype=np.uint8,
+                                           maxshape=(None,), shape=(0,),
+                                           chunks=True,
+                                           )
+        # TODO: unbuffered for now: do we want buffer? which size?
+        with BytesStreamtoH5py(nnet_dset) as stream_file:
+            torch.save(nnets_state, stream_file)
+        with BytesStreamtoH5py(optim_dset) as stream_file:
+            torch.save(optims_state, stream_file)
         ret_obj = self.__class__.__new__(self.__class__)
         ret_obj.__dict__.update(state)
         # and call supers object_for_pickle in case there is something left
         # in ret_obj.__dict__ that we can not pickle
         return super(EnsemblePytorchRCModel,
-                     ret_obj).object_for_pickle(group, overwrite=overwrite,
-                                                checkpoint=checkpoint)
+                     ret_obj).object_for_pickle(group, overwrite=overwrite)
 
     def complete_from_h5py_group(self, group, devices=None):
         """
@@ -510,13 +518,15 @@ class EnsemblePytorchRCModel(RCModel):
         """
         # instatiate and load the neural networks
         nnets = [nc(**kwargs) for nc, kwargs in zip(self.nnets_classes,
-                                                    self.nnet_call_kwargs)]
+                                                    self.nnets_call_kwargs)]
         del self.nnets_classes
         del self.nnets_call_kwargs
         if devices is None:
             devices = [get_closest_pytorch_device(d) for d in self._devices]
         self._devices = devices
-        for nnet, d, s in zip(nnets, devices, self.nnets):
+        with H5pytoBytesStream(group['nnets']) as stream_file:
+            nnets_state = torch.load(stream_file)
+        for nnet, d, s in zip(nnets, devices, nnets_state):
             nnet.load_state_dict(s)
             nnet.to(d)
         self.nnets = nnets
@@ -525,7 +535,9 @@ class EnsemblePytorchRCModel(RCModel):
                       for clas, net in zip(self.optimizers_classes, self.nnets)
                       ]
         del self.optimizers_classes
-        for opt, s, d in zip(optimizers, self.optimizers, self._devices):
+        with H5pytoBytesStream(group['optims']) as stream_file:
+            optims_state = torch.load(stream_file)
+        for opt, s, d in zip(optimizers, optims_state, self._devices):
             s = optimizer_state_to_device(s, d)
             opt.load_state_dict(s)
         self.optimizers = optimizers
@@ -778,8 +790,9 @@ class MultiDomainPytorchRCModel(RCModel):
                  by Wu + Tegmark (arXiv:1810.10525)
     """
     def __init__(self, pnets, cnet, poptimizer, coptimizer,
-                 descriptor_transform=None, gamma=-1, loss=None):
-        # pnets = list of predicting newtworks
+                 descriptor_transform=None, gamma=-1, loss=None,
+                 one_hot_classify=False):
+        # pnets = list of predicting networks
         # poptimizer = optimizer for prediction networks
         # cnet = classifier deciding which network to take
         # coptimizer optimizer for classification networks
@@ -789,6 +802,11 @@ class MultiDomainPytorchRCModel(RCModel):
         self.poptimizer = poptimizer
         self.coptimizer = coptimizer
         self.gamma = gamma
+        # TODO: make this a property such that we can not (re-) set it during object livetime?
+        # TODO: would this prevent users from doing stupid stuff? or does it not matter anyways because
+        # TODO: we also change the classification during trainign anyways?
+        # TODO: I think it does not matter...(?)
+        self.one_hot_classify = one_hot_classify
         self.log_train_decision = []
         self.log_train_loss = []
         self.log_ctrain_decision = []
@@ -827,7 +845,7 @@ class MultiDomainPytorchRCModel(RCModel):
         return self.pnets[0].n_out
 
     # NOTE: NEW LOADING-SAVING API
-    def object_for_pickle(self, group, overwrite=True, checkpoint=True):
+    def object_for_pickle(self, group, overwrite=True):
         """
         Return pickleable object equivalent to self.
 
@@ -837,51 +855,57 @@ class MultiDomainPytorchRCModel(RCModel):
         -----------
         group - h5py group to write additional data to
         overwrite - bool, wheter to overwrite existing data in h5pygroup
-        checkpoint - bool, if True will create a fast checkpoint instead of a
-                     portable save, for pytorch this means to decide if we keep
-                     the pytorch device as is (faster) or change to CPU before
-                     saving (better portability)
         """
-        if not checkpoint:
-            # move to CPU before saving
-            self.pnets = [pn.cpu() for pn in self.pnets]
-            self.cnet = self.cnet.cpu()
         state = self.__dict__.copy()
         state['pnets_class'] = [pn.__class__ for pn in self.pnets]
         state['pnets_call_kwargs'] = [pn.call_kwargs for pn in self.pnets]
-        state['pnets'] = [pn.state_dict() for pn in self.pnets]
+        pnets_state = [pn.state_dict() for pn in self.pnets]
+        state['pnets'] = None
         state['cnet_class'] = self.cnet.__class__
         state['cnet_call_kwargs'] = self.cnet.call_kwargs
-        state['cnet'] = self.cnet.state_dict()
+        cnet_state = self.cnet.state_dict()
+        state['cnet'] = None
         # now the optimizers
         state['poptimizer_class'] = self.poptimizer.__class__
-        state['poptimizer'] = self.poptimizer.state_dict()
+        poptimizer_state = self.poptimizer.state_dict()
+        state['poptimizer'] = None
         state['coptimizer_class'] = self.coptimizer.__class__
-        state['coptimizer'] = self.coptimizer.state_dict()
-        if not checkpoint:
-            state['poptimizer'] = optimizer_state_to_device(state['poptimizer'],
-                                                            device='cpu')
-            state['coptimizer'] = optimizer_state_to_device(state['coptimizer'],
-                                                            device='cpu')
-            # move back to initial devices
-            self.pnets = [pn.to(d) for pn, d in zip(self.pnets, self._pdevices)]
-            self.cnet = self.cnet.to(self._cdevice)
-            # reinitialize optimizers on correct devices
-            self.poptimizer = state['poptimizer_class'](
-                                            [{'params': pnet.parameters()}
-                                             for pnet in self.pnets]
-                                                        )
-            self.poptimizer.load_state_dict(state['poptimizer'])
-            self.coptimizer = state['coptimizer_class'](self.cnet.parameters())
-            self.coptimizer.load_state_dict(state['coptimizer'])
+        coptimizer_state = self.coptimizer.state_dict()
+        state['coptimizer'] = None
+        if (not overwrite) and ('pnets' in group):
+            raise RuntimeError("Model already exists but overwrite=False.")
+        pnet_dset = group.require_dataset('pnets', dtype=np.uint8,
+                                          maxshape=(None,), shape=(0,),
+                                          chunks=True,
+                                          )
+        poptim_dset = group.require_dataset('poptim', dtype=np.uint8,
+                                            maxshape=(None,), shape=(0,),
+                                            chunks=True,
+                                            )
+        cnet_dset = group.require_dataset('cnet', dtype=np.uint8,
+                                          maxshape=(None,), shape=(0,),
+                                          chunks=True,
+                                          )
+        coptim_dset = group.require_dataset('coptim', dtype=np.uint8,
+                                            maxshape=(None,), shape=(0,),
+                                            chunks=True,
+                                            )
+        # TODO: unbuffered for now: do we want buffer? which size?
+        with BytesStreamtoH5py(pnet_dset) as stream_file:
+            torch.save(pnets_state, stream_file)
+        with BytesStreamtoH5py(poptim_dset) as stream_file:
+            torch.save(poptimizer_state, stream_file)
+        with BytesStreamtoH5py(cnet_dset) as stream_file:
+            torch.save(cnet_state, stream_file)
+        with BytesStreamtoH5py(coptim_dset) as stream_file:
+            torch.save(coptimizer_state, stream_file)
 
         ret_obj = self.__class__.__new__(self.__class__)
         ret_obj.__dict__.update(state)
         # and call supers object_for_pickle in case there is something left
         # in ret_obj.__dict__ that we can not pickle
         return super(MultiDomainPytorchRCModel,
-                     ret_obj).object_for_pickle(group, overwrite=overwrite,
-                                                checkpoint=checkpoint)
+                     ret_obj).object_for_pickle(group, overwrite=overwrite)
 
     def complete_from_h5py_group(self, group, pdevices=None, cdevice=None):
         """
@@ -902,7 +926,9 @@ class MultiDomainPytorchRCModel(RCModel):
         if pdevices is None:
             pdevices = [get_closest_pytorch_device(d) for d in self._pdevices]
         self._pdevices = pdevices
-        for net, d, s in zip(pnets, pdevices, self.pnets):
+        with H5pytoBytesStream(group['pnets']) as stream_file:
+            pnets_state = torch.load(stream_file)
+        for net, d, s in zip(pnets, pdevices, pnets_state):
             net.load_state_dict(s)
             net.to(d)
         self.pnets = pnets
@@ -910,20 +936,26 @@ class MultiDomainPytorchRCModel(RCModel):
         cnet = self.cnet_class(**self.cnet_call_kwargs)
         del self.cnet_class
         del self.cnet_call_kwargs
-        cnet.load_state_dict(self.cnet)
         if cdevice is None:
-            cdevice = get_closest_pytorch_device(cdevice)
+            cdevice = get_closest_pytorch_device(self._cdevice)
         self._cdevice = cdevice
-        cnet.to(cdevice)
+        with H5pytoBytesStream(group['cnet']) as stream_file:
+            cnet_state = torch.load(stream_file, map_location=cdevice)
+        cnet.load_state_dict(cnet_state)
+        cnet.to(cdevice)  # should be a no-op?!!
         self.cnet = cnet
         # now load the optimizers
         poptimizer = self.poptimizer_class([{'params': pnet.parameters()}
                                             for pnet in self.pnets]
                                            )
-        poptimizer.load_state_dict(self.poptimizer)
+        with H5pytoBytesStream(group['poptim']) as stream_file:
+            poptim_state = torch.load(stream_file, map_location=pdevices[0])
+        poptimizer.load_state_dict(poptim_state)
         self.poptimizer = poptimizer
         coptimizer = self.coptimizer_class(self.cnet.parameters())
-        coptimizer.load_state_dict(self.coptimizer)
+        with H5pytoBytesStream(group['coptim']) as stream_file:
+            coptim_state = torch.load(stream_file, map_location=cdevice)
+        coptimizer.load_state_dict(coptim_state)
         self.coptimizer = coptimizer
         del self.poptimizer_class
         del self.coptimizer_class
@@ -1080,7 +1112,7 @@ class MultiDomainPytorchRCModel(RCModel):
         Note that batch_size is ignored for loss='L_pred'.
 
         """
-        if loss is 'L_pred':
+        if loss == 'L_pred':
             return self._test_loss_pred(trainset)
         elif 'L_mod' in loss:
             mod_num = int(loss.lstrip('L_mod'))
@@ -1088,9 +1120,9 @@ class MultiDomainPytorchRCModel(RCModel):
                 raise ValueError('Can only calculate "L_mod" for a model index'
                                  + ' that is smaller than len(self.pnets).')
             return self._test_loss_pnets(trainset, batch_size)[mod_num]
-        elif loss is 'L_gamma':
+        elif loss == 'L_gamma':
             return self._test_loss_pnets(trainset, batch_size)[-1]
-        elif loss is 'L_class':
+        elif loss == 'L_class':
             return self._test_loss_cnet(trainset, batch_size)
         else:
             raise ValueError("'loss' must be one of 'L_pred', 'L_mod{:d}', "
@@ -1416,6 +1448,11 @@ class MultiDomainPytorchRCModel(RCModel):
 
         # get the probabilities for each model from classifier
         p_c = self._classify(descriptors)  # returns p_c on self._cdevice
+        if self.one_hot_classify:
+            # TODO: can we do this smarter?
+            max_idxs = p_c.argmax(dim=1)
+            p_c = torch.zeros_like(p_c)
+            p_c[torch.arange(max_idxs.shape[0]), max_idxs] = 1
         p_c = p_c.cpu().numpy()
         self.pnets = [pn.eval() for pn in self.pnets]  # pnets to evaluation
         # now committement probabilities
@@ -1470,6 +1507,7 @@ class MultiDomainPytorchRCModel(RCModel):
         return p_c
 
 
+# TODO: Use the decision function and documentation we already have and use for the other models!
 class EEMDPytorchRCModel(MultiDomainPytorchRCModel):
     """
     Expected efficiency MultiDomainPytorchRCModel.
@@ -1498,9 +1536,11 @@ class EEMDPytorchRCModel(MultiDomainPytorchRCModel):
                  #               'epochs_per_train': 5,
                  #               'interval': 3,
                  #               'max_interval': 20},
-                 descriptor_transform=None, loss=None):
+                 descriptor_transform=None, loss=None,
+                 one_hot_classify=False):
         super().__init__(pnets, cnet, poptimizer, coptimizer,
-                         descriptor_transform, gamma, loss)
+                         descriptor_transform, gamma, loss,
+                         one_hot_classify)
         # make it possible to pass only the altered values in dictionary
         ee_params_defaults = {'lr_0': 1e-3,
                               'lr_min': 1e-4,
