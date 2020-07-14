@@ -83,13 +83,16 @@ class Test_ArcdStorageHook:
 
 
 class Test_DensityCollectionHook:
+    @pytest.mark.skip("TODO")
     def test_before_simulation(self):
         pass
 
+    @pytest.mark.skip("TODO")
     def test_after_step(self):
         pass
 
 
 class Test_TrainingHook:
+    @pytest.mark.skip("TODO")
     def test_after_step(self):
         pass
