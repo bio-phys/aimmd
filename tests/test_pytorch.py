@@ -24,8 +24,10 @@ torch = pytest.importorskip("torch")
 
 
 class Test_pytorch:
-    @pytest.mark.parametrize("n_states,model_type", [('binomial', 'EEMultiDomain'), ('multinomial', 'EEMultiDomain'),
-                                                     ('binomial', 'EESingleDomain'), ('multinomial', 'EESingleDomain')]
+    @pytest.mark.parametrize("n_states,model_type", [('binomial', 'MultiDomain'), ('multinomial', 'MultiDomain'),
+                                                     ('binomial', 'EnsembleNet'), ('multinomial', 'EnsembleNet'),
+                                                     ('binomial', 'SingleNet'), ('multinomial', 'SingleNet'),
+                                                     ]
                              )
     def test_store_model(self, tmp_path, n_states, model_type):
         arcd_store = arcd.Storage(tmp_path / 'Test_load_save_model.h5')
@@ -53,7 +55,7 @@ class Test_pytorch:
             torch_model = arcd.pytorch.networks.ModuleStack(n_out=n_out,
                                                             modules=modules)
             return torch_model
-        if model_type == 'EESingleDomain':
+        if model_type == 'SingleNet':
             # move model to GPU if CUDA is available
             torch_model = make_1hidden_net(cv_ndim, n_out)
             if torch.cuda.is_available():
@@ -61,7 +63,7 @@ class Test_pytorch:
             optimizer = torch.optim.Adam(torch_model.parameters(), lr=1e-3)
             model = arcd.pytorch.EEScalePytorchRCModel(torch_model, optimizer,
                                                   descriptor_transform=None)
-        elif model_type == 'EEMultiDomain':
+        elif model_type == 'MultiDomain':
             pnets = [make_1hidden_net(cv_ndim, n_out) for _ in range(3)]
             cnet = make_1hidden_net(cv_ndim, len(pnets))
             # move model(s) to GPU if CUDA is available
@@ -77,6 +79,14 @@ class Test_pytorch:
                                                     poptimizer=poptimizer,
                                                     coptimizer=coptimizer,
                                                     descriptor_transform=None)
+        elif model_type == "EnsembleNet":
+            nnets = [make_1hidden_net(cv_ndim, n_out) for _ in range(5)]
+            if torch.cuda.is_available():
+                nnets = [n.to('cuda') for n in nnets]
+            optims = [arcd.pytorch.HMC(n.parameters()) for n in nnets]
+            model = arcd.pytorch.EERandEnsemblePytorchRCModel(nnets=nnets,
+                                                              optimizers=optims,
+                                                              )
 
         # predict before
         predictions_before = model(descriptors, use_transform=False)
@@ -85,7 +95,7 @@ class Test_pytorch:
             losses = ['L_pred', 'L_gamma', 'L_class']
             losses += ['L_mod{:d}'.format(i) for i in range(len(pnets))]
             test_loss_before = [model.test_loss(trainset, loss=l) for l in losses]
-        elif model_type == 'EESingleDomain':
+        else:
             test_loss_before = model.test_loss(trainset)
         # save the model and check that the loaded model predicts the same
         arcd_store.rcmodels["test"] = model
@@ -96,7 +106,7 @@ class Test_pytorch:
             losses = ['L_pred', 'L_gamma', 'L_class']
             losses += ['L_mod{:d}'.format(i) for i in range(len(pnets))]
             test_loss_after = [model.test_loss(trainset, loss=l) for l in losses]
-        elif model_type == 'EESingleDomain':
+        else:
             test_loss_after = model.test_loss(trainset)
 
         assert np.allclose(predictions_before, predictions_after)

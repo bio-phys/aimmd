@@ -473,7 +473,7 @@ class EnsemblePytorchRCModel(RCModel):
         overwrite - bool, wheter to overwrite existing data in h5pygroup
         """
         state = self.__dict__.copy()
-        state['nnet_classes'] = [net.__class__ for net in self.nnets]
+        state['nnets_classes'] = [net.__class__ for net in self.nnets]
         state['nnets_call_kwargs'] = [net.call_kwargs for net in self.nnets]
         state['nnets'] = None
         nnets_state = [net.state_dict() for net in self.nnets]
@@ -518,7 +518,7 @@ class EnsemblePytorchRCModel(RCModel):
         """
         # instatiate and load the neural networks
         nnets = [nc(**kwargs) for nc, kwargs in zip(self.nnets_classes,
-                                                    self.nnet_call_kwargs)]
+                                                    self.nnets_call_kwargs)]
         del self.nnets_classes
         del self.nnets_call_kwargs
         if devices is None:
@@ -1507,6 +1507,7 @@ class MultiDomainPytorchRCModel(RCModel):
         return p_c
 
 
+# TODO: Use the decision function and documentation we already have and use for the other models!
 class EEMDPytorchRCModel(MultiDomainPytorchRCModel):
     """
     Expected efficiency MultiDomainPytorchRCModel.
