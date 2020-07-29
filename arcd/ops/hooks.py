@@ -18,6 +18,7 @@ import logging
 from openpathsampling.beta.hooks import PathSimulatorHook
 from openpathsampling import CollectiveVariable
 from ..base.rcmodel import TrajectoryDensityCollector
+from .utils import analyze_ops_mcstep
 
 
 logger = logging.getLogger(__name__)
@@ -185,6 +186,7 @@ class DensityCollectionHook(PathSimulatorHook):
                 # reevaluation time
                 dc.reevaluate_density(model=self.model)
 
+    # TODO: move this to utils!
     def accepted_tps_from_ops_storage(self, storage, start=0):
         """
         Find all accepted trial trajectories in an ops storage.
@@ -258,8 +260,17 @@ class TrainingHook(PathSimulatorHook):
         it 'wants' to train.
         """
         # results is the MCStep
-        self.trainset.append_ops_mcstep(
-                                    mcstep=results,
-                                    add_invalid=self.add_invalid_mcsteps,
-                                        )
+        descriptors, shot_results = analyze_ops_mcstep(
+                                        mcstep=results,
+                                        descriptor_transform=self.model.descriptor_transform,
+                                        # TODO!? move states to model?!
+                                        #states=self.model.states
+                                        states=self.trainset.states
+                                                       )
+        if sum(shot_results) == 2 or self.add_invalid_mcsteps:
+            # add the SP only if both trials reached a state
+            # OR if add_invalid is True
+            self.trainset.append_point(descriptors=descriptors,
+                                       shot_results=shot_results,
+                                       )
         self.model.train_hook(self.trainset)
