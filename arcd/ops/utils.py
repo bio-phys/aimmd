@@ -113,3 +113,45 @@ def analyze_ops_mcstep(mcstep, descriptor_transform, states):
             descriptors = np.nan_to_num(descriptors)
 
         return descriptors, shot_results
+
+
+def accepted_trials_from_ops_storage(storage, start=0):
+    """
+    Find all accepted trial trajectories in an ops storage.
+
+    Parameters:
+    -----------
+    storage - :class:`openpathsampling.Storage`
+    start - int (default=0), step from which to start collection
+
+    Returns:
+    --------
+    tras - list of trajectories of the accepted trials
+    counts - list of counts, i.e. if a trial was accepted multiple times
+    """
+    # find the last accepted TP to be able to add it again
+    # instead of the rejects we could find
+    last_accept = start
+    found = False
+    while not found:
+        if storage.steps[last_accept].change.canonical.accepted:
+            found = True  # not necessary since we use break
+            break
+        last_accept -= 1
+    # now iterate over the storage
+    tras = []
+    counts = []
+    for i, step in enumerate(storage.steps[start:]):
+        if step.change.canonical.accepted:
+            last_accept = i + start
+            tras.append(step.change.canonical.trials[0].trajectory)
+            counts.append(1)
+        else:
+            try:
+                counts[-1] += 1
+            except IndexError:
+                # no accepts yet
+                change = storage.steps[last_accept].change
+                tras.append(change.canonical.trials[0].trajectory)
+                counts.append(1)
+    return tras, counts

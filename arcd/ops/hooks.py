@@ -18,7 +18,7 @@ import logging
 from openpathsampling.beta.hooks import PathSimulatorHook
 from openpathsampling import CollectiveVariable
 from ..base.rcmodel import TrajectoryDensityCollector
-from .utils import analyze_ops_mcstep
+from .utils import analyze_ops_mcstep, accepted_trials_from_ops_storage
 
 
 logger = logging.getLogger(__name__)
@@ -141,10 +141,10 @@ class DensityCollectionHook(PathSimulatorHook):
                                                 cache_file=cache_file,
                                                 )
             self.model.density_collector = new_dc
-            tps, counts = self.accepted_tps_from_ops_storage(
-                                                        storage=sim.storage,
-                                                        start=0,
-                                                             )
+            tps, counts = accepted_trials_from_ops_storage(
+                                                    storage=sim.storage,
+                                                    start=0,
+                                                           )
             self.model.density_collector.add_density_for_trajectories(
                                                         model=self.model,
                                                         trajectories=tps,
@@ -162,20 +162,20 @@ class DensityCollectionHook(PathSimulatorHook):
         if step_number - self.first_collection >= 0:
             if step_number - self.first_collection == 0:
                 # first collection
-                tps, counts = self.accepted_tps_from_ops_storage(
+                tps, counts = accepted_trials_from_ops_storage(
                                                 storage=sim.storage,
                                                 start=-self.first_collection,
-                                                                 )
+                                                               )
                 dc.add_density_for_trajectories(model=self.model,
                                                 trajectories=tps,
                                                 counts=counts,
                                                 )
             elif step_number % self.interval == 0:
                 # add only the last interval steps
-                tps, counts = self.accepted_tps_from_ops_storage(
+                tps, counts = accepted_trials_from_ops_storage(
                                                 storage=sim.storage,
                                                 start=-self.interval,
-                                                                 )
+                                                               )
                 dc.add_density_for_trajectories(model=self.model,
                                                 trajectories=tps,
                                                 counts=counts,
@@ -185,43 +185,6 @@ class DensityCollectionHook(PathSimulatorHook):
             if step_number % self.recreate_interval == 0:
                 # reevaluation time
                 dc.reevaluate_density(model=self.model)
-
-    # TODO: move this to utils!
-    def accepted_tps_from_ops_storage(self, storage, start=0):
-        """
-        Find all accepted trial trajectories in an ops storage.
-
-        Parameters:
-        -----------
-        storage - :class:`openpathsampling.Storage`
-        start - int (default=0), step from which to start collection
-        """
-        # find the last accepted TP to be able to add it again
-        # instead of the rejects we could find
-        last_accept = start
-        found = False
-        while not found:
-            if storage.steps[last_accept].change.canonical.accepted:
-                found = True  # not necessary since we use break
-                break
-            last_accept -= 1
-        # now iterate over the storage
-        tras = []
-        counts = []
-        for i, step in enumerate(storage.steps[start:]):
-            if step.change.canonical.accepted:
-                last_accept = i + start
-                tras.append(step.change.canonical.trials[0].trajectory)
-                counts.append(1)
-            else:
-                try:
-                    counts[-1] += 1
-                except IndexError:
-                    # no accepts yet
-                    change = storage.steps[last_accept].change
-                    tras.append(change.canonical.trials[0].trajectory)
-                    counts.append(1)
-        return tras, counts
 
 
 class TrainingHook(PathSimulatorHook):
