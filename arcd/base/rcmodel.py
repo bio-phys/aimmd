@@ -15,12 +15,12 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
-import os
-import pickle
+import copy
 import numpy as np
 from openpathsampling.engines.snapshot import BaseSnapshot as OPSBaseSnapshot
 from openpathsampling.engines.trajectory import Trajectory as OPSTrajectory
 from openpathsampling.collectivevariable import CollectiveVariable
+from openpathsampling import Volume
 from abc import ABC, abstractmethod
 from .storage import Storage
 
@@ -47,7 +47,9 @@ class RCModel(ABC):
                                :class:`openpathsampling.CollectiveVariable`,
                                see `.coordinates` for examples of functions
                                that can be turned to a MDtrajFunctionCV
-        save_model_extension - str, the file extension to use when saving
+        states - list of states, for use in conjunction with ops these should
+                 be :class:`openpathsampling.Volume`s or other functions
+                 taking a snapshot and returning if it is inside of the state
         z_sel_scale - float, scale z_sel to [0., z_sel_scale] for multinomial
                       training and predictions
         density_collection_n_bins - number of bins in each probability
@@ -61,8 +63,7 @@ class RCModel(ABC):
 
     """
 
-    # need to have it here, such that we can get it without instantiating
-    save_model_extension = '.pckl'  # TODO: OSOLETE/OLD SAVING API
+    # have it here, such that we can get it without instantiating
     # scale z_sel to [0., z_sel_scale] for multinomial predictions
     z_sel_scale = 25
     # minimum number of SPs in training set for EE factor calculation
@@ -76,8 +77,9 @@ class RCModel(ABC):
     # not waste computing power with unecessary updates of the density
     density_collection_n_bins = 10
 
-    def __init__(self, descriptor_transform=None, cache_file=None):
+    def __init__(self, states, descriptor_transform=None, cache_file=None):
         """I am an `abc.ABC` and can not be initialized."""
+        self.states = states
         self.descriptor_transform = descriptor_transform
         self.expected_p = []
         self.expected_q = []
@@ -88,105 +90,28 @@ class RCModel(ABC):
                                                             )
 
     @property
-    @abstractmethod
     def n_out(self):
         """Return the number of model outputs, i.e. states."""
         # need to know if we use binomial or multinomial
-        raise NotImplementedError
+        return len(self.states)
 
-    # TODO: OBSOLETE/OLD SAVING?LOADING API
-    # TODO: UPDATE THIS WHEN TRANSITION DONE!
-    # NOTE ON SAVING AND LOADING MODELS
-    # you do not have to do anything if your generic RCModel subclass contains
-    # only picklable python objects in its obj.__dict__
-    # (except for obj.descriptor_transform which we handle here)
-    # Otherwise you will need to implement obj.set_state() and obj.fix_state()
-    # and obj.save(), while obj.load_state() should stay untouched
-    # Have a look at the KerasRCModels and PytorchRCModels to see how
-    # In general state will be a dict, obj.fix_state() should reset all values
-    # to the correct python objects
-    # and cls.set_state(state) should return the object with given state
-    # obj.save() should make all obj.__dict__ values picklable
-    # and then call super().save(fname) to save the model
-    @classmethod
-    def set_state(cls, state):
-        """Return an object of the same class with given internal state."""
-        obj = cls()
-        obj.__dict__.update(state)
-        return obj
-
-    @classmethod
-    def fix_state(self, state):
-        """Corrects a given loaded state to an operational state."""
-        return state
-
-    @classmethod
-    def load_state(cls, fname, ops_storage=None):
-        """Return internal state from given file, possibly (re)set OPS CVs."""
-        with open(fname, 'rb') as pfile:
-            state = pickle.load(pfile)
-        # set pickle_file_dirname variable so we can load models saved besides
-        # as e.g. the keras hdf5 files
-        state['_pickle_file_dirname'] = os.path.abspath(os.path.dirname(fname))
-        if (ops_storage is not None):
-            transform = state['descriptor_transform']
-            if isinstance(transform, str):
-                # we just assume it is the name of the OPS CV
-                state['descriptor_transform'] = ops_storage.cvs.find(transform)
-            else:
-                raise ValueError('Could not load descriptor_transform from '
-                                 + 'ops_storage.')
-        sub_class = state['__class__']
-        del state['__class__']
-        # to make this a generally applicable function,
-        # we return state and the correct subclass to call
-        # such that we can do state=sub_class.fix_state(state)
-        # to first get the final operational state dict
-        # and then call sub_class.set_state(state)
-        # which returns the correctly initialized obj
-        return state, sub_class
-
-    def save(self, fname, overwrite=False):
-        """Save internal state to file."""
-        state = self.__dict__.copy()
-        # TODO/FIXME: this is a dirty hack for compability between old and new saving
-        # TODO: maybe we can come up with a better hack?
-        if self.density_collector._cache is not None:
-            logger.warn('Saving a density collector with cache is only fully'
-                        + ' supported with arcd.Storage files. On loading the'
-                        + ' internally saved descriptors will need to be'
-                        + ' recreated.')
-            # simply set everything we can not save to None and create a new object
-            dc_state = self.density_collector.__dict__.copy()
-            dc_state["_cache"] = None
-            dc_state["_cache_file"] = None
-            dc_state["_descriptors"] = np.empty((0, 0))
-            dc_state["_counts"] = np.empty((0,))
-            empty_dc = self.density_collector.__class__.__new__(
-                                        self.density_collector.__class__
-                                                                )
-            empty_dc.__dict__.update(dc_state)
-            state['density_collector'] = empty_dc
-        state['__class__'] = self.__class__
-        if isinstance(state['descriptor_transform'], CollectiveVariable):
-            # replace OPS CVs by their name to reload from OPS storage
-            state['descriptor_transform'] = state['descriptor_transform'].name
-        # now save
-        if not fname.endswith(self.save_model_extension):
-            # make sure we have the correct extension
-            fname += self.save_model_extension
-        if os.path.exists(fname) and not overwrite:
-            raise IOError('File {:s} exists.'.format(fname))
-        with open(fname, 'wb') as pfile:
-            # NOTE: we need python >= 3.4 for protocol=4
-            pickle.dump(state, pfile, protocol=4)
-
-    # NOTE: NEW LOADING/SAVING API
+    # NOTE on saving and loading models:
+    #   if your generic RCModel subclass contains only pickleable objects in
+    #   its self.__dict__ you do not have to do anything.
+    #   otherwise you might need to implement object_for_pickle and
+    #   complete_from_h5py_group, which will be called on saving and loading
+    #   respectively, both will be called with a h5py group as argument which
+    #   you can use use for saving and loading.
+    #   Have a look at the pytorchRCModels code.
     def object_for_pickle(self, group, overwrite=True):
-        state = self.__dict__.copy()
+        state = copy.deepcopy(self.__dict__)
         if isinstance(state['descriptor_transform'], CollectiveVariable):
             # replace OPS CVs by their name to reload from OPS storage
             state['descriptor_transform'] = state['descriptor_transform'].name
+        for i, s in enumerate(self.states):
+            # replace ops volumes by their name
+            if isinstance(s, Volume):
+                state['states'][i] = s.name
         # take care of density collector
         state["density_collector"] = state["density_collector"].object_for_pickle(group,
                                                                                   overwrite=overwrite,
@@ -210,6 +135,13 @@ class RCModel(ABC):
         else:
             raise ValueError("self.descriptor_transform does not seem to be a "
                              + "string indicating the name of the ops CV.")
+        for i, s in enumerate(self.states):
+            if isinstance(s, str):
+                try:
+                    self.states[i] = ops_storage.volumes.find(s)
+                except KeyError:
+                    logger.warn(f"There seems to be no state with name {s} in"
+                                + " the ops storage.")
 
     @abstractmethod
     def train_hook(self, trainset):

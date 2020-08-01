@@ -19,16 +19,9 @@ import logging
 import openpathsampling as paths
 from .rcmodel import RCModel
 from .trainset import TrainSet
-from ..ops.traininghook import TrainingHook as _TrainingHook
 
 
 logger = logging.getLogger(__name__)
-
-
-# This function is tied to the TrainingHook as this is the object saving
-# and therfore 'deciding' on the name the data has in ops_storage.tags
-# and since we want to keep track of those names only once we rebind here
-load_trainset = _TrainingHook.load_trainset
 
 
 def emulate_production_from_trainset(model, trainset):

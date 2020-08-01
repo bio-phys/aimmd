@@ -34,58 +34,19 @@ logger = logging.getLogger(__name__)
 class KerasRCModel(RCModel):
     """Wraps a Keras model for use with arcd."""
 
-    # need to have it here, such that we can get it without instantiating
-    save_nnet_suffix = '_keras.h5'  # TODO: OSOLETE/OLD SAVING API
-
-    def __init__(self, nnet, descriptor_transform=None, cache_file=None):
+    def __init__(self, nnet, states, descriptor_transform=None, cache_file=None):
+        super().__init__(states=states,
+                         descriptor_transform=descriptor_transform,
+                         cache_file=cache_file)
         self.nnet = nnet
         self.log_train_decision = []
         self.log_train_loss = []
         self._count_train_hook = 0
-        # need to call super __init__ last such that it can make use of
-        # the properties and methods we implement here
-        super().__init__(descriptor_transform=descriptor_transform,
-                         cache_file=cache_file)
 
-    @property
-    def n_out(self):
-        return self.nnet.output_shape[1]
-
-    # TODO: OBSOLETE/OLD LOADING-SAVING API
-    @classmethod
-    def set_state(cls, state):
-        obj = cls(nnet=state['nnet'])
-        obj.__dict__.update(state)
-        return obj
-
-    @classmethod
-    def fix_state(cls, state):
-        if not os.path.exists(state['nnet']):
-            # try fixing changed absolute paths by taking
-            # ops_storage_dir + base filname
-            # this enables us to copy the whole folder containing OPS-storage
-            # and model to another location/machine
-            fname = os.path.basename(state['nnet'])
-            state['nnet'] = os.path.join(state['_pickle_file_dirname'], fname)
-        nnet = load_keras_model(state['nnet'])
-        state['nnet'] = nnet
-        return state
-
-    def save(self, fname, overwrite=False):
-        self.nnet.save(fname + self.save_nnet_suffix,
-                       overwrite=overwrite,
-                       include_optimizer=True,
-                       # 'tf only works for eager execution models and tf v2
-                       # save_format='tf',  # 'h5' or 'tf'
-                       )
-        # keep a ref to the network
-        nnet = self.nnet
-        # but replace with the name of the file in self.__dict__
-        self.nnet = fname + self.save_nnet_suffix
-        # let super save the state dict
-        super().save(fname, overwrite)
-        # and restore the nnet such that self stays functional
-        self.nnet = nnet
+    # Implemented in base RCModel
+    #@property
+    #def n_out(self):
+    #    return self.nnet.output_shape[1]
 
     # NOTE: NEW LOADING-SAVING API
     def object_for_pickle(self, group, overwrite=True):

@@ -226,9 +226,7 @@ class TrainingHook(PathSimulatorHook):
         descriptors, shot_results = analyze_ops_mcstep(
                                         mcstep=results,
                                         descriptor_transform=self.model.descriptor_transform,
-                                        # TODO!? move states to model?!
-                                        #states=self.model.states
-                                        states=self.trainset.states
+                                        states=self.model.states
                                                        )
         if sum(shot_results) == 2 or self.add_invalid_mcsteps:
             # add the SP only if both trials reached a state

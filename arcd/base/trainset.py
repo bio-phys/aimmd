@@ -23,28 +23,15 @@ logger = logging.getLogger(__name__)
 
 
 class TrainSet(Iterable):
-    """
-    Stores shooting results and the corresponding descriptors.
-
-    Additionally handles the 'unwrapping' of MonteCarlo steps from OPS,
-    i.e. we can just call self.append_ops_mcstep(MCstep) and the trainset
-    will extract states reached and descriptor values.
-    """
+    """Stores shooting results and the corresponding descriptors."""
 
     # TODO: do we need weights for the points?
-    def __init__(self, states, descriptor_transform=None,
+    def __init__(self, n_states,
                  descriptors=None, shot_results=None, weights=None):
         """
         Create a TrainSet.
 
-        states - list of 'states', where a 'state' can be any object taking
-                 a OPS snapshot and returning True/False to indicate if the
-                 snapshot is inside of state, e.g. any OPS volume
-                 NOTE: If not used together with OPS it suffices to give a list
-                 with the correct length, e.g. ['A', 'B']
-        descriptor_transform - None or any function working on OPS snapshots,
-                               is applied to the OPS snapshots extracted in
-                               self.append_ops_mcstep() to get the descriptors
+        n_states - int, number of states, i.e. number of possible outcomes
         descriptors - None or numpy.ndarray [shape=(n_points, n_dim)],
                       if given trainset is initialized with these descriptors
         shot_results - None or numpy.ndarray [shape=(n_points, n_states)],
@@ -52,13 +39,9 @@ class TrainSet(Iterable):
         weights - None or numpy.ndarray [shape=(n_points,)],
                   if given we will use this as weights for the training points
         """
-        self.states = states
-        n_states = len(states)
+        self.n_states = n_states
         self._tp_idxs = [[i, j] for i in range(n_states)
                          for j in range(i + 1, n_states)]
-        # TODO: maybe default to a lambda func just taking xyz of a OPS traj?
-        # TODO: instead of the None value we have now?
-        self.descriptor_transform = descriptor_transform
 
         if ((descriptors is not None) and (shot_results is not None)):
             descriptors = np.asarray(descriptors, dtype=np.float64)
@@ -139,8 +122,7 @@ class TrainSet(Iterable):
         else:
             raise KeyError('keys must be int, slice or np.ndarray.')
 
-        return TrainSet(self.states,
-                        descriptor_transform=self.descriptor_transform,
+        return TrainSet(self.n_states,
                         descriptors=descriptors, shot_results=shots,
                         weights=weights)
 

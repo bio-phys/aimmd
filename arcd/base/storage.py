@@ -17,6 +17,7 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 import logging
 import os
 import io
+import copy
 import pickle
 import collections.abc
 import h5py
@@ -523,9 +524,6 @@ class Storage:
         """
         Save an arcd.TrainSet.
 
-        We try to pickle descriptor_transform and states, except if they are
-        ops objects. In that case we save the names and they can be reloaded by
-        passing the storage to load_trainset.
         There can only be one Trainset in the Storage at a time but you can
         overwrite it as often as you want with TrainSets of different length.
         That is you can not change the number of states or the descriptors
@@ -569,46 +567,12 @@ class Storage:
         des_group[:] = trainset.descriptors
         sr_group[:] = trainset.shot_results
         w_group[:] = trainset.weights
-        # we try to handle states and descriptor_transform sensibly:
-        # if states are OPS volumes we will replace by name to later reload
-        # from OPS storage; same for descriptor_transform, i.e. if it is an OPS
-        # collectivevariable replace by name
-        # everything else we will just try to pickle as usual python objects
-        # if we found any ops objects we set 'ops_objects' to True to know when loading
-        # first prepare descriptor_transform and states for storing
-        py_state = {"ops_objects": False}
-        if isinstance(trainset.descriptor_transform, OPSCollectiveVariable):
-            py_state["ops_objects"] = True
-            py_state["descriptor_transform"] = trainset.descriptor_transform.name
-        else:
-            py_state["descriptor_transform"] = trainset.descriptor_transform
-        states = []
-        for s in trainset.states:
-            if isinstance(s, OPSVolume):
-                states.append(s.name)
-                py_state["ops_objects"] = True
-            else:
-                states.append(s)
-        py_state["states"] = states
+        py_state = {"n_states": trainset.n_states}
         # now store them
         MutableObjectShelf(ts_group).save(py_state, overwrite=True)
 
-    def load_trainset(self, states=None, descriptor_transform=None, ops_storage=None):
-        """
-        Load an arcd.TrainSet.
-
-        Parameters:
-        -----------
-        states - None or list of states, if given overwrite states for TrainSet
-        descriptor_transform - None or descriptor_transform function, if given
-                               overwrites descriptor_transform for TrainSet
-        ops_storage - None or ``openpathsampling.Storage``, if given will try
-                      to reload states and descriptor_transform for TrainSet
-                      from there
-
-        Note: Passing states or descriptor_transform takes precedence over what
-              we load from the ``openpathsampling.Storage``.
-        """
+    def load_trainset(self):
+        """Load an arcd.TrainSet."""
         try:
             ts_group = self.file[self.h5py_path_dict["trainset_store"]]
         except KeyError:
@@ -618,33 +582,7 @@ class Storage:
         weights = ts_group['weights'][:]
         # try to load descriptor_transform and states
         py_state = MutableObjectShelf(ts_group).load()
-        des_trans_loaded = py_state["descriptor_transform"]
-        states_loaded = py_state["states"].copy()
-        if (ops_storage is not None) and py_state["ops_objects"]:
-            # we only replace the states and descriptor_transform if we believe
-            # they are from ops, this way we can still combine 'normal'
-            # pickleable state and descriptor_transform functions with ops objs
-            if isinstance(des_trans_loaded, str):
-                des_trans_loaded = ops_storage.cvs.find(des_trans_loaded)
-            for i, s in enumerate(states_loaded):
-                if isinstance(s, str):
-                    states_loaded[i] = ops_storage.volumes.find(s)
-        elif py_state["ops_objects"]:
-            logger.warn("TrainSet was saved with ops objects (states and/"
-                        + "or descriptor_transform) but no ops_storage "
-                        + "was passed to load_trainset(). You will have to"
-                        + " reset them manually. They are still the names "
-                        + "of the ops objects at savetime.")
-        # now sort out if we were given something that takes precedence
-        if descriptor_transform is None:
-            # FIXME: this way we can never overwrite the descriptor_transform
-            #        to None if it has a value in storage!
-            descriptor_transform = des_trans_loaded
-        if states is None:
-            states = states_loaded
-        # and return the created trainset
-        return TrainSet(states=states,
-                        descriptor_transform=descriptor_transform,
+        return TrainSet(py_state["n_states"],
                         descriptors=descriptors,
                         shot_results=shot_results,
                         weights=weights,
