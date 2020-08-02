@@ -149,7 +149,7 @@ class TrainSet(Iterable):
         shadow_len = self._shot_results.shape[0]
         if shadow_len == 0:
             # no points yet, just create the arrays
-            self._shot_results = np.zeros((add_entries, len(self.states)),
+            self._shot_results = np.zeros((add_entries, self.n_states),
                                           dtype=np.float64)
             self._descriptors = np.zeros((add_entries, descriptor_dim),
                                          dtype=np.float64)
@@ -158,7 +158,7 @@ class TrainSet(Iterable):
             # no space left for the next point, extend
             self._shot_results = np.concatenate(
                 (self._shot_results,
-                 np.zeros((add_entries, len(self.states)), dtype=np.float64)
+                 np.zeros((add_entries, self.n_states), dtype=np.float64)
                  )
                                                 )
             self._descriptors = np.concatenate(

@@ -124,13 +124,13 @@ class Test_RCModel:
                np.array([[200.]]), np.array([[0.]])
                ]
         # contains 1 TP
-        ts1 = arcd.TrainSet(['A', 'B'], descriptor_transform=None,
+        ts1 = arcd.TrainSet(n_states=2,
                             descriptors=np.concatenate(sps, axis=0),
                             shot_results=np.array([[0., 2.], [1., 1.],
                                                    [0., 2.], [2., 0.]])
                             )
         # contains 2 TPs
-        ts2 = arcd.TrainSet(['A', 'B'], descriptor_transform=None,
+        ts2 = arcd.TrainSet(n_states=2,
                             descriptors=np.concatenate(sps, axis=0),
                             shot_results=np.array([[0., 2.], [1., 1.],
                                                    [1., 1.], [2., 0.]])

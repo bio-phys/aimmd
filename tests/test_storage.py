@@ -60,8 +60,7 @@ class Test_storage:
         n_p = 2500  # number of points
         n_d = 200  # number of dimensions per point
         add_points = 200  # points to append for the second round
-        ts_true = arcd.TrainSet(states=["A", "B"],
-                                descriptor_transform=None,
+        ts_true = arcd.TrainSet(n_states=2,
                                 descriptors=np.random.random_sample(size=(n_p, n_d)),
                                 shot_results=np.random.randint(0, 2, size=(n_p, 2)),
                                 )

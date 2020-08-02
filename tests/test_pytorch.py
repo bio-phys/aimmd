@@ -32,9 +32,9 @@ class Test_RCModel:
     def test_store_model(self, tmp_path, n_states, model_type):
         arcd_store = arcd.Storage(tmp_path / 'Test_load_save_model.h5')
 
-        states = ['A', 'B']
+        states = ["A", "B"]
         if n_states == 'multinomial':
-            states += ['C']
+            states += ["C"]
         cv_ndim = 200
         # create random descriptors to predict probabilities for them
         descriptors = np.random.normal(size=(20, cv_ndim))
@@ -45,7 +45,7 @@ class Test_RCModel:
             shot_results = np.array([[1, 1] for _ in range(20)])
             n_out = 1
         # a trainset for test_loss testing
-        trainset = arcd.TrainSet(states, descriptors=descriptors,
+        trainset = arcd.TrainSet(len(states), descriptors=descriptors,
                                  shot_results=shot_results)
         # model creation
         def make_1hidden_net(n_in, n_out):
@@ -62,7 +62,8 @@ class Test_RCModel:
                 torch_model = torch_model.to('cuda')
             optimizer = torch.optim.Adam(torch_model.parameters(), lr=1e-3)
             model = arcd.pytorch.EEScalePytorchRCModel(torch_model, optimizer,
-                                                  descriptor_transform=None)
+                                                       descriptor_transform=None,
+                                                       states=states)
         elif model_type == 'MultiDomain':
             pnets = [make_1hidden_net(cv_ndim, n_out) for _ in range(3)]
             cnet = make_1hidden_net(cv_ndim, len(pnets))
@@ -78,6 +79,7 @@ class Test_RCModel:
                                                     cnet=cnet,
                                                     poptimizer=poptimizer,
                                                     coptimizer=coptimizer,
+                                                    states=states,
                                                     descriptor_transform=None)
         elif model_type == "EnsembleNet":
             nnets = [make_1hidden_net(cv_ndim, n_out) for _ in range(5)]
@@ -86,6 +88,7 @@ class Test_RCModel:
             optims = [arcd.pytorch.HMC(n.parameters()) for n in nnets]
             model = arcd.pytorch.EERandEnsemblePytorchRCModel(nnets=nnets,
                                                               optimizers=optims,
+                                                              states=states
                                                               )
 
         # predict before

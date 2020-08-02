@@ -93,7 +93,10 @@ class RCModel(ABC):
     def n_out(self):
         """Return the number of model outputs, i.e. states."""
         # need to know if we use binomial or multinomial
-        return len(self.states)
+        n_states = len(self.states)
+        if n_states > 2:
+            return n_states
+        return 1
 
     # NOTE on saving and loading models:
     #   if your generic RCModel subclass contains only pickleable objects in
