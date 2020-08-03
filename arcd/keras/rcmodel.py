@@ -147,9 +147,10 @@ class EEScaleKerasRCModel(KerasRCModel):
     """Expected efficiency scale KerasRCModel."""
     __doc__ += _train_decision_docs['EEscale']
 
-    def __init__(self, nnet, descriptor_transform=None,
+    def __init__(self, nnet, states, descriptor_transform=None,
                  ee_params=_train_decision_defaults["EEscale"], cache_file=None):
-        super().__init__(nnet=nnet, descriptor_transform=descriptor_transform,
+        super().__init__(nnet=nnet, states=states,
+                         descriptor_transform=descriptor_transform,
                          cache_file=cache_file)
         # make it possible to pass only the altered values in dictionary
         ee_params_defaults = copy.deepcopy(_train_decision_defaults['EEscale'])
@@ -163,9 +164,10 @@ class EERandKerasRCModel(KerasRCModel):
     """Expected efficiency randomized KerasRCModel."""
     __doc__ += _train_decision_docs['EErand']
 
-    def __init__(self, nnet, descriptor_transform=None,
+    def __init__(self, nnet, states, descriptor_transform=None,
                  ee_params=_train_decision_defaults['EErand'], cache_file=None):
-        super().__init__(nnet=nnet, descriptor_transform=descriptor_transform,
+        super().__init__(nnet=nnet, states=states,
+                         descriptor_transform=descriptor_transform,
                          cache_file=cache_file)
         # make it possible to pass only the altered values in dictionary
         defaults = copy.deepcopy(_train_decision_defaults['EErand'])

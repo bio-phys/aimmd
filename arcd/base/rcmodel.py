@@ -107,14 +107,15 @@ class RCModel(ABC):
     #   you can use use for saving and loading.
     #   Have a look at the pytorchRCModels code.
     def object_for_pickle(self, group, overwrite=True):
-        state = copy.deepcopy(self.__dict__)
+        state = self.__dict__.copy()  # shallow copy -> take care of lists etc!
         if isinstance(state['descriptor_transform'], CollectiveVariable):
             # replace OPS CVs by their name to reload from OPS storage
             state['descriptor_transform'] = state['descriptor_transform'].name
-        for i, s in enumerate(self.states):
-            # replace ops volumes by their name
-            if isinstance(s, Volume):
-                state['states'][i] = s.name
+        # create a new list
+        # replace ops volumes by their name, keep everything else
+        state["states"] = [s.name if isinstance(s, Volume) else s
+                           for s in self.states
+                           ]
         # take care of density collector
         state["density_collector"] = state["density_collector"].object_for_pickle(group,
                                                                                   overwrite=overwrite,
