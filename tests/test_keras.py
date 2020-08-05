@@ -74,14 +74,15 @@ class Test_RCModel:
         elif n_states == 'binomial':
             shot_results = np.array([[1, 1] for _ in range(20)])
         # a trainset for test_loss testing
-        trainset = arcd.TrainSet(states, descriptors=descriptors,
+        trainset = arcd.TrainSet(n_states=len(states), descriptors=descriptors,
                                  shot_results=shot_results)
         # model creation
         optim = optimizers.Adam(lr=1e-3)
         snn = arcd.keras.create_snn(cv_ndim, hidden_parms, optim, len(states),
                                     multi_state=multi_state
                                     )
-        model = arcd.keras.EEScaleKerasRCModel(snn, descriptor_transform=None)
+        model = arcd.keras.EEScaleKerasRCModel(snn, states=states,
+                                               descriptor_transform=None)
         # predict before
         predictions_before = model(descriptors, use_transform=False)
         test_loss_before = model.test_loss(trainset)
