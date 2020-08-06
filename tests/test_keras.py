@@ -231,4 +231,7 @@ class Test_RCModel:
                            load_ts.shot_results)
         # try restarting
         arcd.ops.set_rcmodel_in_all_selectors(load_model, load_sampler)
+        # NOTE: we reattach the hooks from previous simulation instead of recreating
+        sampler.attach_hook(trainhook)
+        sampler.attach_hook(storehook)
         load_sampler.run(1)
