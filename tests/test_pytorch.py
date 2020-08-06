@@ -199,10 +199,7 @@ class Test_RCModel:
         assert np.allclose(test_loss_before, test_loss_after)
 
     @pytest.mark.slow
-    @pytest.mark.parametrize( "model_type",
-                             [('EESingleDomain',),
-                              ('EEMultiDomain',),
-                              ])
+    @pytest.mark.parametrize( "model_type", ['EESingleDomain', 'EEMultiDomain',])
     def test_toy_sim_eepytorch(self, tmp_path, ops_toy_sim_setup, model_type):
         # NOTE: this is only a smoke test.
         # We only test if we can run + restart without errors
