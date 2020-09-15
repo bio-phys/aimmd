@@ -194,16 +194,13 @@ class TrainSetIterator(Iterator):
         if batch_size is None:
             batch_size = len(trainset)
         self.batch_size = batch_size
+        self.trainset = trainset
         if shuffle:
             # shuffle before iterating
-            shuffle_idxs = np.random.permutation(self.max_i)
-            self.descriptors = trainset.descriptors[shuffle_idxs]
-            self.shot_results = trainset.shot_results[shuffle_idxs]
-            self.weights = trainset.weights[shuffle_idxs]
+            self.idxs = np.random.permutation(self.max_i)
         else:
-            self.descriptors = trainset.descriptors
-            self.shot_results = trainset.shot_results
-            self.weights = trainset.weights
+            # just a range
+            self.idxs = np.arange(self.max_i)
 
     def __iter__(self):
         return self
@@ -222,6 +219,10 @@ class TrainSetIterator(Iterator):
             stop = self.i + self.batch_size
 
         self.i += self.batch_size
-        return (self.descriptors[start:stop],
-                self.shot_results[start:stop],
-                self.weights[start:stop])
+        des = self.trainset.descriptors[self.idxs[start:stop]]
+        shots = self.trainset.shot_results[self.idxs[start:stop]]
+        ws = self.trainset.weights[self.idxs[start:stop]]
+        return {"descriptors": des,
+                "shot_results": shots,
+                "weights": ws,
+                }
