@@ -195,12 +195,9 @@ class TrainSetIterator(Iterator):
             batch_size = len(trainset)
         self.batch_size = batch_size
         self.trainset = trainset
-        if shuffle:
-            # shuffle before iterating
-            self.idxs = np.random.permutation(self.max_i)
-        else:
-            # just a range
-            self.idxs = np.arange(self.max_i)
+        self.idxs = (np.random.permutation(self.max_i) if shuffle
+                     else np.arange(self.max_i)  # just a range if no shuffle
+                     )
 
     def __iter__(self):
         return self

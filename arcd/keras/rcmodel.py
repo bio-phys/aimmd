@@ -129,12 +129,14 @@ class KerasRCModel(RCModel):
     def train_epoch(self, trainset, batch_size=128, shuffle=True):
         # train for one epoch == one pass over the trainset
         loss = 0.
-        for des, shots, weights in trainset.iter_batch(batch_size, shuffle):
+        for target in trainset.iter_batch(batch_size, shuffle):
             # multiply by batch lenght to get total loss per batch
             # and then at the ernd the correct average loss per shooting point
-            loss += (self.nnet.train_on_batch(x=des, y=shots,
-                                              sample_weight=weights)
-                     * np.sum(weights)
+            loss += (self.nnet.train_on_batch(x=target['descriptors'],
+                                              y=target['shot_results'],
+                                              sample_weight=target['weights']
+                                              )
+                     * np.sum(target['weights'])
                      )
         # get loss per shot as for pytorch models,
         # the lossFXs are not normalized in any way

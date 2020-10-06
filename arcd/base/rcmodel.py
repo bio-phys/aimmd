@@ -41,15 +41,15 @@ class RCModel(ABC):
 
     Attributes:
     -----------
+        states - list of states, for use in conjunction with ops these should
+                 be :class:`openpathsampling.Volume`s or other functions
+                 taking a snapshot and returning if it is inside of the state
         descriptor_transform - any function transforming (Cartesian) snapshot
                                coordinates to the descriptor representation in
                                which the model learns, e.g. an
                                :class:`openpathsampling.CollectiveVariable`,
                                see `.coordinates` for examples of functions
                                that can be turned to a MDtrajFunctionCV
-        states - list of states, for use in conjunction with ops these should
-                 be :class:`openpathsampling.Volume`s or other functions
-                 taking a snapshot and returning if it is inside of the state
         z_sel_scale - float, scale z_sel to [0., z_sel_scale] for multinomial
                       training and predictions
         density_collection_n_bins - number of bins in each probability
