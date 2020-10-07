@@ -80,6 +80,8 @@ class Test_ArcdStorageHook:
         loaded_model2 = arcd_store.rcmodels["most_recent"]
         # and the trainset
         ts = arcd_store.load_trainset()
+        # NOTE: no need to test the correctness of the loaded values
+        #       we check that what we load is what we save in storage tests
 
 
 class Test_DensityCollectionHook:

@@ -17,6 +17,7 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 import logging
 import numpy as np
 from collections.abc import Iterable, Iterator
+from . import Properties
 
 
 logger = logging.getLogger(__name__)
@@ -219,7 +220,7 @@ class TrainSetIterator(Iterator):
         des = self.trainset.descriptors[self.idxs[start:stop]]
         shots = self.trainset.shot_results[self.idxs[start:stop]]
         ws = self.trainset.weights[self.idxs[start:stop]]
-        return {"descriptors": des,
-                "shot_results": shots,
-                "weights": ws,
+        return {Properties.descriptors: des,
+                Properties.shot_results: shots,
+                Properties.weights: ws,
                 }

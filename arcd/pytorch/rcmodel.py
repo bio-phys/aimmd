@@ -19,6 +19,7 @@ import copy
 import torch
 import numpy as np
 from abc import abstractmethod
+from ..base import Properties
 from ..base.rcmodel import RCModel
 from ..base.rcmodel_train_decision import (_train_decision_funcs,
                                            _train_decision_defaults,
@@ -33,79 +34,96 @@ logger = logging.getLogger(__name__)
 
 
 # LOSS FUNCTIONS
-def binomial_loss(input, target, weight):
+def binomial_loss(target):
     """
     Loss for a binomial process.
 
-    input is the predicted log likelihood,
-    target are the true event counts, i.e. states reached for TPS
-    weight is a tensor of weights for each point
+    target - dictionary containing shooting point properties and NN output,
+             keys are as in Properties
 
     NOTE: This is NOT normalized.
     """
-    t1 = target[:, 0] * torch.log(1. + torch.exp(input[:, 0]))
-    t2 = target[:, 1] * torch.log(1. + torch.exp(-input[:, 0]))
+    q = target[Properties.q]
+    shots = target[Properties.shot_results]
+    weights = target[Properties.weights]
+    t1 = shots[:, 0] * torch.log(1. + torch.exp(q[:, 0]))
+    t2 = shots[:, 1] * torch.log(1. + torch.exp(-q[:, 0]))
     zeros = torch.zeros_like(t1)
-    return weight.dot(torch.where(target[:, 0] == 0, zeros, t1)
-                      + torch.where(target[:, 1] == 0, zeros, t2))
+
+    return weights.dot(torch.where(shots[:, 0] == 0, zeros, t1)
+                       + torch.where(shots[:, 1] == 0, zeros, t2))
 
 
-def binomial_loss_vect(input, target, weight):
+def binomial_loss_vect(target):
     """
     Loss for a binomial process.
 
-    input is the predicted log likelihood,
-    target are the true event counts, i.e. states reached for TPS
-    weight is a tensor of weights for each point
+    target - dictionary containing shooting point properties and NN output,
+             keys are as in Properties
 
     Same as binomial_loss, but returns a vector loss values per point.
     Needed for multidomain RCModels to train the classifier.
 
     NOTE: NOT normalized.
     """
-    t1 = target[:, 0] * torch.log(1. + torch.exp(input[:, 0]))
-    t2 = target[:, 1] * torch.log(1. + torch.exp(-input[:, 0]))
+    q = target[Properties.q]
+    shots = target[Properties.shot_results]
+    weights = target[Properties.weights]
+    t1 = shots[:, 0] * torch.log(1. + torch.exp(q[:, 0]))
+    t2 = shots[:, 1] * torch.log(1. + torch.exp(-q[:, 0]))
     zeros = torch.zeros_like(t1)
-    return weight * (torch.where(target[:, 0] == 0, zeros, t1)
-                     + torch.where(target[:, 1] == 0, zeros, t2)
-                     )
+
+    return weights * (torch.where(shots[:, 0] == 0, zeros, t1)
+                      + torch.where(shots[:, 1] == 0, zeros, t2)
+                      )
 
 
-def multinomial_loss(input, target, weight):
+def multinomial_loss(target):
     """
     Loss for multinomial process.
 
-    input are the predicted unnormalized loglikeliehoods,
-    target the corresponding true event counts
-    weight is a tensor of weights for each point
+    target - dictionary containing shooting point properties and NN output,
+             keys are as in Properties
 
     NOTE: This is NOT normalized.
     """
-    ln_Z = torch.log(torch.sum(torch.exp(input), dim=1, keepdim=True))
-    zeros = torch.zeros_like(target)
-    return torch.sum(torch.sum(torch.where(target == 0, zeros, (ln_Z - input) * target),
-                               dim=1)
-                     * weight
-                     )
+    q = target[Properties.q]
+    shots = target[Properties.shot_results]
+    weights = target[Properties.weights]
+    # log-sum-exp trick
+    maxes = torch.max(q, dim=1, keepdim=True).values  # returns a named tuple (values, indices)
+    ln_Z = maxes + torch.log(torch.sum(torch.exp(q - maxes), dim=1, keepdim=True))
+    zeros = torch.zeros_like(shots)
+    return weights.dot(torch.sum(
+                        torch.where(shots == 0, zeros, (ln_Z - q) * shots),
+                        dim=1
+                                 )
+                       )
 
 
-def multinomial_loss_vect(input, target, weight):
+def multinomial_loss_vect(target):
     """
     Loss for multinomial process.
 
-    input are the predicted unnormalized loglikeliehoods,
-    target the corresponding true event counts
-    weight is a tensor of weights for each point
+    target - dictionary containing shooting point properties and NN output,
+             keys are as in Properties
 
     Same as multinomial_loss, but returns a vector of loss values per point.
     Needed for multidomain RCModels to train the classifier.
 
     NOTE: NOT normalized.
     """
-    ln_Z = torch.log(torch.sum(torch.exp(input), dim=1, keepdim=True))
-    zeros = torch.zeros_like(target)
-    return weight * torch.sum(torch.where(target == 0, zeros, (ln_Z - input) * target),
-                              dim=1)
+    q = target[Properties.q]
+    shots = target[Properties.shot_results]
+    weights = target[Properties.weights]
+    # log-sum-exp trick
+    maxes = torch.max(q, dim=1, keepdim=True).values  # returns a named tuple (values, indices)
+    ln_Z = maxes + torch.log(torch.sum(torch.exp(q - maxes), dim=1, keepdim=True))
+    zeros = torch.zeros_like(shots)
+    return weights * torch.sum(
+                            torch.where(shots == 0, zeros, (ln_Z - q) * shots),
+                            dim=1
+                              )
 
 
 # RCModels using one ANN
@@ -254,13 +272,17 @@ class PytorchRCModel(RCModel):
         self.nnet.eval()  # put model in evaluation mode
         total_loss = 0.
         with torch.no_grad():
-            for des, shots, weights in trainset.iter_batch(batch_size, False):
+            for target in trainset.iter_batch(batch_size, False):
                 # create descriptors and results tensors where the model lives
-                des = torch.as_tensor(des, device=self._device, dtype=self._dtype)
-                shots = torch.as_tensor(shots, device=self._device, dtype=self._dtype)
-                weights = torch.as_tensor(weights, device=self._device, dtype=self._dtype)
-                q_pred = self.nnet(des)
-                loss = self.loss(q_pred, shots, weights)
+                target = {key: torch.as_tensor(val,
+                                               device=self._device,
+                                               dtype=self._dtype
+                                               )
+                          for key, val in target.items()
+                          }
+                q_pred = self.nnet(target[Properties.descriptors])
+                target[Properties.q] = q_pred
+                loss = self.loss(target)
                 total_loss += float(loss)
         self.nnet.train()  # and back to train mode
         return total_loss / np.sum(np.sum(trainset.shot_results, axis=-1)
@@ -276,19 +298,20 @@ class PytorchRCModel(RCModel):
         # one pass over the whole trainset
         # returns loss per shot averaged over whole training set
         total_loss = 0.
-        for descriptors, shot_results, weights in trainset.iter_batch(batch_size, shuffle):
+        for target in trainset.iter_batch(batch_size, shuffle):
             # define closure func so we can use conjugate gradient or LBFGS
             def closure():
                 self.optimizer.zero_grad()
                 # create descriptors and results tensors where the model lives
-                descrip = torch.as_tensor(descriptors, device=self._device,
-                                          dtype=self._dtype)
-                s_res = torch.as_tensor(shot_results, device=self._device,
-                                        dtype=self._dtype)
-                ws = torch.as_tensor(weights, device=self._device,
-                                     dtype=self._dtype)
-                q_pred = self.nnet(descrip)
-                loss = self.loss(q_pred, s_res, ws)
+                targ = {key: torch.as_tensor(val,
+                                             device=self._device,
+                                             dtype=self._dtype
+                                             )
+                        for key, val in target.items()
+                        }
+                q_pred = self.nnet(targ[Properties.descriptors])
+                targ[Properties.q] = q_pred
+                loss = self.loss(targ)
                 loss.backward()
                 return loss
 
@@ -559,6 +582,8 @@ class EnsemblePytorchRCModel(RCModel):
         return p_mean
 
     def test_loss(self, trainset):
+        # TODO/FIXME: this assumes binomial/multinomial loss!
+        # TODO/FIXME: we should rewrite it in terms of self.loss if possible
         # calculate the test loss for the combined weighted prediction
         # i.e. the loss the model suffers when used as a whole
         # Note that self.__call__() puts the model in evaluation mode
@@ -597,16 +622,20 @@ class EnsemblePytorchRCModel(RCModel):
         for i, (nnet, optimizer) in enumerate(zip(self.nnets, self.optimizers)):
             dev = self._devices[i]
             dtype = self._dtypes[i]
-            for descriptors, shot_results, weights in trainset.iter_batch(batch_size, shuffle):
+            for target in trainset.iter_batch(batch_size, shuffle):
                 # define closure func so we can use conjugate gradient or LBFGS
                 def closure():
                     optimizer.zero_grad()
                     # create descriptors and results tensors where the model lives
-                    descrip = torch.as_tensor(descriptors, device=dev, dtype=dtype)
-                    s_res = torch.as_tensor(shot_results, device=dev, dtype=dtype)
-                    ws = torch.as_tensor(weights, device=dev, dtype=dtype)
-                    q_pred = nnet(descrip)
-                    loss = self.loss(q_pred, s_res, ws)
+                    targ = {key: torch.as_tensor(val,
+                                                 device=dev,
+                                                 dtype=dtype
+                                                 )
+                            for key, val in target.items()
+                            }
+                    q_pred = nnet(targ[Properties.descriptors])
+                    targ[Properties.q] = q_pred
+                    loss = self.loss(targ)
                     loss.backward()
                     return loss
 
@@ -717,7 +746,7 @@ class MultiDomainPytorchRCModel(RCModel):
             else:
                 self.loss = multinomial_loss_vect
 
-    # NOTE: implemented by bas RCModel
+    # NOTE: implemented by base RCModel
     #@property
     #def n_out(self):
         # FIXME:TODO: only works if the last layer is linear!
@@ -920,6 +949,7 @@ class MultiDomainPytorchRCModel(RCModel):
                              + "'L_gamma' or 'L_class'")
 
     def _test_loss_pred(self, trainset):
+        # TODO/FIXME: assumes binomial/multinomial loss!
         # calculate the test loss for the combined weighted prediction
         # p_i = \sum_m p_c(m) * p_i(m)
         # i.e. the loss the model would suffer when used as a whole
@@ -959,35 +989,32 @@ class MultiDomainPytorchRCModel(RCModel):
         total_loss = 0
         # very similiar to _train_epoch_pnets but without gradient collection
         with torch.no_grad():
-            for descriptors, shot_results, weights in trainset.iter_batch(batch_size, False):
+            for target in trainset.iter_batch(batch_size, False):
                 if self._pnets_same_device:
                     # create descriptors and results tensors where the models live
-                    descript = torch.as_tensor(descriptors,
-                                               device=self._pdevices[0],
-                                               dtype=self._pdtypes[0])
-                    shots = torch.as_tensor(shot_results,
-                                            device=self._pdevices[0],
-                                            dtype=self._pdtypes[0])
-                    ws = torch.as_tensor(weights,
-                                         device=self._pdevices[0],
-                                         dtype=self._pdtypes[0])
+                    target = {key: torch.as_tensor(val,
+                                                   device=self._pdevices[0],
+                                                   dtype=self._pdtypes[0]
+                                                   )
+                              for key, val in target.items()
+                              }
                 # we collect the results on the device of the first pnet
-                l_m_sum = torch.zeros((descriptors.shape[0],), device=self._pdevices[0],
-                                      dtype=self._pdtypes[0])
+                l_m_sum = torch.zeros((target[Properties.descriptors].shape[0],),
+                                      device=self._pdevices[0],
+                                      dtype=self._pdtypes[0]
+                                      )
                 for i, pnet in enumerate(self.pnets):
                     if not self._pnets_same_device:
                         # create descriptors and results tensors where the models live
-                        descript = torch.as_tensor(descriptors,
-                                                   device=self._pdevices[i],
-                                                   dtype=self._pdtypes[i])
-                        shots = torch.as_tensor(shot_results,
-                                                device=self._pdevices[i],
-                                                dtype=self._pdtypes[i])
-                        ws = torch.as_tensor(weights,
-                                             device=self._pdevices[i],
-                                             dtype=self._pdtypes[i])
-                    q_pred = pnet(descript)
-                    l_m = self.loss(q_pred, shots, ws)
+                        target = {key: torch.as_tensor(val,
+                                                       device=self._pdevices[i],
+                                                       dtype=self._pdtypes[i]
+                                                       )
+                                  for key, val in target.items()
+                                  }
+                    q_pred = pnet(target[Properties.descriptors])
+                    target[Properties.q] = q_pred
+                    l_m = self.loss(target)
                     loss_by_model[i] += float(torch.sum(l_m))
                     l_m_sum += torch.pow(l_m, self.gamma).to(l_m_sum.device)
                 # end models loop
@@ -1002,6 +1029,7 @@ class MultiDomainPytorchRCModel(RCModel):
                 )
 
     def _test_loss_cnet(self, trainset, batch_size):
+        # TODO/FIXME: the batchsize here is quite useless, we load everything into memory anyways!
         cnet_targets = self.create_cnet_targets(trainset, batch_size)
         self.cnet.eval()  # evaluation mode
         with torch.no_grad():
@@ -1021,14 +1049,25 @@ class MultiDomainPytorchRCModel(RCModel):
                 tar = cnet_targets[b*batch_size:(b+1)*batch_size]
                 ws = weights[b*batch_size:(b+1)*batch_size]
                 log_probs = self.cnet(des)
-                loss = multinomial_loss(log_probs, tar, ws)
+                # pack stuff into our dictionary so we can use the same multinomial loss
+                target = {Properties.q: log_probs,
+                          Properties.descriptors: des,
+                          Properties.shot_results: tar,
+                          Properties.weights: ws
+                          }
+                loss = multinomial_loss(target)
                 total_loss += float(loss)
             # the rest
             des = descriptors[n_batch*batch_size:n_batch*batch_size + rest]
             tar = cnet_targets[n_batch*batch_size:n_batch*batch_size + rest]
             ws = weights[n_batch*batch_size:n_batch*batch_size + rest]
             log_probs = self.cnet(des)
-            loss = multinomial_loss(log_probs, tar, ws)
+            target = {Properties.q: log_probs,
+                      Properties.descriptors: des,
+                      Properties.shot_results: tar,
+                      Properties.weights: ws
+                      }
+            loss = multinomial_loss(target)
             total_loss += float(loss)
         # end torch.no_grad()
         self.cnet.train()  # back to train mode
@@ -1043,39 +1082,36 @@ class MultiDomainPytorchRCModel(RCModel):
         # one fore each model by idx and last entry is the combined multidomain loss
         total_loss = 0.
         loss_by_model = np.array([0. for _ in self.pnets])
-        for descriptors, shot_results, weights in trainset.iter_batch(batch_size, shuffle):
+        for target in trainset.iter_batch(batch_size, shuffle):
             def closure():
                 self.poptimizer.zero_grad()
                 l_by_mod = np.zeros_like(loss_by_model)
                 if self._pnets_same_device:
                     # create descriptors and results tensors where the models live
-                    descript = torch.as_tensor(descriptors,
-                                               device=self._pdevices[0],
-                                               dtype=self._pdtypes[0])
-                    shots = torch.as_tensor(shot_results,
-                                            device=self._pdevices[0],
-                                            dtype=self._pdtypes[0])
-                    ws = torch.as_tensor(weights,
-                                         device=self._pdevices[0],
-                                         dtype=self._pdtypes[0])
+                    # create descriptors and results tensors where the models live
+                    targ = {key: torch.as_tensor(val,
+                                                 device=self._pdevices[0],
+                                                 dtype=self._pdtypes[0]
+                                                 )
+                            for key, val in target.items()
+                            }
                 # we collect the results on the device of the first pnet
-                l_m_sum = torch.zeros((descriptors.shape[0],),
+                l_m_sum = torch.zeros((targ[Properties.descriptors].shape[0],),
                                       device=self._pdevices[0],
                                       dtype=self._pdtypes[0])
                 for i, pnet in enumerate(self.pnets):
                     if not self._pnets_same_device:
                         # create descriptors and results tensors where the models live
-                        descript = torch.as_tensor(descriptors,
-                                                   device=self._pdevices[i],
-                                                   dtype=self._pdtypes[i])
-                        shots = torch.as_tensor(shot_results,
-                                                device=self._pdevices[i],
-                                                dtype=self._pdtypes[i])
-                        ws = torch.as_tensor(weights,
-                                             device=self._pdevices[i],
-                                             dtype=self._pdtypes[i])
-                    q_pred = pnet(descript)
-                    l_m = self.loss(q_pred, shots, ws)
+                        # create descriptors and results tensors where the models live
+                        targ = {key: torch.as_tensor(val,
+                                                     device=self._pdevices[i],
+                                                     dtype=self._pdtypes[i]
+                                                     )
+                                for key, val in target.items()
+                                }
+                    q_pred = pnet(targ[Properties.descriptors])
+                    targ[Properties.q] = q_pred
+                    l_m = self.loss(targ)
                     l_by_mod[i] = float(torch.sum(l_m))
                     l_m_sum += torch.pow(l_m, self.gamma).to(l_m_sum.device)
                 # end models loop
@@ -1093,58 +1129,56 @@ class MultiDomainPytorchRCModel(RCModel):
     def create_cnet_targets(self, trainset, batch_size=128):
         # build the trainset for classifier,
         # i.e. which model has the lowest loss for each point in trainset
-        targets = torch.zeros((len(trainset), len(self.pnets)),
-                              device=self._cdevice,
-                              dtype=self._cdtype)
+        targets_out = torch.zeros((len(trainset), len(self.pnets)),
+                                  device=self._cdevice,
+                                  dtype=self._cdtype)
         fill = 0
         # put prediction nets in evaluation mode
         self.pnets = [pn.eval() for pn in self.pnets]
         with torch.no_grad():
-            for descriptors, shot_results, weights in trainset.iter_batch(batch_size, shuffle=False):
+            for target in trainset.iter_batch(batch_size, shuffle=False):
                 if self._pnets_same_device:
                     # create descriptors and results tensors where the models live
-                    descriptors = torch.as_tensor(descriptors,
-                                                  device=self._pdevices[0],
-                                                  dtype=self._pdtypes[0])
-                    shot_results = torch.as_tensor(shot_results,
+                    # create descriptors and results tensors where the models live
+                    target = {key: torch.as_tensor(val,
                                                    device=self._pdevices[0],
-                                                   dtype=self._pdtypes[0])
-                    weights = torch.as_tensor(weights,
-                                              device=self._pdevices[0],
-                                              dtype=self._pdtypes[0])
+                                                   dtype=self._pdtypes[0]
+                                                   )
+                              for key, val in target.items()
+                              }
                 # we collect the results on the device of the first pnet
-                l_m_arr = torch.zeros((descriptors.shape[0], len(self.pnets)),
+                l_m_arr = torch.zeros((target[Properties.descriptors].shape[0], len(self.pnets)),
                                       device=self._pdevices[0],
                                       dtype=self._pdtypes[0])
                 for i, pnet in enumerate(self.pnets):
                     if not self._pnets_same_device:
                         # create descriptors and results tensors where the models live
-                        descriptors = torch.as_tensor(descriptors,
-                                                      device=self._pdevices[i],
-                                                      dtype=self._pdtypes[i])
-                        shot_results = torch.as_tensor(shot_results,
+                        # create descriptors and results tensors where the models live
+                        target = {key: torch.as_tensor(val,
                                                        device=self._pdevices[i],
-                                                       dtype=self._pdtypes[i])
-                        weights = torch.as_tensor(weights,
-                                                  device=self._pdevices[0],
-                                                  dtype=self._pdtypes[0])
-                    q_pred = pnet(descriptors)
-                    l_m = self.loss(q_pred, shot_results, weights)
+                                                       dtype=self._pdtypes[i]
+                                                       )
+                                  for key, val in target.items()
+                                  }
+                    q_pred = pnet(target[Properties.descriptors])
+                    target[Properties.q] = q_pred
+                    l_m = self.loss(target)
                     l_m_arr[:, i] = l_m.to(l_m_arr.device)
                 # end models loop
                 # find minimum loss value model indexes for each point
-                # and fill ones into targets at that index
+                # and fill ones into targets_out at that index
                 min_idxs = l_m_arr.argmin(dim=1)
                 bs = min_idxs.shape[0]  # not every batch is created equal, i.e. different lengths
-                targets[fill + torch.arange(bs), min_idxs] = 1
+                targets_out[fill + torch.arange(bs), min_idxs] = 1
                 fill += bs
             # end batch over trainset loop
         # end torch nograd
         # put pnets back to train mode
         self.pnets = [pn.train() for pn in self.pnets]
-        return targets
+        return targets_out
 
     def train_epoch_cnet(self, trainset, cnet_targets, batch_size=128, shuffle=True):
+        # TODO/FIXME: batchsize is useless here, we load everything into MEM anyways!
         total_loss = 0
         descriptors = torch.as_tensor(trainset.descriptors,
                                       device=self._cdevice,
@@ -1164,12 +1198,17 @@ class MultiDomainPytorchRCModel(RCModel):
         rest = len(trainset) % batch_size
         for b in range(n_batch):
             des = descriptors[b*batch_size:(b+1)*batch_size]
-            tar = cnet_targets[b*batch_size:(b+1)*batch_size]
+            counts = cnet_targets[b*batch_size:(b+1)*batch_size]
             ws = weights[b*batch_size:(b+1)*batch_size]
             def closure():
                 self.coptimizer.zero_grad()
                 log_probs = self.cnet(des)
-                loss = multinomial_loss(log_probs, tar, ws)
+                tar = {Properties.descriptors: des,
+                       Properties.shot_results: counts,
+                       Properties.weights: ws,
+                       Properties.q: log_probs
+                       }
+                loss = multinomial_loss(tar)
                 loss.backward()
                 return loss
             loss = self.coptimizer.step(closure)
@@ -1177,12 +1216,17 @@ class MultiDomainPytorchRCModel(RCModel):
 
         # the rest
         des = descriptors[n_batch*batch_size:n_batch*batch_size + rest]
-        tar = cnet_targets[n_batch*batch_size:n_batch*batch_size + rest]
+        counts = cnet_targets[n_batch*batch_size:n_batch*batch_size + rest]
         ws = weights[n_batch*batch_size:n_batch*batch_size + rest]
         def closure():
             self.coptimizer.zero_grad()
             log_probs = self.cnet(des)
-            loss = multinomial_loss(log_probs, tar, ws)
+            tar = {Properties.descriptors: des,
+                   Properties.shot_results: counts,
+                   Properties.weights: ws,
+                   Properties.q: log_probs
+                   }
+            loss = multinomial_loss(tar)
             loss.backward()
             return loss
         loss = self.coptimizer.step(closure)

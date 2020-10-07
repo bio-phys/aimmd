@@ -16,11 +16,11 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
 import copy
-import os
 import h5py
 import numpy as np
 from abc import abstractmethod
 from tensorflow.keras import backend as K
+from ..base import Properties
 from ..base.rcmodel import RCModel
 from ..base.rcmodel_train_decision import (_train_decision_funcs,
                                            _train_decision_defaults,
@@ -132,9 +132,10 @@ class KerasRCModel(RCModel):
         for target in trainset.iter_batch(batch_size, shuffle):
             # multiply by batch lenght to get total loss per batch
             # and then at the ernd the correct average loss per shooting point
-            loss += (self.nnet.train_on_batch(x=target['descriptors'],
-                                              y=target['shot_results'],
-                                              sample_weight=target['weights']
+            loss += (self.nnet.train_on_batch(
+                                    x=target[Properties.descriptors],
+                                    y=target[Properties.shot_results],
+                                    sample_weight=target[Properties.weights],
                                               )
                      * np.sum(target['weights'])
                      )

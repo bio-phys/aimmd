@@ -116,88 +116,6 @@ class Test_RCModel:
         assert np.allclose(test_loss_before, test_loss_after)
 
 
-    @pytest.mark.old
-    @pytest.mark.parametrize("n_states,model_type", [('binomial', 'EEMultiDomain'), ('multinomial', 'EEMultiDomain'),
-                                                     ('binomial', 'EESingleDomain'), ('multinomial', 'EESingleDomain')]
-                             )
-    def test_save_load_model(self, tmp_path, n_states, model_type):
-        p = tmp_path / 'Test_load_save_model.pckl'
-        fname = str(p)
-
-        states = ['A', 'B']
-        if n_states == 'multinomial':
-            states += ['C']
-        cv_ndim = 200
-        # create random descriptors to predict probabilities for them
-        descriptors = np.random.normal(size=(20, cv_ndim))
-        if n_states == 'multinomial':
-            shot_results = np.array([[1, 0, 1] for _ in range(20)])
-            n_out = 3
-        elif n_states == 'binomial':
-            shot_results = np.array([[1, 1] for _ in range(20)])
-            n_out = 1
-        # a trainset for test_loss testing
-        trainset = arcd.TrainSet(states, descriptors=descriptors,
-                                 shot_results=shot_results)
-        # model creation
-        def make_1hidden_net(n_in, n_out):
-            modules = [arcd.pytorch.networks.FFNet(n_in=n_in,
-                                                   n_hidden=[n_in, n_out])
-                       ]
-            torch_model = arcd.pytorch.networks.ModuleStack(n_out=n_out,
-                                                            modules=modules)
-            return torch_model
-        if model_type == 'EESingleDomain':
-            # move model to GPU if CUDA is available
-            torch_model = make_1hidden_net(cv_ndim, n_out)
-            if torch.cuda.is_available():
-                torch_model = torch_model.to('cuda')
-            optimizer = torch.optim.Adam(torch_model.parameters(), lr=1e-3)
-            model = arcd.pytorch.EEScalePytorchRCModel(torch_model, optimizer,
-                                                  descriptor_transform=None)
-        elif model_type == 'EEMultiDomain':
-            pnets = [make_1hidden_net(cv_ndim, n_out) for _ in range(3)]
-            cnet = make_1hidden_net(cv_ndim, len(pnets))
-            # move model(s) to GPU if CUDA is available
-            if torch.cuda.is_available():
-                pnets = [pn.to('cuda') for pn in pnets]
-                cnet = cnet.to('cuda')
-            poptimizer = torch.optim.Adam([{'params': pn.parameters()}
-                                           for pn in pnets],
-                                          lr=1e-3)
-            coptimizer = torch.optim.Adam(cnet.parameters(), lr=1e-3)
-            model = arcd.pytorch.EEMDPytorchRCModel(pnets=pnets,
-                                                    cnet=cnet,
-                                                    poptimizer=poptimizer,
-                                                    coptimizer=coptimizer,
-                                                    descriptor_transform=None)
-
-        # predict before
-        predictions_before = model(descriptors, use_transform=False)
-        if model_type == 'EEMultiDomain':
-            # test all possible losses for MultiDomain networks
-            losses = ['L_pred', 'L_gamma', 'L_class']
-            losses += ['L_mod{:d}'.format(i) for i in range(len(pnets))]
-            test_loss_before = [model.test_loss(trainset, loss=l) for l in losses]
-        elif model_type == 'EESingleDomain':
-            test_loss_before = model.test_loss(trainset)
-        # save the model and check that the loaded model predicts the same
-        model.save(fname)
-        state, cls = arcd.base.RCModel.load_state(fname, None)
-        state = cls.fix_state(state)
-        model_loaded = cls.set_state(state)
-        # predict after loading
-        predictions_after = model_loaded(descriptors, use_transform=False)
-        if model_type == 'EEMultiDomain':
-            losses = ['L_pred', 'L_gamma', 'L_class']
-            losses += ['L_mod{:d}'.format(i) for i in range(len(pnets))]
-            test_loss_after = [model.test_loss(trainset, loss=l) for l in losses]
-        elif model_type == 'EESingleDomain':
-            test_loss_after = model.test_loss(trainset)
-
-        assert np.allclose(predictions_before, predictions_after)
-        assert np.allclose(test_loss_before, test_loss_after)
-
     @pytest.mark.slow
     @pytest.mark.parametrize( "model_type", ['EESingleDomain', 'EEMultiDomain',])
     def test_toy_sim_eepytorch(self, tmp_path, ops_toy_sim_setup, model_type):
@@ -270,7 +188,7 @@ class Test_RCModel:
         # close the storage(s)
         storage.sync_all()
         storage.close()
-        arcd-store.close()
+        arcd_storage.close()
         # now do the testing
         load_storage = paths.Storage(tmp_path / "test.nc", 'a')
         load_sampler = load_storage.pathsimulators[0]
