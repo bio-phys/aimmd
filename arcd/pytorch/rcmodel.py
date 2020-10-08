@@ -131,10 +131,24 @@ class PytorchRCModel(RCModel):
     """Wrap pytorch neural networks for use with arcd."""
 
     def __init__(self, nnet, optimizer, states, descriptor_transform=None,
-                 loss=None, cache_file=None):
+                 loss=None, cache_file=None, n_out=None):
+        # try to get number of outputs, i.e. predicted probabilities
+        if n_out is None:
+            try:
+                # works if the last layer is linear
+                n_out = list(nnet.modules())[-1].out_features
+            except AttributeError:
+                pass
+            try:
+                # works if the pytorch module has set n_out attribute/property
+                # (as e.g. our own pytorch module containers do)
+                n_out = nnet.n_out
+            except AttributeError:
+                pass
         super().__init__(states=states,
                          descriptor_transform=descriptor_transform,
-                         cache_file=cache_file)
+                         cache_file=cache_file,
+                         n_out=n_out)
         self.nnet = nnet  # a pytorch.nn.Module
         # any pytorch.optim optimizer, model parameters need to be registered already
         self.optimizer = optimizer
@@ -340,10 +354,11 @@ class EEScalePytorchRCModel(PytorchRCModel):
 
     def __init__(self, nnet, optimizer, states,
                  ee_params=_train_decision_defaults['EEscale'],
-                 descriptor_transform=None, loss=None, cache_file=None):
+                 descriptor_transform=None, loss=None, cache_file=None,
+                 n_out=None):
         super().__init__(nnet=nnet, optimizer=optimizer, states=states,
                          descriptor_transform=descriptor_transform,
-                         loss=loss, cache_file=cache_file,
+                         loss=loss, cache_file=cache_file, n_out=n_out,
                          )
         # make it possible to pass only the altered values in dictionary
         defaults = copy.deepcopy(_train_decision_defaults['EEscale'])
@@ -359,10 +374,11 @@ class EERandPytorchRCModel(PytorchRCModel):
 
     def __init__(self, nnet, optimizer, states,
                  ee_params=_train_decision_defaults['EErand'],
-                 descriptor_transform=None, loss=None, cache_file=None):
+                 descriptor_transform=None, loss=None, cache_file=None,
+                 n_out=None):
         super().__init__(nnet=nnet, optimizer=optimizer, states=states,
                          descriptor_transform=descriptor_transform,
-                         loss=loss, cache_file=cache_file,
+                         loss=loss, cache_file=cache_file, n_out=n_out,
                          )
         # make it possible to pass only the altered values in dictionary
         defaults = copy.deepcopy(_train_decision_defaults['EErand'])
@@ -390,11 +406,27 @@ class EnsemblePytorchRCModel(RCModel):
     """
 
     def __init__(self, nnets, optimizers, states, descriptor_transform=None,
-                 loss=None, cache_file=None):
+                 loss=None, cache_file=None, n_out=None):
         assert len(nnets) == len(optimizers)  # one optimizer per model!
+        # try to get number of outputs, i.e. predicted probabilities
+        # we assume that they all have the same number of outputs,
+        # otherwise it will/would not work anyway... :)
+        if n_out is None:
+            try:
+                # works if the last layer is linear
+                n_out = list(nnets[0].modules())[-1].out_features
+            except AttributeError:
+                pass
+            try:
+                # works if the pytorch module has set n_out attribute/property
+                # (as e.g. our own pytorch module containers do)
+                n_out = nnets[0].n_out
+            except AttributeError:
+                pass
         super().__init__(states=states,
                          descriptor_transform=descriptor_transform,
-                         cache_file=cache_file)
+                         cache_file=cache_file,
+                         n_out=n_out)
         self.nnets = nnets  # list of pytorch.nn.Modules
         # list of pytorch optimizers, one per model
         # any pytorch.optim optimizer, model parameters need to be registered already
@@ -660,10 +692,11 @@ class EEScaleEnsemblePytorchRCModel(EnsemblePytorchRCModel):
 
     def __init__(self, nnets, optimizers, states,
                  ee_params=_train_decision_defaults['EEscale'],
-                 descriptor_transform=None, loss=None, cache_file=None):
+                 descriptor_transform=None, loss=None, cache_file=None,
+                 n_out=None):
         super().__init__(nnets=nnets, optimizers=optimizers, states=states,
                          descriptor_transform=descriptor_transform,
-                         loss=loss, cache_file=cache_file)
+                         loss=loss, cache_file=cache_file, n_out=n_out)
         defaults = copy.deepcopy(_train_decision_defaults['EEscale'])
         defaults.update(ee_params)
         self.ee_params = defaults
@@ -677,10 +710,11 @@ class EERandEnsemblePytorchRCModel(EnsemblePytorchRCModel):
 
     def __init__(self, nnets, optimizers, states,
                  ee_params=_train_decision_defaults['EErand'],
-                 descriptor_transform=None, loss=None, cache_file=None):
+                 descriptor_transform=None, loss=None, cache_file=None,
+                 n_out=None):
         super().__init__(nnets=nnets, optimizers=optimizers, states=states,
                          descriptor_transform=descriptor_transform,
-                         loss=loss, cache_file=cache_file)
+                         loss=loss, cache_file=cache_file, n_out=n_out)
         # make it possible to pass only the altered values in dictionary
         defaults = copy.deepcopy(_train_decision_defaults['EErand'])
         defaults.update(ee_params)
@@ -700,10 +734,25 @@ class MultiDomainPytorchRCModel(RCModel):
     """
     def __init__(self, pnets, cnet, poptimizer, coptimizer, states,
                  descriptor_transform=None, gamma=-1, loss=None,
-                 one_hot_classify=False, cache_file=None):
+                 one_hot_classify=False, cache_file=None, n_out=None):
+        # try to get number of outputs, i.e. predicted probabilities
+        # again assuming all pnets have the same number of outputs
+        if n_out is None:
+            try:
+                # works if the last layer is linear
+                n_out = list(pnets[0].modules())[-1].out_features
+            except AttributeError:
+                pass
+            try:
+                # works if the pytorch module has set n_out attribute/property
+                # (as e.g. our own pytorch module containers do)
+                n_out = pnets[0].n_out
+            except AttributeError:
+                pass
         super().__init__(states=states,
                          descriptor_transform=descriptor_transform,
-                         cache_file=cache_file)
+                         cache_file=cache_file,
+                         n_out=n_out)
         # pnets = list of predicting networks
         # poptimizer = optimizer for prediction networks
         # cnet = classifier deciding which network to take
@@ -1372,10 +1421,10 @@ class EEMDPytorchRCModel(MultiDomainPytorchRCModel):
                  #               'interval': 3,
                  #               'max_interval': 20},
                  descriptor_transform=None, loss=None,
-                 one_hot_classify=False, cache_file=None):
+                 one_hot_classify=False, cache_file=None, n_out=None):
         super().__init__(pnets, cnet, poptimizer, coptimizer, states,
                          descriptor_transform, gamma, loss,
-                         one_hot_classify, cache_file)
+                         one_hot_classify, cache_file, n_out)
         # make it possible to pass only the altered values in dictionary
         ee_params_defaults = {'lr_0': 1e-3,
                               'lr_min': 1e-4,

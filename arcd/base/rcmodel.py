@@ -50,8 +50,16 @@ class RCModel(ABC):
                                :class:`openpathsampling.CollectiveVariable`,
                                see `.coordinates` for examples of functions
                                that can be turned to a MDtrajFunctionCV
+        cache_file - the arcd.Storage used for caching
+        n_out - None or int, used to overwrite the deduced number of outputs,
+                i.e. to use a multinomial loss and model for a 2 state system,
+                normaly we check len(states) and set n_out accordingly:
+                    n_out = 1 if len(states) == 2
+                    n_out= len(states) if len(states) > 2
         z_sel_scale - float, scale z_sel to [0., z_sel_scale] for multinomial
                       training and predictions
+        min_points_ee_factor - minimum number of SPs in TrainSet to calculate
+                               expected efficiency factor over
         density_collection_n_bins - number of bins in each probability
                                     direction to collect the density of points
                                     on TPs
@@ -77,9 +85,10 @@ class RCModel(ABC):
     # not waste computing power with unecessary updates of the density
     density_collection_n_bins = 10
 
-    def __init__(self, states, descriptor_transform=None, cache_file=None):
+    def __init__(self, states, descriptor_transform=None, cache_file=None, n_out=None):
         """I am an `abc.ABC` and can not be initialized."""
         self.states = states
+        self._n_out = n_out
         self.descriptor_transform = descriptor_transform
         self.expected_p = []
         self.expected_q = []
@@ -93,10 +102,12 @@ class RCModel(ABC):
     def n_out(self):
         """Return the number of model outputs, i.e. states."""
         # need to know if we use binomial or multinomial
+        if self._n_out is not None:
+            return self._n_out
+
         n_states = len(self.states)
-        if n_states > 2:
-            return n_states
-        return 1
+        self._n_out = n_states if n_states > 2 else 1
+        return self._n_out
 
     # NOTE on saving and loading models:
     #   if your generic RCModel subclass contains only pickleable objects in

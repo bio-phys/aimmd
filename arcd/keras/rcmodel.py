@@ -35,9 +35,12 @@ class KerasRCModel(RCModel):
     """Wraps a Keras model for use with arcd."""
 
     def __init__(self, nnet, states, descriptor_transform=None, cache_file=None):
+        # get n_out from model
+        n_out = nnet.output_shape[1]
         super().__init__(states=states,
                          descriptor_transform=descriptor_transform,
-                         cache_file=cache_file)
+                         cache_file=cache_file,
+                         n_out=n_out)
         self.nnet = nnet
         self.log_train_decision = []
         self.log_train_loss = []
