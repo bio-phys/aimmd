@@ -91,8 +91,7 @@ class HIPRanalysis:
                                      + mins[i]
                                      )
                 ts = TrainSet(
-                       self.trainset.states,
-                       descriptor_transform=self.trainset.descriptor_transform,
+                       self.trainset.n_states,
                        descriptors=descriptors,
                        shot_results=self.trainset.shot_results,
                        weights=self.trainset.weights
@@ -156,8 +155,7 @@ class HIPRanalysis:
                 permut_idxs = np.random.permutation(len(self.trainset))
                 descriptors[:, i] = descriptors[:, i][permut_idxs]
                 ts = TrainSet(
-                       self.trainset.states,
-                       descriptor_transform=self.trainset.descriptor_transform,
+                       self.trainset.n_states,
                        descriptors=descriptors,
                        shot_results=self.trainset.shot_results,
                        weights=self.trainset.weights
@@ -232,8 +230,7 @@ class HIPRanalysis:
                     permut_idxs = np.random.permutation(len(self.trainset))
                     descriptors[:, idx] = descriptors[:, idx][permut_idxs]
                 ts = TrainSet(
-                    self.trainset.states,
-                    descriptor_transform=self.trainset.descriptor_transform,
+                    self.trainset.n_states,
                     descriptors=descriptors,
                     shot_results=self.trainset.shot_results,
                     weights=self.trainset.weights
@@ -248,8 +245,7 @@ class HIPRanalysis:
                 for idx in idxs:
                     descriptors[:, idx] = descriptors[:, idx][permut_idxs]
                 ts = TrainSet(
-                    self.trainset.states,
-                    descriptor_transform=self.trainset.descriptor_transform,
+                    self.trainset.n_states,
                     descriptors=descriptors,
                     shot_results=self.trainset.shot_results,
                     weights=self.trainset.weights

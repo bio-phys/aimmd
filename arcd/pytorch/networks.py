@@ -233,8 +233,12 @@ class ResNet(nn.Module):
                       if one class, we will use it for all Residualblocks,
                       if a list it must be of len n_blocks, for each Block,
                       we will use the class given in the list
-        block_kwargs - None or list of dicts with ResUnit instatiation kwargs,
-                       if None we will use the default values for each block class
+        block_kwargs - None or dict or list of dicts with ResUnit instatiation kwargs,
+                       if None we will use the default values for each block class,
+                       if a dict we will use the same dict as kwargs for all blocks,
+                       if a list it must be of length n_blocks and contain kwargs
+                       for each block
+
         """
         super().__init__()
         self.n_out = n_units
@@ -251,6 +255,9 @@ class ResNet(nn.Module):
         if block_kwargs is None:
             # make a list with empty dicts for kwargs
             block_kwargs = [{} for _ in range(n_blocks)]
+        if isinstance(block_kwargs, dict):
+            # we assume it is the same for all blocks since it is just one dict
+            block_kwargs = [block_kwargs for _ in range(n_blocks)]
 
         self.block_list = nn.ModuleList([clas(n_units=n_units, **kwargs)
                                          for clas, kwargs in zip(block_class,
