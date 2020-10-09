@@ -74,14 +74,15 @@ class Test_RCModel:
         elif n_states == 'binomial':
             shot_results = np.array([[1, 1] for _ in range(20)])
         # a trainset for test_loss testing
-        trainset = arcd.TrainSet(states, descriptors=descriptors,
+        trainset = arcd.TrainSet(n_states=len(states), descriptors=descriptors,
                                  shot_results=shot_results)
         # model creation
         optim = optimizers.Adam(lr=1e-3)
         snn = arcd.keras.create_snn(cv_ndim, hidden_parms, optim, len(states),
                                     multi_state=multi_state
                                     )
-        model = arcd.keras.EEScaleKerasRCModel(snn, descriptor_transform=None)
+        model = arcd.keras.EEScaleKerasRCModel(snn, states=states,
+                                               descriptor_transform=None)
         # predict before
         predictions_before = model(descriptors, use_transform=False)
         test_loss_before = model.test_loss(trainset)
@@ -94,68 +95,12 @@ class Test_RCModel:
         assert np.allclose(predictions_before, predictions_after)
         assert np.allclose(test_loss_before, test_loss_after)
 
-    @pytest.mark.old
-    @pytest.mark.parametrize("n_states", ['binomial', 'multinomial'])
-    def test_save_load_model(self, tmp_path, n_states):
-        p = tmp_path / 'Test_load_save_model.pckl'
-        fname = str(p)
 
-        hidden_parms = [{'units_factor': 1,  # test units_fact key
-                         'activation': 'elu',  # should be fixed to selu
-                         'use_bias': True,
-                         'kernel_initializer': 'lecun_normal',
-                         'bias_initializer': 'lecun_normal',
-                         }
-                        ]
-        hidden_parms += [{'units': 20,  # test units key
-                          'activation': 'selu',
-                          'use_bias': True,
-                          'kernel_initializer': 'lecun_normal',
-                          'bias_initializer': 'lecun_normal',
-                          'dropout': 0.1,
-                          }
-                         for i in range(1, 4)]
-        states = ['A', 'B']
-        multi_state = False
-        if n_states == 'multinomial':
-            states += ['C']
-            multi_state = True
-        cv_ndim = 200
-        # create random descriptors to predict probabilities for them
-        descriptors = np.random.normal(size=(20, cv_ndim))
-        if n_states == 'multinomial':
-            shot_results = np.array([[1, 0, 1] for _ in range(20)])
-        elif n_states == 'binomial':
-            shot_results = np.array([[1, 1] for _ in range(20)])
-        # a trainset for test_loss testing
-        trainset = arcd.TrainSet(states, descriptors=descriptors,
-                                 shot_results=shot_results)
-        # model creation
-        optim = optimizers.Adam(lr=1e-3)
-        snn = arcd.keras.create_snn(cv_ndim, hidden_parms, optim, len(states),
-                                    multi_state=multi_state
-                                    )
-        model = arcd.keras.EEScaleKerasRCModel(snn, descriptor_transform=None)
-        # predict before
-        predictions_before = model(descriptors, use_transform=False)
-        test_loss_before = model.test_loss(trainset)
-        # save the model and check that the loaded model predicts the same
-        model.save(fname)
-        state, cls = arcd.base.RCModel.load_state(fname, None)
-        state = cls.fix_state(state)
-        model_loaded = cls.set_state(state)
-        # predict after loading
-        predictions_after = model_loaded(descriptors, use_transform=False)
-        test_loss_after = model_loaded.test_loss(trainset)
-        assert np.allclose(predictions_before, predictions_after)
-        assert np.allclose(test_loss_before, test_loss_after)
-
-    @pytest.mark.old
     @pytest.mark.slow
-    @pytest.mark.parametrize("save_trainset", ['load_trainset', 'recreate_trainset'])
-    def test_toy_sim_snn(self, tmp_path, ops_toy_sim_setup, save_trainset):
-        p = tmp_path / 'Test_OPS_test_toy_sim_snn.nc'
-        fname = str(p)
+    def test_toy_sim_snn(self, tmp_path, ops_toy_sim_setup):
+        # NOTE: this is more a smoke test than anything else
+        # we do not really check for anything except that it runs and restarts
+        # without errors
         setup_dict = ops_toy_sim_setup
 
         hidden_parms = [{'units_factor': 1,  # test units_fact key
@@ -179,20 +124,20 @@ class Test_RCModel:
                                     optim, len(setup_dict['states']),
                                     multi_state=False  # do binomial predictions
                                     )
-        model = arcd.keras.EEScaleKerasRCModel(snn, setup_dict['descriptor_transform'],
-                                               ee_params={'lr_0': 1e-3,
-                                                          'lr_min': 1e-4,
-                                                          'epochs_per_train': 1,
-                                                          'interval': 1,
-                                                          'window': 100}
-                                               )
-        trainset = arcd.TrainSet(setup_dict['states'], setup_dict['descriptor_transform'])
-        trainhook = arcd.ops.TrainingHookLegacy(model, trainset)
-        if save_trainset == 'recreate_trainset':
-            # we simply change the name under which the trainset is saved
-            # this should result in the new trainhook not finding the saved data
-            # and therefore testing the recreation
-            trainhook.save_trainset_prefix = 'test_test_test'
+        model = arcd.keras.EEScaleKerasRCModel(
+                    snn,
+                    states=setup_dict["states"],
+                    descriptor_transform=setup_dict['descriptor_transform'],
+                    ee_params={'lr_0': 1e-3,
+                               'lr_min': 1e-4,
+                               'epochs_per_train': 1,
+                               'interval': 1,
+                               'window': 100}
+                                                )
+        trainset = arcd.TrainSet(len(setup_dict['states']))
+        trainhook = arcd.ops.TrainingHook(model, trainset)
+        arcd_store = arcd.Storage(tmp_path / "test.h5")
+        storehook = arcd.ops.ArcdStorageHook(arcd_store, model, trainset)
         selector = arcd.ops.RCModelSelector(model, setup_dict['states'])
         tps = paths.TPSNetwork.from_states_all_to_all(setup_dict['states'])
         move_scheme = paths.MoveScheme(network=tps)
@@ -205,24 +150,33 @@ class Test_RCModel:
         move_scheme.append(paths.strategies.OrganizeByMoveGroupStrategy())
         move_scheme.build_move_decision_tree()
         initial_conditions = move_scheme.initial_conditions_from_trajectories(setup_dict['initial_TP'])
-        storage = paths.Storage(fname, 'w', template=setup_dict['template'])
+        storage = paths.Storage(tmp_path / "test.nc", 'w',
+                                template=setup_dict['template'])
         sampler = paths.PathSampling(storage=storage, sample_set=initial_conditions, move_scheme=move_scheme)
         sampler.attach_hook(trainhook)
+        sampler.attach_hook(storehook)
         # generate some steps
         sampler.run(10)
         # close the storage
         storage.sync_all()
         storage.close()
+        arcd_store.close()
         # now do the testing
-        load_storage = paths.Storage(fname, 'a')
+        load_storage = paths.Storage(tmp_path / "test.nc", 'a')
+        arcd_store_load = arcd.Storage(tmp_path / "test.h5", "a")
+        load_ts = arcd_store_load.load_trainset()
+        load_model = arcd_store_load.rcmodels["most_recent"]
+        load_model = load_model.complete_from_ops_storage(load_storage)
         load_sampler = load_storage.pathsimulators[0]
         load_sampler.restart_at_step(load_storage.steps[-1])
-        load_trainhook = arcd.ops.TrainingHookLegacy(None, None)
-        load_sampler.attach_hook(load_trainhook)
-        load_sampler.run(1)
         # check that the two trainsets are the same
-        # at least except for the last step
-        assert np.allclose(load_trainhook.trainset.descriptors[:-1],
-                           trainset.descriptors)
-        assert np.allclose(load_trainhook.trainset.shot_results[:-1],
-                           trainset.shot_results)
+        assert np.allclose(trainhook.trainset.descriptors,
+                           load_ts.descriptors)
+        assert np.allclose(trainhook.trainset.shot_results,
+                           load_ts.shot_results)
+        # try restarting
+        arcd.ops.set_rcmodel_in_all_selectors(load_model, load_sampler)
+        # NOTE: we reattach the hooks from previous simulation instead of recreating
+        sampler.attach_hook(trainhook)
+        sampler.attach_hook(storehook)
+        load_sampler.run(1)

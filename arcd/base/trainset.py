@@ -17,34 +17,22 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 import logging
 import numpy as np
 from collections.abc import Iterable, Iterator
+from . import Properties
 
 
 logger = logging.getLogger(__name__)
 
 
 class TrainSet(Iterable):
-    """
-    Stores shooting results and the corresponding descriptors.
-
-    Additionally handles the 'unwrapping' of MonteCarlo steps from OPS,
-    i.e. we can just call self.append_ops_mcstep(MCstep) and the trainset
-    will extract states reached and descriptor values.
-    """
+    """Stores shooting results and the corresponding descriptors."""
 
     # TODO: do we need weights for the points?
-    def __init__(self, states, descriptor_transform=None,
+    def __init__(self, n_states,
                  descriptors=None, shot_results=None, weights=None):
         """
         Create a TrainSet.
 
-        states - list of 'states', where a 'state' can be any object taking
-                 a OPS snapshot and returning True/False to indicate if the
-                 snapshot is inside of state, e.g. any OPS volume
-                 NOTE: If not used together with OPS it suffices to give a list
-                 with the correct length, e.g. ['A', 'B']
-        descriptor_transform - None or any function working on OPS snapshots,
-                               is applied to the OPS snapshots extracted in
-                               self.append_ops_mcstep() to get the descriptors
+        n_states - int, number of states, i.e. number of possible outcomes
         descriptors - None or numpy.ndarray [shape=(n_points, n_dim)],
                       if given trainset is initialized with these descriptors
         shot_results - None or numpy.ndarray [shape=(n_points, n_states)],
@@ -52,13 +40,9 @@ class TrainSet(Iterable):
         weights - None or numpy.ndarray [shape=(n_points,)],
                   if given we will use this as weights for the training points
         """
-        self.states = states
-        n_states = len(states)
+        self.n_states = n_states
         self._tp_idxs = [[i, j] for i in range(n_states)
                          for j in range(i + 1, n_states)]
-        # TODO: maybe default to a lambda func just taking xyz of a OPS traj?
-        # TODO: instead of the None value we have now?
-        self.descriptor_transform = descriptor_transform
 
         if ((descriptors is not None) and (shot_results is not None)):
             descriptors = np.asarray(descriptors, dtype=np.float64)
@@ -139,8 +123,7 @@ class TrainSet(Iterable):
         else:
             raise KeyError('keys must be int, slice or np.ndarray.')
 
-        return TrainSet(self.states,
-                        descriptor_transform=self.descriptor_transform,
+        return TrainSet(self.n_states,
                         descriptors=descriptors, shot_results=shots,
                         weights=weights)
 
@@ -167,7 +150,7 @@ class TrainSet(Iterable):
         shadow_len = self._shot_results.shape[0]
         if shadow_len == 0:
             # no points yet, just create the arrays
-            self._shot_results = np.zeros((add_entries, len(self.states)),
+            self._shot_results = np.zeros((add_entries, self.n_states),
                                           dtype=np.float64)
             self._descriptors = np.zeros((add_entries, descriptor_dim),
                                          dtype=np.float64)
@@ -176,7 +159,7 @@ class TrainSet(Iterable):
             # no space left for the next point, extend
             self._shot_results = np.concatenate(
                 (self._shot_results,
-                 np.zeros((add_entries, len(self.states)), dtype=np.float64)
+                 np.zeros((add_entries, self.n_states), dtype=np.float64)
                  )
                                                 )
             self._descriptors = np.concatenate(
@@ -187,76 +170,6 @@ class TrainSet(Iterable):
             self._weights = np.concatenate(
                 (self._weights, np.zeros((add_entries,), dtype=np.float64))
                                            )
-
-    def append_ops_mcstep(self, mcstep, add_invalid=False):
-        """
-        Append the results and descriptors from given OPS MCStep.
-
-        Parameters:
-        -----------
-        mcstep - :class:`openpathsampling.MCStep`, the step from which we
-                 extract the descriptors and shot_results
-        add_invalid - bool, wheter invalid MCSteps should be added,
-                      a MCStep is invalid if it contains uncommitted trials,
-                      i.e. trajectories that did not reach any state
-        """
-        try:
-            details = mcstep.change.canonical.details
-            shooting_snap = details.shooting_snapshot
-        # TODO: warn or pass? if used togehter with other TP generation schemes
-        # than shooting, pass is the right thing to do,
-        # otherwise this should never happen anyway...but then it might be good
-        # to know if it does... :)
-        except AttributeError:
-            # wrong kind of move (no shooting_snapshot)
-            # this could actually happen if we use arcd in one simulation
-            # together with other TPS/TIS schemes
-            logger.warning('Tried to add a MCStep that has no '
-                           + 'shooting_snapshot.')
-        except IndexError:
-            # very wrong kind of move (no trials!)
-            # I think this should never happen?
-            logger.error('Tried to add a MCStep that contains no trials.')
-        else:
-            # find out which states we reached
-            trial_traj = mcstep.change.canonical.trials[0].trajectory
-            init_traj = details.initial_trajectory
-            test_points = [s for s in [trial_traj[0], trial_traj[-1]]
-                           if s not in [init_traj[0], init_traj[-1]]]
-            shot_results = np.array([sum(int(state(pt)) for pt in test_points)
-                                     for state in self.states])
-            total_count = sum(shot_results)
-
-            # TODO: for now we assume TwoWayShooting,
-            # because otherwise we can not redraw v,
-            # which would break our independence assumption!
-            # (if we ignore the velocities of the SPs)
-
-            # warn if no states were reached,
-            # do not add the point except ignore_invalid=True,
-            # it makes no contribution to the loss since terms are 0,
-            # this makes the 'harmonic loss' from multi-domain models blow up,
-            # also some regularization schemes will overcount/overregularize
-            if total_count < 2 and not add_invalid:
-                logger.warning('Total states reached is < 2. This probably '
-                               + 'means there are uncommited trajectories. '
-                               + 'Will not add the point.')
-                return
-            # get and possibly transform descriptors
-            # descriptors is a 1d-array, since we use a snap and no traj in CV
-            descriptors = self.descriptor_transform(shooting_snap)
-            if not np.all(np.isfinite(descriptors)):
-                logger.warning('There are NaNs or infinities in the training '
-                               + 'descriptors. \n We used numpy.nan_to_num() '
-                               + 'to proceed. You might still want to have '
-                               + '(and should have) a look @ \n'
-                               + 'np.where(np.isinf(descriptors): '
-                               + str(np.where(np.isinf(descriptors)))
-                               + 'and np.where(np.isnan(descriptors): '
-                               + str(np.where(np.isnan(descriptors))))
-                descriptors = np.nan_to_num(descriptors)
-            # add shooting results and transformed descriptors to training set
-            self.append_point(descriptors, shot_results)
 
     def append_point(self, descriptors, shot_results, weight=1.):
         """
@@ -282,16 +195,10 @@ class TrainSetIterator(Iterator):
         if batch_size is None:
             batch_size = len(trainset)
         self.batch_size = batch_size
-        if shuffle:
-            # shuffle before iterating
-            shuffle_idxs = np.random.permutation(self.max_i)
-            self.descriptors = trainset.descriptors[shuffle_idxs]
-            self.shot_results = trainset.shot_results[shuffle_idxs]
-            self.weights = trainset.weights[shuffle_idxs]
-        else:
-            self.descriptors = trainset.descriptors
-            self.shot_results = trainset.shot_results
-            self.weights = trainset.weights
+        self.trainset = trainset
+        self.idxs = (np.random.permutation(self.max_i) if shuffle
+                     else np.arange(self.max_i)  # just a range if no shuffle
+                     )
 
     def __iter__(self):
         return self
@@ -310,6 +217,10 @@ class TrainSetIterator(Iterator):
             stop = self.i + self.batch_size
 
         self.i += self.batch_size
-        return (self.descriptors[start:stop],
-                self.shot_results[start:stop],
-                self.weights[start:stop])
+        des = self.trainset.descriptors[self.idxs[start:stop]]
+        shots = self.trainset.shot_results[self.idxs[start:stop]]
+        ws = self.trainset.weights[self.idxs[start:stop]]
+        return {Properties.descriptors: des,
+                Properties.shot_results: shots,
+                Properties.weights: ws,
+                }

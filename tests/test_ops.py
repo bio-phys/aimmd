@@ -24,7 +24,7 @@ class Test_ArcdStorageHook:
         # NOTE: this does not test anything really
         # the simulations ops storage is none so we save no ops objects anyways
         arcd_store = arcd.Storage(tmp_path / "test.h5")
-        trainset = arcd.TrainSet(["A", "B", "C"])
+        trainset = arcd.TrainSet(n_states=3)
         hook = arcd.ops.ArcdStorageHook(storage=arcd_store,
                                         model=oneout_rcmodel,
                                         trainset=trainset
@@ -35,7 +35,7 @@ class Test_ArcdStorageHook:
 
     def test_after_step(self, tmp_path, oneout_rcmodel_notrans):
         arcd_store = arcd.Storage(tmp_path / "test.h5")
-        trainset = arcd.TrainSet(["A", "B", "C"])
+        trainset = arcd.TrainSet(n_states=3)
         model_prefix = "blub"
         hook = arcd.ops.ArcdStorageHook(storage=arcd_store,
                                         model=oneout_rcmodel_notrans,
@@ -63,7 +63,7 @@ class Test_ArcdStorageHook:
 
     def test_after_simulation(self, tmp_path, oneout_rcmodel_notrans):
         arcd_store = arcd.Storage(tmp_path / "test.h5")
-        trainset = arcd.TrainSet(["A", "B", "C"])
+        trainset = arcd.TrainSet(n_states=3)
         model_prefix = "blub"
         hook = arcd.ops.ArcdStorageHook(storage=arcd_store,
                                         model=oneout_rcmodel_notrans,
@@ -80,6 +80,8 @@ class Test_ArcdStorageHook:
         loaded_model2 = arcd_store.rcmodels["most_recent"]
         # and the trainset
         ts = arcd_store.load_trainset()
+        # NOTE: no need to test the correctness of the loaded values
+        #       we check that what we load is what we save in storage tests
 
 
 class Test_DensityCollectionHook:

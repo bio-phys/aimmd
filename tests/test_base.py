@@ -36,25 +36,6 @@ class Test_RCModel:
             else:
                 assert np.all(loaded_model.__dict__[key] == val)
 
-    @pytest.mark.old
-    def test_save_fix_load(self, oneout_rcmodel_notrans, tmp_path):
-        # NOTE: OLD LOADING/SAVING API
-        p = tmp_path / 'Test_RCModel_test_save_fix_load'
-        fname = str(p)
-        model = oneout_rcmodel_notrans
-        model.expected_p.append('test')
-        model.save(fname)
-        fname += model.save_model_extension
-        state, cls = model.__class__.load_state(fname)
-        state = cls.fix_state(state)
-        loaded_model = cls.set_state(state)
-        for key, val in model.__dict__.items():
-            if key == 'density_collector':
-                loaded_dc = loaded_model.__dict__['density_collector']
-                for skey, sval in val.__dict__.items():
-                    assert np.all(loaded_dc.__dict__[skey] == sval)
-            else:
-                assert np.all(loaded_model.__dict__[key] == val)
 
     def test_binomial(self, oneout_rcmodel):
         model = oneout_rcmodel
@@ -124,13 +105,13 @@ class Test_RCModel:
                np.array([[200.]]), np.array([[0.]])
                ]
         # contains 1 TP
-        ts1 = arcd.TrainSet(['A', 'B'], descriptor_transform=None,
+        ts1 = arcd.TrainSet(n_states=2,
                             descriptors=np.concatenate(sps, axis=0),
                             shot_results=np.array([[0., 2.], [1., 1.],
                                                    [0., 2.], [2., 0.]])
                             )
         # contains 2 TPs
-        ts2 = arcd.TrainSet(['A', 'B'], descriptor_transform=None,
+        ts2 = arcd.TrainSet(n_states=2,
                             descriptors=np.concatenate(sps, axis=0),
                             shot_results=np.array([[0., 2.], [1., 1.],
                                                    [1., 1.], [2., 0.]])

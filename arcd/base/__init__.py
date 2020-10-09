@@ -14,4 +14,13 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
+class Properties:
+    """Keys to access shooting point properties in trainset iteration."""
+    descriptors = "descriptors"
+    shot_results = "shot_results"
+    weights = "weights"
+    q = "log_probs"
+    phi = "committors"
+
+
 from .rcmodel import RCModel

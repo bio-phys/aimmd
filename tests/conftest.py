@@ -169,7 +169,7 @@ class OneOutRCModel(RCModel):
     def __init__(self, transform=None):
         # work on numpy arrays directly, but test the use of transform
         # using transform should exchange p_A with p_B
-        super().__init__(descriptor_transform=transform)
+        super().__init__(states=["A", "B"], descriptor_transform=transform)
         self.n_train = 0
 
     @property
@@ -192,7 +192,7 @@ class OneOutRCModel(RCModel):
 
 class TwoOutRCModel(RCModel):
     def __init__(self, transform):
-        super().__init__(descriptor_transform=transform)
+        super().__init__(states=["A", "B"], descriptor_transform=transform)
         self.n_train = 0
 
     @property
