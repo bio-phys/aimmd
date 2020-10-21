@@ -146,7 +146,6 @@ class RCModel(ABC):
     def complete_from_ops_storage(self, ops_storage):
         if isinstance(self.descriptor_transform, str):
             self.descriptor_transform = ops_storage.cvs.find(self.descriptor_transform)
-            return self
         else:
             raise ValueError("self.descriptor_transform does not seem to be a "
                              + "string indicating the name of the ops CV.")
@@ -157,6 +156,7 @@ class RCModel(ABC):
                 except KeyError:
                     logger.warn(f"There seems to be no state with name {s} in"
                                 + " the ops storage.")
+        return self
 
     @abstractmethod
     def train_hook(self, trainset):
