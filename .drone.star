@@ -90,13 +90,13 @@ def make_conda_pipeline(os, arch, py_version, runall=False):
           "conda create -n test_env -q -y python={0} compilers".format(py_version),
           "source activate test_env",
           "conda info -e",
-          "conda install tensorflow -y -q",
+          # install deep learning packages
+          "conda install 'tensorflow>=2' -y -q",
           # TODO: this is CPUonly hardcoded...
           "conda install -q torchvision cpuonly -c pytorch -y",
           "conda install -q numpy cython -y",  # install setup dependecies
           # install ops pathsampling hooks branch
           "pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
-          # install deep learning packages
           "conda list",
           "python --version",
           "pip install .[test]",
