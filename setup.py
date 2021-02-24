@@ -10,7 +10,7 @@ Usage:
 Or (not recommended) with:
    python setup.py
 
-If you want linetrace for the tests
+If you want linetraceing for the tests of cython functions
 give --install-option='--linetrace' to pip install
 or --global-option='--linetrace' to pip install
 or --linetrace option to setup.py
@@ -40,7 +40,7 @@ import sys
 from setuptools import setup, find_packages
 from setuptools.extension import Extension
 
-# sort out if we'll use linetracing
+# sort out if we'll use linetracing for cython
 if '--linetrace' in sys.argv:
     LINETRACE = True
     sys.argv.remove('--linetrace')
@@ -174,14 +174,17 @@ setup(
     # requirements files see:
     # https://packaging.python.org/en/latest/requirements.html
     install_requires=[
-        'numpy',
+        'numpy>=1.17.0',  # v>=1.17.0 because we use 'new-style' RNGs
         'cython',
+        'scipy',
+        'MDAnalysis',  # trajectory/frame handling in distributed
         'openpathsampling',
         'mdtraj',
         'networkx',
         #'dcgpy',
         'sympy',  # only used for dcgpy atm
-        'h5py',  # for asrcd.Storage and for old loading/saving of keras models
+        # for arcd.Storage (and for old loading/saving of keras models)
+        'h5py>=3',  # need >=3 for the 'new' string handling
     ],
 
     # List additional groups of dependencies here (e.g. development
