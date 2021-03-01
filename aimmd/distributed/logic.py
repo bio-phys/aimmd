@@ -375,6 +375,16 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         self.states = states
         self.engines = engines
         self.engine_config = engine_config
+        try:
+            # make sure we do not generate velocities with gromacs
+            gen_vel = engine_config["gen-vel"]
+        except KeyError:
+            logger.info("Setting 'gen-vel = no' in mdp.")
+            engine_config["gen-vel"] = ["no"]
+        else:
+            if gen_vel[0] != "no":
+                logger.warning("Setting 'gen-vel = no' in mdp (was 'yes').")
+                engine_config["gen-vel"] = ["no"]
         self.walltime_per_part = walltime_per_part
         self.T = T
         self._build_extracts_and_propas()
@@ -717,7 +727,7 @@ class PropagatorUntilAnyState:
                                          for s in states]
         if not all(self._state_func_is_coroutine):
             # and warn if it is not
-            logger.warn("It is recommended to use coroutinefunctions for all "
+            logger.warning("It is recommended to use coroutinefunctions for all "
                         + "states. This can easily be achieved by wrapping any"
                         + " function in a TrajectoryFunctionWrapper. All "
                         + "non-coroutine state functions will be blocking when"

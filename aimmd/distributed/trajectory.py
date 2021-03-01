@@ -57,8 +57,8 @@ class TrajectoryFunctionWrapper:
         except OSError:
             # OSError is raised if source can not be retrieved
             self._func_src = None
-            logger.warn(f"Could not retrieve source for {value}."
-                        + " No caching can/will be performed.")
+            logger.warning(f"Could not retrieve source for {value}."
+                           + " No caching can/will be performed.")
         else:
             self._func_src = src
         self._func = value

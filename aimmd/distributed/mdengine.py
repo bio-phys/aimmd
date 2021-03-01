@@ -234,7 +234,7 @@ class GmxEngine(MDEngine):
             self._simulation_part = 0
         else:
             if sim_part > 0:
-                logger.warn("Read non-zero starting value for 'simulation-part'.")
+                logger.warning("Read non-zero starting value for 'simulation-part'.")
                 self._simulation_part = sim_part
         # NOTE: file paths from workdir and deffnm
         mdp_in = os.path.join(self.workdir, deffnm + ".mdp")
@@ -291,8 +291,8 @@ class GmxEngine(MDEngine):
             raise RuntimeError("Engine not ready for run. Call self.prepare() "
                                + "and/or check if it is still running.")
         if nsteps is None and walltime is None:
-            logger.warn("Neither nsteps nor walltime given."
-                        + " mdrun will try to take nsteps from the .mdp file.")
+            logger.warning("Neither nsteps nor walltime given."
+                           + " mdrun will try to take nsteps from the .mdp file.")
         self._simulation_part += 1
         cmd_str = self._mdrun_cmd(tpr=self._tpr, deffnm=self._deffnm,
                                   # TODO: use more/any other kwargs?
