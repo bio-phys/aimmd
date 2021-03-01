@@ -44,9 +44,48 @@ class BrainTask(abc.ABC):
         # TODO: find a smart way to pass the chain result (if we even want to?)
         pass
 
+
+class SaveTask(BrainTask):
+    def __init__(self, storage, model, trainset, interval=100,
+                 name_prefix="Central_RCModel"):
+        super().__init__(interval=interval)
+        self.storage = storage
+        self.model = model
+        self.trainset = trainset
+        self.name_prefix = name_prefix
+
+    def run(self, brain, mcstep, chain_idx):
+        # this only runs when total_steps % interval == 0
+        # i.e. we can just save when we run
+        self.storage.save_trainset(self.trainset)
+        savename = f"{self.name_prefix}_after_step{brain.total_steps}"
+        self.storage.rcmodels[savename] = self.model
+
+
+class TrainingTask(BrainTask):
+    # add stuff to trainset + call model trainhook
+    def __init__(self, model, trainset, interval=1):
+        super().__init__(interval=interval)
+        self.traisnet = trainset
+        self.model = model
+
+    def run(self, brain , mcstep, chain_idx):
+        try:
+            states_reached = mcstep.states_reached
+            shooting_snap = mcstep.shooting_snap
+        except AttributeError:
+            # wrong kind of move?!
+            logger.warning("Tried to add a step that was no shooting snapshot")
+        else:
+            descriptors = self.model.descriptor_transform(shooting_snap)
+            # descriptors is 2d but append_point expects 1d
+            self.trainset.append_point(descriptors=descriptors[0],
+                                       shot_results=states_reached)
+        # always call the train hook
+        self.model.train_hook(self.trainset)
+
+
 # TODO:
-# class ModelSaveTask
-# class TrainingTask
 # class DensityCollectionTask
 
 class Brain:
@@ -56,10 +95,11 @@ class Brain:
     Attributes
     ----------
         model - the committor model
-        workdir - 
-        storage - 
-        movers - 
-        mover_weights - 
+        workdir - a directory
+        storage - arcd.Storage
+        movers - list of PathMovers
+        mover_weights - None or list of floats, entries must be probabilities,
+                        i.e. must sum to 1
         tasks - list of `BrainTask` objects,
                 tasks will be checked if they should run in the order they are
                 in the list after any one TPS sim has finished a trial,
@@ -103,7 +143,7 @@ class Brain:
                                     )
         # and we do all setup of counters etc after to make sure they are what
         # we expect
-        self.total_trials = 0
+        self.total_steps = 0
         # chain-setup
         cwdirs = [os.path.join(self.workdir, f"{self.chain_directory_prefix}{i}")
                   for i in range(len(movers))]
@@ -147,10 +187,13 @@ class Brain:
                 # done sometimes?
                 chain_idx = chain_tasks.index(result)
                 mcstep = await result
+                self.total_steps += 1
                 if mcstep.accepted:
                     acc += 1
                 # run tasks/hooks
-                self._run_tasks(mcstep=mcstep, chain_idx=chain_idx)
+                self._run_tasks(mcstep=mcstep,
+                                chain_idx=chain_idx,
+                                )
                 # remove old task from list and start next step in the chain
                 # that just finished
                 _ = chain_tasks.pop(chain_idx)
@@ -164,10 +207,13 @@ class Brain:
         for result in done:
             chain_idx = chain_tasks.index(result)
             mcstep = await result
+            self.total_steps += 1
             if mcstep.accepted:
                 acc += 1
             # run tasks/hooks
-            self._run_tasks(mcstep=mcstep, chain_idx=chain_idx)
+            self._run_tasks(mcstep=mcstep,
+                            chain_idx=chain_idx,
+                            )
 
     def run_for_n_steps(self, n_steps):
         # run for n_steps total in all chains combined
@@ -182,8 +228,11 @@ class Brain:
                 # done sometimes?
                 chain_idx = chain_tasks.index(result)
                 mcstep = await result
+                self.total_steps += 1
                 # run tasks/hooks
-                self._run_tasks(mcstep=mcstep, chain_idx=chain_idx)
+                self._run_tasks(mcstep=mcstep,
+                                chain_idx=chain_idx,
+                                )
                 # remove old task from list and start next step in the chain
                 # that just finished
                 _ = chain_tasks.pop(chain_idx)
@@ -199,13 +248,17 @@ class Brain:
         for result in done:
             chain_idx = chain_tasks.index(result)
             mcstep = await result
+            self.total_steps += 1
             # run tasks/hooks
-            self._run_tasks(mcstep=mcstep, chain_idx=chain_idx)
+            self._run_tasks(mcstep=mcstep,
+                            chain_idx=chain_idx,
+                            )
 
     def _run_tasks(self, mcstep, chain_idx):
         for t in self.tasks:
-            if self.total_trials % t.interval == 0:
-                t.run(brain=self, mcstep=mcstep, chain_idx=chain_idx)
+            if self.total_steps % t.interval == 0:
+                t.run(brain=self, mcstep=mcstep,
+                      chain_idx=chain_idx)
 
 
 class PathSamplingChain:
