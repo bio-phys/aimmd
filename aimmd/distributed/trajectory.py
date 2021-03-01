@@ -16,25 +16,35 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 import os
 import abc
+import collections
+import asyncio
+import concurrent.futures
 import inspect
 import logging
 import numpy as np
 import MDAnalysis as mda
 from scipy import constants
 
-from ..base.storage import TrajectoryFunctionValueCache
+from . import _SEM_MAX_PROCESS
 
 
 logger = logging.getLogger(__name__)
 
 
 # TODO: DOCUMENT!
+# NOTE: it should be 'easy' to write and use a SlurmTrajectoryFunctionWrapper
+#       that submits the function calculation as job to the qeue sys
+#       we await the result anyways, so we could just submit the job and then
+#       await sleep loop until it is done
 class TrajectoryFunctionWrapper:
     # wrap functions for use on arcd.distributed.Trajectory
     # makes sure that we check for cached values if we apply the wrapped func
     # to an arcd.distributed.Trajectory
     def __init__(self, function):
         self.function = function
+
+    def __repr__(self):
+        return f"TrajectoryFunctionWrapper(function={self._func})"
 
     @property
     def function(self):
@@ -53,10 +63,13 @@ class TrajectoryFunctionWrapper:
             self._func_src = src
         self._func = value
 
-    def __call__(self, value):
+    async def __call__(self, value):
         if isinstance(value, Trajectory) and self._func_src is not None:
-            return value._apply_cached_func(self._func_src, self._func)
+            return await value._apply_cached_func(self._func_src, self._func)
         else:
+            # this will block until func is done, we could use a ProcessPool?!
+            # Can we make sure that we are always able to pickle value for that?
+            # (probably not since it could be Trajectory and we only have no func_src)
             return self._func(value)
 
 
@@ -78,11 +91,14 @@ class Trajectory:
         self._func_src_to_idx = {}
         self._func_values = []
         self._h5py_grp = None
+        self._h5py_cache = None
 
-    # TODO! should contain at least the paths to tra and top file
-    #def __repr__(self):
+    def __repr__(self):
+        return (f"Trajectory(trajectory_file={self.trajectory_file},"
+                + f" topology_file={self.topology_file})"
+                )
 
-    def _apply_cached_func(self, src, func):
+    async def _apply_cached_func(self, src, func):
         # TODO: for now we assume it is the right value if it is found in cache
         #       can we do anything to ensure/check that?
         #       store a hash of the file when we apply the func and check that?
@@ -93,7 +109,13 @@ class Trajectory:
                 return self._h5py_cache[src]
             except KeyError:
                 # not in there
-                vals = func(self)
+                # send function application to seperate process and wait for it
+                loop = asyncio.get_running_loop()
+                async with _SEM_MAX_PROCESS:
+                    # use one python subprocess: if func releases the GIL
+                    # it does not matter anyway, if func is full py 1 is enough
+                    with concurrent.futures.ProcessPoolExecutor(1) as pool:
+                        vals = await loop.run_in_executor(pool, func, self)
                 self._h5py_cache.append(src, vals)
                 return vals
         # only 'local' cache, i.e. this trajectory has no file associated (yet)
@@ -103,10 +125,28 @@ class Trajectory:
             return self._func_values[idx]
         except KeyError:
             # if not calculate, store and return
-            vals = func(self)
+            # send function application to seperate process and wait for it
+            loop = asyncio.get_running_loop()
+            async with _SEM_MAX_PROCESS:
+                # use one python subprocess: if func releases the GIL
+                # it does not matter anyway, if func is full py 1 is enough
+                with concurrent.futures.ProcessPoolExecutor(1) as pool:
+                    vals = await loop.run_in_executor(pool, func, self)
             self._func_src_to_idx[src] = len(self._func_src_to_idx)
             self._func_values.append(vals)
             return vals
+
+    def __getstate__(self):
+        # enable pickling of Trajecory without call to ready_for_pickle
+        # this should make it possible to pass it into a ProcessPoolExecutor
+        # and lets us calculate TrajectoryFunction values asyncronously
+        # NOTE: this removes everything except the filepaths
+        state = self.__dict__.copy()
+        state["_h5py_cache"] = None
+        state["_h5py_grp"] = None
+        state["_func_values"] = []
+        state["_func_src_to_idx"] = {}
+        return state
 
     def ready_for_pickle(self, group, overwrite):
         # NOTE: we ignore overwrite and assume the group is always empty
@@ -120,12 +160,15 @@ class Trajectory:
             group.copy(self._h5py_grp, group)
             state["_h5py_grp"] = None
             state["_h5py_cache"] = None
-        tmp_cache = TrajectoryFunctionValueCache(group)
+        # (re) set h5py group such that we use the cache from now on
+        self._h5py_grp = group
+        self._h5py_cache = TrajectoryFunctionValueCache(self._h5py_grp)
         for src, idx in self._func_src_to_idx.items():
-            tmp_cache.append(src, self._func_values[idx])
-        # initialize to empty for next time, we will get it from file directly
-        state["_func_values"] = []
-        state["_func_src_to_idx"] = {}
+            self._h5py_cache.append(src, self._func_values[idx])
+        # clear the 'local' cache and empty state, such that we initialize
+        # to empty, next time we will get it all from file directly
+        self._func_values = state["_func_values"] = []
+        self._func_src_to_idx = state["_func_src_to_idx"] = {}
         ret_obj = self.__class__.__new__(self.__class__)
         ret_obj.__dict__.update(state)
         return ret_obj
@@ -140,6 +183,49 @@ class Trajectory:
         self._h5py_grp = group
         self._h5py_cache = TrajectoryFunctionValueCache(group)
         return self
+
+
+class TrajectoryFunctionValueCache(collections.abc.Mapping):
+    """Interface for caching function values on a per trajectory basis."""
+    # NOTE: this is written with the assumption that stored trajectories are
+    #       immutable (except for adding additional stored function values)
+    #       but we assume that the actual underlying trajectory stays the same,
+    #       i.e. it is not extended after first storing it
+
+    def __init__(self, root_grp):
+        self._root_grp = root_grp
+        self._h5py_paths = {"srcs": "FunctionSources",
+                            "vals": "FunctionValues"
+                            }
+        self._srcs_grp = self._root_grp.require_group(self._h5py_paths["srcs"])
+        self._vals_grp = self._root_grp.require_group(self._h5py_paths["vals"])
+
+    def __len__(self):
+        return len(self._srcs_grp.keys())
+
+    def __iter__(self):
+        for idx in range(len(self)):
+            yield self._srcs_grp[str(idx)].asstr()[()]
+
+    def __getitem__(self, key):
+        if not isinstance(key, str):
+            raise TypeError("Keys must be of type str.")
+        for idx, k_val in enumerate(self):
+            if key == k_val:
+                return self._vals_grp[str(idx)][:]
+        # if we got until here the key is not in there
+        raise KeyError("Key not found.")
+
+    def append(self, src, vals):
+        if not isinstance(src, str):
+            raise TypeError("Keys (src) must be of type str.")
+        if src in self:
+            raise ValueError("There are already values stored for src."
+                             + " Changing the stored values is not supported.")
+        # TODO: do we also want to check vals for type?
+        name = str(len(self))
+        _ = self._srcs_grp.create_dataset(name, data=src)
+        _ = self._vals_grp.create_dataset(name, data=vals)
 
 
 class TrajectoryConcatenator:
@@ -186,7 +272,7 @@ class TrajectoryConcatenator:
         start0, stop0, step0 = slices[0]
         # if the file exists MDAnalysis will silently overwrite
         with mda.Writer(tra_out, n_atoms=u0.trajectory.n_atoms) as W:
-            for ts in u0.trajectory[start0, stop0, step0]:
+            for ts in u0.trajectory[start0:stop0:step0]:
                 if self.invert_v_for_negative_step and step0 < 0:
                     u0.atoms.velocities *= -1
                 W.write(u0.atoms)
@@ -194,7 +280,7 @@ class TrajectoryConcatenator:
             for traj, sl in zip(trajs[1:], slices[1:]):
                 u = mda.Universe(traj.topology_file, traj.trajectory_file)
                 start, stop, step = sl
-                for ts in u.trajectory[start, stop, step]:
+                for ts in u.trajectory[start:stop:step]:
                     if self.invert_v_for_negative_step and step < 0:
                         u.atoms.velocities *= -1
                     W.write(u.atoms)

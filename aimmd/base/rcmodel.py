@@ -15,7 +15,8 @@ You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
-import copy
+import inspect
+import asyncio
 import numpy as np
 from openpathsampling.engines.snapshot import BaseSnapshot as OPSBaseSnapshot
 from openpathsampling.engines.trajectory import Trajectory as OPSTrajectory
@@ -220,10 +221,20 @@ class RCModel(ABC):
         # apply descriptor_transform if wanted and defined
         # returns either unaltered descriptors or transformed descriptors
         if self.descriptor_transform is not None:
-            # transform OPS snapshots to trajectories to get 2d arrays
-            if isinstance(descriptors, OPSBaseSnapshot):
-                descriptors = OPSTrajectory([descriptors])
-            descriptors = self.descriptor_transform(descriptors)
+            if inspect.iscoroutinefunction(self.descriptor_transform.__call__):
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    # no running loop
+                    # I think then it should be save to use asyncio.run?!
+                    descriptors = asyncio.run(self.descriptor_transform(descriptors))
+                else:
+                    descriptors = loop.run_until_complete(self.descriptor_transform(descriptors))
+            else:
+                # transform OPS snapshots to trajectories to get 2d arrays
+                if isinstance(descriptors, OPSBaseSnapshot):
+                    descriptors = OPSTrajectory([descriptors])
+                descriptors = self.descriptor_transform(descriptors)
         return descriptors
 
     def log_prob(self, descriptors, use_transform=True, batch_size=None):
@@ -596,9 +607,23 @@ class TrajectoryDensityCollector:
         # add descriptors to self
         if counts is None:
             counts = len(trajectories) * [1.]
-        for tra, c in zip(trajectories, counts):
-            descriptors = model.descriptor_transform(tra)
-            self.append(tra_descriptors=descriptors, multiplicity=c)
+        if inspect.iscoroutinefunction(model.descriptor_transform.__call__):
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # no running loop
+                # I think then it should be save to use asyncio.run?!
+                for tra, c in zip(trajectories, counts):
+                    descriptors = asyncio.run(model.descriptor_transform(tra))
+                    self.append(tra_descriptors=descriptors, multiplicity=c)
+            else:
+                for tra, c in zip(trajectories, counts):
+                    descriptors = loop.run_until_complete(model.descriptor_transform(tra))
+                    self.append(tra_descriptors=descriptors, multiplicity=c)
+        else:
+            for tra, c in zip(trajectories, counts):
+                descriptors = model.descriptor_transform(tra)
+                self.append(tra_descriptors=descriptors, multiplicity=c)
         # now predict for the newly added
         pred = model(self._descriptors[len_before:self._fill_pointer],
                      use_transform=False)
@@ -632,11 +657,10 @@ class TrajectoryDensityCollector:
 
         """
         # add descriptors to self
-        if counts is None:
-            counts = len(trajectories) * [1.]
-        for tra, c in zip(trajectories, counts):
-            descriptors = model.descriptor_transform(tra)
-            self.append(tra_descriptors=descriptors, multiplicity=c)
+        # this also adds them to the density, but we reevaluate anyway...
+        self.add_density_for_trajectories(model=model,
+                                          trajectories=trajectories,
+                                          count=counts)
         # get current density estimate for all stored descriptors
         self.reevaluate_density(model=model)
 

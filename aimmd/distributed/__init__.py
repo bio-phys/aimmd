@@ -14,6 +14,27 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
+# TODO: is the the best place for our semaphore(s)?
+import os
+import asyncio
+
+
+def set_max_process(num=None):
+    """
+    Set the maximum number of concurrent python processes.
+    If num is None, default to os.cpu_count().
+    """
+    global _SEM_MAX_PROCESS
+    if num is None:
+        num = os.cpu_count()
+    _SEM_MAX_PROCESS = asyncio.Semaphore(num)
+
+
+set_max_process()
+
+
+# make stuff from submodules available (after defining the semaphores)
 from .trajectory import Trajectory, TrajectoryFunctionWrapper
 from .mdconfig import MDP
-from .mdengine import GmxEngine
+from .mdengine import GmxEngine, SlurmGmxEngine
+from .logic import MCstep, Brain, TwoWayShootingPathMover

@@ -17,6 +17,7 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 import os
 import abc
 import shlex
+import asyncio
 import logging
 import subprocess
 
@@ -60,10 +61,19 @@ class MDEngine(abc.ABC):
     def running(self):
         raise NotImplementedError
 
-    @abc.abstractmethod
-    def poll(self):
+    # NOTE: this is redundant and poll() is not very async/await like
+    #@abc.abstractmethod
+    #def poll(self):
         # return the return code of last engine run
         # [or None (if the engine is running or never ran)]
+    #    raise NotImplementedError
+
+    @abc.abstractproperty
+    def returncode(self):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def wait(self):
         raise NotImplementedError
 
     @abc.abstractproperty
@@ -75,6 +85,7 @@ class MDEngine(abc.ABC):
 
 
 # TODO: DOCUMENT!
+# TODO: capture mdrun stdout+ stderr? for local gmx? for slurm it goes to file
 # NOTE: with tra we mean trr, i.e. a full precision trajectory with velocities
 class GmxEngine(MDEngine):
     # local prepare and option to run a local gmx (mainly for testing)
@@ -119,6 +130,13 @@ class GmxEngine(MDEngine):
                                     + f" Default type is {type(cval)}."
                                     )
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        if isinstance(self._proc, asyncio.subprocess.Process):
+            # cant pickle the process, + its probably dead when we unpickle :)
+            state["_proc"] = None
+        return state
+
     @property
     def current_trajectory(self):
         if all(v is not None for v in [self._tpr, self._deffnm]):
@@ -148,17 +166,29 @@ class GmxEngine(MDEngine):
         if self._proc is None:
             # this happens when we did not call run() yet
             return False
-        return_code = self.poll()
-        if return_code is None:
+        if self._proc.returncode is None:
             # no return code means it is still running
             return True
-        # dont care for the exit code, we are not running anymore if we crashed
+        # dont care for the value of the exit code,
+        # we are not running anymore if we crashed ;)
         return False
 
-    def poll(self):
-        if self._proc is None:
-            return None
-        return self._proc.poll()
+    # NOTE: this is redundant and poll() is not very async/await like
+    #def poll(self):
+    #    if self._proc is None:
+    #        return None
+    #    return self._proc.poll()
+
+    @property
+    def returncode(self):
+        if self._proc is not None:
+            return self._proc.returncode
+        # Note: we also return None when we never ran, i.e. with no _proc set
+        return None
+
+    async def wait(self):
+        if self._proc is not None:
+            return await self._proc.wait()
 
     @property
     def workdir(self):
@@ -171,7 +201,7 @@ class GmxEngine(MDEngine):
             raise ValueError(f"Not a directory ({value}).")
         self._workdir = value
 
-    def prepare(self, starting_configuration, workdir, deffnm, run_config):
+    async def prepare(self, starting_configuration, workdir, deffnm, run_config):
         # we require run_config to be a MDP (class)!
         # deffnm is the default name/prefix for all outfiles (as in gmx)
         self.workdir = workdir  # sets to abspath and check if it is a dir
@@ -184,6 +214,10 @@ class GmxEngine(MDEngine):
             raise TypeError(f"starting_configuration must be a wrapped trr ({Trajectory}).")
         if not isinstance(run_config, MDP):
             raise TypeError(f"run_config must be of type {MDP}.")
+        if run_config["nsteps"][0] != -1:
+            logger.info(f"Changing nsteps from {run_config['nsteps']} to -1 "
+                        + "(infinte), run length is controlled via run args.")
+            run_config["nsteps"] = -1
         self._run_config = run_config
         self._deffnm = deffnm
         # check 'simulation-part' option in mdp file / MDP options
@@ -212,10 +246,18 @@ class GmxEngine(MDEngine):
         cmd_str = self._grompp_cmd(mdp_in=mdp_in, tpr_out=tpr_out,
                                    trr_in=trr_in, mdp_out=mdp_out)
         logger.info(f"{cmd_str}")
-        return_code = subprocess.Popen(shlex.split(cmd_str),
-                                       cwd=self.workdir,
-                                       ).wait()
+        grompp_proc = await asyncio.create_subprocess_exec(
+                                                *shlex.split(cmd_str),
+                                                stdout=asyncio.subprocess.PIPE,
+                                                stderr=asyncio.subprocess.PIPE,
+                                                cwd=self.workdir,
+                                                           )
+        stdout, stderr = await grompp_proc.communicate()
+        return_code = grompp_proc.returncode
         logger.info(f"grompp command returned {return_code}.")
+        logger.debug(f"grompp stdout: {stdout.decode()}.")
+        # gromacs likes to talk on stderr ;)
+        logger.debug(f"grompp stderr: {stderr.decode()}.")
         if return_code != 0:
             # this assumes POSIX
             raise RuntimeError(f"grompp had non-zero return code ({return_code}).")
@@ -227,16 +269,23 @@ class GmxEngine(MDEngine):
         self._proc = None
         self._prepared = True
 
-    def _start_gmx_mdrun(self, cmd_str):
+    async def _start_gmx_mdrun(self, cmd_str):
         # should enable us to reuse run and prepare methods in SlurmGmxEngine,
         # i.e. we only need to overwite this function to write out the slurm
-        # submission scripty and submit the job
-        proc = subprocess.Popen(shlex.split(cmd_str), cwd=self.workdir)
+        # submission script and submit the job
+        # TODO: capture sdtout/stderr? This would only work for local gmx...
+        proc = await asyncio.create_subprocess_exec(
+                                            *shlex.split(cmd_str),
+                                            stdout=asyncio.subprocess.PIPE,
+                                            stderr=asyncio.subprocess.PIPE,
+                                            cwd=self.workdir,
+                                                    )
         # this is only useful for local gmx,
         # qeue submissions finish and return imidiately
+        # for slurm gmx we use it to store the jobid
         self._proc = proc
 
-    def run(self, nsteps=None, walltime=None):
+    async def run(self, nsteps=None, walltime=None):
         # generic run method is actually easier to implement for gmx :D
         if not self.ready_for_run:
             raise RuntimeError("Engine not ready for run. Call self.prepare() "
@@ -249,16 +298,26 @@ class GmxEngine(MDEngine):
                                   # TODO: use more/any other kwargs?
                                   maxh=walltime, nsteps=nsteps)
         logger.info(f"{cmd_str}")
-        self._start_gmx_mdrun(cmd_str=cmd_str)
+        await self._start_gmx_mdrun(cmd_str=cmd_str)
+        exit_code = await self.wait()
+        if exit_code != 0:
+            raise RuntimeError("Non-zero exit code from mdrun.")
+        return self.current_trajectory
 
-    def run_nsteps(self, nsteps):
-        self.run(nsteps=nsteps, walltime=None)
+    async def run_nsteps(self, nsteps):
+        # TODO:
+        """
+        FIXME: nsteps is the total number of steps in all traj-parts combined!
+        """
+        #        i.e. steps is reset to zero only when calling prepare
+        #        if our trajectories would know their len this would be
+        #        easy to fix by introducing a separate counter....
+        #        we could also parse gmx output to know the last framenum?
+        #        so we could do this together with untangeling/catching stdout!
+        return await self.run(nsteps=nsteps, walltime=None)
 
-    def run_walltime(self, walltime):
-        # TODO: do we want this?
-        # we set nsteps to -1 (== infinite independent of the mdp setting)
-        # but I guess this is what you want if you call it with walltime?!
-        self.run(nsteps=-1, walltime=walltime)
+    async def run_walltime(self, walltime):
+        return await self.run(nsteps=None, walltime=walltime)
 
     def _num_suffix(self):
         # construct gromacs num part suffix from simulation_part
@@ -307,13 +366,16 @@ class GmxEngine(MDEngine):
         return cmd
 
 
-# TODO: test this!
+# TODO: test this! (it should work with a working slurm script,
+#                   the local engine works and the parsing is tested)
 class SlurmGmxEngine(GmxEngine):
     # use local prepare (i.e. grompp) of GmxEngine then submit run to slurm
     # we reuse the `GmxEngine._proc` to keep the jobid
     # therefore we only need to reimplement `poll()` and `_start_gmx_mdrun()`
     # currently take submit script as str/file, use pythons .format to insert stuff!
     # TODO: document what we insert! currently: mdrun_cmd, jobname
+    # TODO: we should insert time if we know it?!
+    #  (some qeue eligibility can depend on time requested so we should request the known minimum)
     # we get the job state from parsing sacct output
 
     # TODO: these are improvements for the above options, but they result
@@ -323,6 +385,9 @@ class SlurmGmxEngine(GmxEngine):
     #          (it seems submission is frickly in pyslurm)
 
     mdrun_executable = "gmx_mpi mdrun"  # MPI as default for clusters
+    # since we can not simply wait for the subprocess, since slurm exits immidiately
+    # we will sleep for this long between checks if mdrun/slurm-job completed
+    sleep_time = 60  # TODO: heuristic? dynamically adapt?
     # NOTE: no options to set/pass extra_args for sbatch and sacct:
     #       I think all sbatch options can also be set via SBATCH directives?!
     #       and sacct options would probably only mess up our parsing... ;)
@@ -349,7 +414,7 @@ class SlurmGmxEngine(GmxEngine):
         #"RESIZING" TODO: when does this happen? what should we return?
         # Sibling was removed from cluster due to other cluster starting the job.
         "REVOKED": 1,
-        # Job has an allocation, but execution has been suspended and CPUs have been released for other jobs. 
+        # Job has an allocation, but execution has been suspended and CPUs have been released for other jobs.
         "SUSPENDED": None,
         # Job terminated upon reaching its time limit.
         "TIMEOUT": 1,  # TODO: can this happen for jobs that finish properly?
@@ -367,7 +432,7 @@ class SlurmGmxEngine(GmxEngine):
                 sbatch_script = f.read()
         self.sbatch_script = sbatch_script
 
-    def _start_gmx_mdrun(self, cmd_str):
+    async def _start_gmx_mdrun(self, cmd_str):
         # create a name from deffnm and partnum
         name = self._deffnm + self._num_suffix()
         # substitute placeholders in submit script
@@ -380,11 +445,14 @@ class SlurmGmxEngine(GmxEngine):
         with open(fname, 'w') as f:
             f.write(script)
         sbatch_cmd = f"{self.sbatch_executable} --parsable {fname}"
-        sbatch_return = subprocess.check_output(shlex.split(sbatch_cmd),
+        sbatch_proc = await asyncio.subprocess.create_subprocess_exec(
+                                                *shlex.split(sbatch_cmd),
+                                                stdout=asyncio.subprocess.PIPE,
+                                                stderr=asyncio.subprocess.PIPE,
                                                 cwd=self.workdir,
-                                                # return str instead of bytes
-                                                text=True,
-                                                )
+                                                                      )
+        stdout, stderr = await sbatch_proc.communicate()
+        sbatch_return = stdout.decode()
         # only jobid (and possibly clustername) returned, semikolon to separate
         jobid = sbatch_return.split(";")[0]
         self._proc = jobid
@@ -405,14 +473,33 @@ class SlurmGmxEngine(GmxEngine):
                 # TODO: parse and return the exitcode too?
                 return state
 
-    def poll(self):
-        # poll is used in running property
-        if self._proc is None:
+# NOTE: poll() is redundant to wait()
+#    def poll(self):
+#        # poll is used in running property
+#        if self._proc is None:
+#            return None
+#        state = self.slurm_job_state
+#        for key, val in self.slurm_state_to_exitcode:
+#            if key in state:
+#                # this also recognizes `CANCELLED by ...` as CANCELLED
+#                return val
+#        # we should never finish the loop, it means we miss a slurm job state
+#        raise RuntimeError(f"Could not find a matching exitcode for state {state}")
+
+    @property
+    def returncode(self):
+        slurm_state = self.slurm_job_state
+        if slurm_state is None:
             return None
-        state = self.slurm_job_state
         for key, val in self.slurm_state_to_exitcode:
-            if key in state:
+            if key in slurm_state:
                 # this also recognizes `CANCELLED by ...` as CANCELLED
                 return val
         # we should never finish the loop, it means we miss a slurm job state
-        raise RuntimeError(f"Could not find a matching exitcode for state {state}")
+        raise RuntimeError("Could not find a matching exitcode for slurm state"
+                           + f": {slurm_state}")
+
+    async def wait(self):
+        while self.returncode is None:
+            await asyncio.sleep(self.sleep_time)
+        return self.returncode

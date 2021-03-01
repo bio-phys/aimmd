@@ -17,13 +17,13 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 import logging
 import os
 import io
-import copy
 import pickle
 import collections.abc
 import h5py
 import numpy as np
 from pkg_resources import parse_version
 from .trainset import TrainSet
+from ..distributed.logic import ModelDependentPathMover
 from .. import __about__
 
 
@@ -426,89 +426,80 @@ class RCModelRack(collections.abc.MutableMapping):
 
 # TODO: DOCUMENT!!!
 # distributed TPS storage
-class TrajectoryFunctionValueCache(collections.abc.Mapping):
-    """Interface for caching function values on a per trajectory basis."""
-    # NOTE: this is written with the assumption that stored trajectories are
-    #       immutable (except for adding additional stored function values)
-    #       but we assume that the actual underlying trajectory stays the same,
-    #       i.e. it is not extended after first storing it
-
-    def __init__(self, root_grp):
-        self._root_grp = root_grp
-        self._h5py_paths = {"srcs": "FunctionSources",
-                            "vals": "FunctionValues"
-                            }
-        self._srcs_grp = self._root_grp.require_group(self._h5py_paths["srcs"])
-        self._vals_grp = self._root_grp.require_group(self._h5py_paths["vals"])
-
-    def __len__(self):
-        return len(self._srcs_grp.keys())
-
-    def __iter__(self):
-        for idx in range(len(self)):
-            yield self._srcs_grp[str(idx)].asstr()[()]
-
-    def __getitem__(self, key):
-        if not isinstance(key, str):
-            raise TypeError("Keys must be of type str.")
-        for idx, k_val in enumerate(self):
-            if key == k_val:
-                return self._vals_grp[str(idx)][:]
-        # if we got until here the key is not in there
-        raise KeyError("Key not found.")
-
-    def append(self, src, vals):
-        if not isinstance(src, str):
-            raise TypeError("Keys (src) must be of type str.")
-        if src in self:
-            raise ValueError("There are already values stored for src."
-                             + " Changing the stored values is not supported.")
-        # TODO: do we also want to check vals for type?
-        name = str(len(self))
-        _ = self._srcs_grp.create_dataset(name, data=src)
-        _ = self._vals_grp.create_dataset(name, data=vals)
-
-
-class TrialMemory(collections.abc.Sequence):
+class MCstepMemory(collections.abc.Sequence):
     # NOTE: we inherhit from Sequence (instead of MutableSequence) and write a custom .append method
     #       this way we can easily make sure that trial data can not be reset
     # TODO: should we use a `abc.collections.Collection` instead
     #       (to reflect that trials are not necessarily ordered?)
-    # stores one TPS Trial
+    # stores one MCstep
     # contains a sequence of trial trajectories (2 for TwoWayShooting)
-    # *can* contain a transition
-    def __init__(self, root_grp, trajectories=[], transition=None):
+    # *can* contain a path/transition
+    def __init__(self, root_grp, modelstore, mcstep=None):
         self._root_grp = root_grp
-        self._h5py_paths = {"TP": "transition",
-                            "tras": "trajectories",
+        self._modelstore = modelstore
+        self._h5py_paths = {"path": "path",
+                            "trials": "trial_trajectories",
+                            "py_data": "obj_shelf_pickle_data",
                             }
         self._tras_grp = self._root_grp.require_group(
-                                            self._h5py_paths["tras"]
+                                            self._h5py_paths["trials"]
                                                       )
-        for tra in trajectories:
-            self.append(tra)
-        if transition is not None:
-            self.transition = transition
+        if mcstep is not None:
+            self.save(mcstep=mcstep)
+
+    def save(self, mcstep):
+        if len(self) != 0:
+            raise RuntimeError("Can not modify overwrite saved MCsteps.")
+        trajs = mcstep.trial_trajectories
+        path = mcstep.path
+        mover = mcstep.mover
+        for tra in trajs:
+            self._append(tra)
+        if path is not None:
+            self.path = path
+        py_grp = self._root_grp.require_group(self._h5py_paths["py_data"])
+        if isinstance(mover, ModelDependentPathMover):
+            mover_modelstore = mover.modelstore
+            if mover_modelstore is not self._modelstore:
+                logger.error("saving a mcstep with a 'foreign' modelstore")
+            mcstep.mover.modelstore = None
+        ArcdObjectShelf(py_grp).save(obj=mcstep, overwrite=True)
+        # reset the modelstore of the mc.mover in case we use it somewhere else
+        mcstep.mover.modelstore = mover_modelstore
+
+    def load(self):
+        try:
+            py_grp = self._root_grp[self._h5py_paths["py_data"]]
+        except KeyError:
+            # we get a KeyError if there is no transition
+            return None
+        else:
+            mcstep = ArcdObjectShelf(py_grp).load()
+        mcstep.trial_trajectories = [t for t in self]
+        mcstep.path = self.path
+        if isinstance(mcstep.mover, ModelDependentPathMover):
+            mcstep.mover.modelstore = self._modelstore
+        return mcstep
 
     @property
-    def transition(self):
+    def path(self):
         try:
-            tp_grp = self._root_grp[self._h5py_paths["TP"]]
+            tp_grp = self._root_grp[self._h5py_paths["path"]]
         except KeyError:
             # we get a KeyError if there is no transition
             return None
         else:
             return ArcdObjectShelf(tp_grp).load()
 
-    @transition.setter
-    def transition(self, val):
+    @path.setter
+    def path(self, val):
         # TODO: check that value is of type Trajectory?
-        if self.transition is not None:
+        if self.path is not None:
             # make sure there is None (yet)
             raise ValueError("Can only set the transition once,"
                              + " i.e. if it has no value.")
         else:
-            tp_grp = self._root_grp.require_group(self._h5py_paths["TP"])
+            tp_grp = self._root_grp.require_group(self._h5py_paths["path"])
             # the group should be empty, so lets fails if it is not
             ArcdObjectShelf(tp_grp).save(obj=val, overwrite=False)
 
@@ -521,22 +512,22 @@ class TrialMemory(collections.abc.Sequence):
             if key >= len(self):
                 raise IndexError(f"Index (was {key}) must be <= len(self).")
             else:
-                return ArcdObjectShelf(self._tras_grp[str(key)]).load()
+                return ArcdObjectShelf(self._trials_grp[str(key)]).load()
         elif isinstance(key, slice):
             start, stop, step = key.indices(len(self))
             ret_val = []
             for idx in range(start, stop, step):
-                ret_val += [ArcdObjectShelf(self._tras_grp[str(idx)]).load()]
+                ret_val += [ArcdObjectShelf(self._trials_grp[str(idx)]).load()]
             return ret_val
         else:
             raise TypeError("Keys must be int or slice.")
 
-    def append(self, value):
+    def _append(self, value):
         # append a trajectory to the trajectories associated with this trial
         # TODO: check that value is of type Trajectory?
-        single_tra_grp = self._tras_grp.require_group(str(len(self)))
+        single_trial_grp = self._trials_grp.require_group(str(len(self)))
         # group should be empty so overwrite=False to fail if its not
-        ArcdObjectShelf(single_tra_grp).save(obj=value, overwrite=False)
+        ArcdObjectShelf(single_trial_grp).save(obj=value, overwrite=False)
 
 
 class ChainMemory(collections.abc.Sequence):
@@ -549,25 +540,31 @@ class ChainMemory(collections.abc.Sequence):
     # and have an `accepts` and a `transitions` method?!
     def __init__(self, root_grp):
         self._root_grp = root_grp
-        self._h5py_paths = {"trials": "trials",  # the actual datasets
-                            "MCStates": "MCStates",  # hardlinks to the corresponding trials
+        self._h5py_paths = {"MCsteps": "MCsteps",  # the actual datasets
+                            "MCstates": "MCStates",  # hardlinks to the corresponding trials
+                            "modelstore": "RCmodels",  # models used in this chain
                             }
-        self._trials_grp = self._root_grp.require_group(
-                                                self._h5py_paths["trials"]
+        self._mcsteps_grp = self._root_grp.require_group(
+                                                self._h5py_paths["MCSteps"]
                                                         )
         self._mcstates_grp = self._root_grp.require_group(
                                                 self._h5py_paths["MCStates"]
                                                           )
+        self._models_grp = self._root_grp.require_group(
+                                                self._h5py_paths["modelstore"]
+                                                       )
+        self.modelstore = RCModelRack(rcmodel_group=self._models_grp)
 
     def __len__(self):
-        return len(self._trials_grp.keys())
+        return len(self._mcsteps_grp.keys())
 
     def __getitem__(self, key):
         if isinstance(key, (int, np.int)):
             if key >= len(self):
                 raise IndexError(f"Index (was {key}) must be <= len(self).")
             else:
-                return TrialMemory(self._trials_grp[str(key)])
+                return MCstepMemory(self._mcsteps_grp[str(key)],
+                                    modelstore=self.modelstore).load()
         elif isinstance(key, slice):
             start, stop, step = key.indices(len(self))
             # TODO: or do we want the generator (i.e. yield)?
@@ -575,20 +572,22 @@ class ChainMemory(collections.abc.Sequence):
             ret_val = []
             for idx in range(start, stop, step):
                 #yield TrialMemory(self._trials_grp[str(idx)])
-                ret_val += [TrialMemory(self._trials_grp[str(idx)])]
+                ret_val += [MCstepMemory(self._mcsteps_grp[str(idx)],
+                                         modelstore=self.modelstore).load()]
             return ret_val
         else:
             raise TypeError("Keys must be int or slice.")
 
-    def append(self, trajectories=[], transition=None, accepted=False):
+    def append(self, mcstep):
         # create a new TPS trial and fill it with the given trajectories + transition
         n = len(self)
-        single_trial_grp = self._trials_grp.require_group(str(n))
-        _ = TrialMemory(single_trial_grp, trajectories=trajectories,
-                        transition=transition)
-        if accepted:
+        single_step_grp = self._mcsteps_grp.require_group(str(n))
+        _ = MCstepMemory(single_step_grp,
+                         modelstore=self.modelstore,
+                         mcstep=mcstep)
+        if mcstep.accepted:
             # add it as active mcstate too
-            self._mcstates_grp[str(n)] = single_trial_grp
+            self._mcstates_grp[str(n)] = single_step_grp
         else:
             # add the previous mcstate as active state again
             self._mcstates_grp[str(n)] = self._mcstates_grp[str(n - 1)]
@@ -596,14 +595,16 @@ class ChainMemory(collections.abc.Sequence):
     def mcstates(self):
         """Return a generator over all Markov Chain states."""
         for idx in range(len(self._mcstates_grp.keys())):
-            yield TrialMemory(self._mcstates_grp[str(idx)])
+            yield MCstepMemory(self._mcstates_grp[str(idx)],
+                               modelstore=self.modelstore).load()
 
     def mcstate(self, idx):
         """Return the active Markov Chain state at trial with given idx."""
         if isinstance(idx, (int, np.int)):
             if idx >= len(self._mcstates_grp.keys()):
                 raise IndexError(f"No Markov Chain state with index {idx}.")
-            return TrialMemory(self._mcstates_grp[str(idx)])
+            return MCstepMemory(self._mcstates_grp[str(idx)],
+                                modelstore=self.modelstore).load()
         else:
             raise ValueError("Markov chain state index must be an integer.")
 
@@ -782,22 +783,6 @@ class Storage:
         cm_grp = self.file.require_group(self.h5py_path_dict["distributed_cm"])
         self._central_memory = CentralMemory(cm_grp)
         self._central_memory.set_n_chains(n_chains=n_chains)
-
-    @property
-    def brain(self):
-        try:
-            brain_grp = self.file[self.h5py_path_dict["distributed_brain"]]
-        except KeyError:
-            return None
-        else:
-            return ArcdObjectShelf(brain_grp).load()
-
-    @brain.setter
-    def brain(self, value):
-        # TODO: potentially you could set a brain that does not belong
-        #       to the TPSchains/models/storage...but who would do that? :)
-        brain_grp = self.file.require_group(self.h5py_path_dict["distributed_brain"])
-        ArcdObjectShelf(brain_grp).save(value, overwrite=True)
 
     # make possible to use in with statements
     def __enter__(self):
