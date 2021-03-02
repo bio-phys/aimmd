@@ -177,7 +177,7 @@ setup(
         'numpy>=1.17.0',  # v>=1.17.0 because we use 'new-style' RNGs
         'cython',
         'scipy',
-        'MDAnalysis',  # trajectory/frame handling in distributed
+        'mdanalysis',  # trajectory/frame handling in distributed
         'openpathsampling',
         'mdtraj',
         'networkx',

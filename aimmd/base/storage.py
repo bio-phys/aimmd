@@ -545,10 +545,10 @@ class ChainMemory(collections.abc.Sequence):
                             "modelstore": "RCmodels",  # models used in this chain
                             }
         self._mcsteps_grp = self._root_grp.require_group(
-                                                self._h5py_paths["MCSteps"]
+                                                self._h5py_paths["MCsteps"]
                                                         )
         self._mcstates_grp = self._root_grp.require_group(
-                                                self._h5py_paths["MCStates"]
+                                                self._h5py_paths["MCstates"]
                                                           )
         self._models_grp = self._root_grp.require_group(
                                                 self._h5py_paths["modelstore"]
@@ -619,15 +619,15 @@ class CentralMemory(collections.abc.Sequence):
                                                 self._h5py_paths["chains"]
                                                         )
 
-    def set_n_chains(self, value):
+    def set_n_chains(self, n_chains):
         # we assume this will be set only once per sim + storage
         # but because we are nice we enable to increase n_chains
         le = len(self)
         if le != 0:
             logger.warn("Resetting the number of chains for initialized storage.")
-        if value <= le:
+        if n_chains <= le:
             raise ValueError("Can only increase number of chains.")
-        for i in range(le, value):
+        for i in range(le, n_chains):
             _ = self._chains_grp.create_group(str(i))
 
     def __len__(self):

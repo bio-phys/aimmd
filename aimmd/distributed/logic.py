@@ -66,10 +66,10 @@ class TrainingTask(BrainTask):
     # add stuff to trainset + call model trainhook
     def __init__(self, model, trainset, interval=1):
         super().__init__(interval=interval)
-        self.traisnet = trainset
+        self.trainset = trainset
         self.model = model
 
-    def run(self, brain , mcstep, chain_idx):
+    def run(self, brain, mcstep, chain_idx):
         try:
             states_reached = mcstep.states_reached
             shooting_snap = mcstep.shooting_snap
@@ -85,8 +85,53 @@ class TrainingTask(BrainTask):
         self.model.train_hook(self.trainset)
 
 
-# TODO:
-# class DensityCollectionTask
+# TODO: finish this!! (when we have played with storage a bit,
+#                      to make sure the API that we use stays)
+class DensityCollectionTask(BrainTask):
+    # do density collection
+    def __init__(self, model, first_collection=100, recreate_interval=500,
+                 interval=10):
+        super().__init__(interval=interval)
+        self.model = model
+        self.first_collection = first_collection
+        self.recreate_interval = recreate_interval
+
+    def run(self, brain, mcstep, chain_idx):
+        if brain.storage is None:
+            logger.warn("Density collection/adaptation is currently only "
+                        + "possible for simulations with attached storage."
+                        )
+            return
+        dc = self.model.density_collector
+        if brain.total_steps - self.first_collection >= 0:
+            if brain.total_steps - self.first_collection == 0:
+                # first collection
+                # TODO: write this function for arcd storages!
+                #tps, counts = accepted_trials_from_ops_storage(
+                #                                storage=sim.storage,
+                #                                start=-self.first_collection,
+                #                                               )
+                dc.add_density_for_trajectories(model=self.model,
+                                                trajectories=tps,
+                                                counts=counts,
+                                                )
+            elif brain.total_steps % self.interval == 0:
+                # add only the last interval steps
+                # TODO: write this function for arcd storages!
+                #tps, counts = accepted_trials_from_ops_storage(
+                #                                storage=sim.storage,
+                #                                start=-self.interval,
+                #                                               )
+                dc.add_density_for_trajectories(model=self.model,
+                                                trajectories=tps,
+                                                counts=counts,
+                                                )
+            # Note that this below is an if because reevaluation should be
+            # independent of adding new TPs in the same MCStep
+            if brain.total_steps % self.recreate_interval == 0:
+                # reevaluation time
+                dc.reevaluate_density(model=self.model)
+
 
 class Brain:
     """
@@ -147,7 +192,9 @@ class Brain:
         # chain-setup
         cwdirs = [os.path.join(self.workdir, f"{self.chain_directory_prefix}{i}")
                   for i in range(len(movers))]
-        self.storage.initialize_central_memory(n_chains=len(movers))
+        # make the dirs
+        [os.mkdir(d) for d in cwdirs]
+        #self.storage.initialize_central_memory(n_chains=len(movers))
         cstores = [c for c in self.storage.central_memory]
         self.chains = [PathSamplingChain(workdir=wdir,
                                          chainstore=cstore,
@@ -180,8 +227,8 @@ class Brain:
         chain_tasks = [asyncio.create_task(c.run_step(self.model))
                        for c in self.chains]
         while acc < n_accepts:
-            done, pending = asyncio.wait(chain_tasks,
-                                         return_when=asyncio.FIRST_COMPLETED)
+            done, pending = await asyncio.wait(chain_tasks,
+                                               return_when=asyncio.FIRST_COMPLETED)
             for result in done:
                 # iterate over all done results, because there can be multiple
                 # done sometimes?
@@ -215,14 +262,14 @@ class Brain:
                             chain_idx=chain_idx,
                             )
 
-    def run_for_n_steps(self, n_steps):
+    async def run_for_n_steps(self, n_steps):
         # run for n_steps total in all chains combined
         chain_tasks = [asyncio.create_task(c.run_step(self.model))
                        for c in self.chains]
         n_started = len(chain_tasks)
         while n_started < n_steps:
-            done, pending = asyncio.wait(chain_tasks,
-                                         return_when=asyncio.FIRST_COMPLETED)
+            done, pending = await asyncio.wait(chain_tasks,
+                                               return_when=asyncio.FIRST_COMPLETED)
             for result in done:
                 # iterate over all done results, because there can be multiple
                 # done sometimes?
@@ -471,7 +518,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         # (this is the 'main' model and if it knows about the SPs we can use the
         #  prediction accuracy in the close past to decide if we want to train)
         # to ensure we simply pick the SP before the first await!
-        self.store_model(model=model, instep=instep)
+        self.store_model(model=model, stepnum=stepnum)
         selector = RCModelSPSelector(model=model)
         # this also registers the picked SP with the model
         sp_idx = selector.pick(instep.path)
@@ -597,7 +644,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                 with concurrent.futures.ProcessPoolExecutor(1) as pool:
                     path_traj = await loop.run_in_executor(pool, concat)
             # accept or reject?
-            model = self.get_model(instep=instep)
+            model = self.get_model(stepnum=stepnum)
             # NOTE: we assume that the models descriptor_transform is an arcd
             # wrapped trajectory func, i.e. that it makes sense to first await
             # the calculation in a sepearate process and then reuse the cached
