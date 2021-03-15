@@ -221,20 +221,10 @@ class RCModel(ABC):
         # apply descriptor_transform if wanted and defined
         # returns either unaltered descriptors or transformed descriptors
         if self.descriptor_transform is not None:
-            if inspect.iscoroutinefunction(self.descriptor_transform.__call__):
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    # no running loop
-                    # I think then it should be save to use asyncio.run?!
-                    descriptors = asyncio.run(self.descriptor_transform(descriptors))
-                else:
-                    descriptors = loop.run_until_complete(self.descriptor_transform(descriptors))
-            else:
-                # transform OPS snapshots to trajectories to get 2d arrays
-                if isinstance(descriptors, OPSBaseSnapshot):
-                    descriptors = OPSTrajectory([descriptors])
-                descriptors = self.descriptor_transform(descriptors)
+            # transform OPS snapshots to trajectories to get 2d arrays
+            if isinstance(descriptors, OPSBaseSnapshot):
+                descriptors = OPSTrajectory([descriptors])
+            descriptors = self.descriptor_transform(descriptors)
         return descriptors
 
     def log_prob(self, descriptors, use_transform=True, batch_size=None):

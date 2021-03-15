@@ -463,7 +463,7 @@ class MCstepMemory(collections.abc.Sequence):
             if mover_modelstore is not self._modelstore:
                 logger.error("saving a mcstep with a 'foreign' modelstore")
             mcstep.mover.modelstore = None
-        ArcdObjectShelf(py_grp).save(obj=mcstep, overwrite=True)
+        MutableObjectShelf(py_grp).save(obj=mcstep, overwrite=True)
         # reset the modelstore of the mc.mover in case we use it somewhere else
         mcstep.mover.modelstore = mover_modelstore
 
@@ -474,7 +474,7 @@ class MCstepMemory(collections.abc.Sequence):
             # we get a KeyError if there is no transition
             return None
         else:
-            mcstep = ArcdObjectShelf(py_grp).load()
+            mcstep = MutableObjectShelf(py_grp).load()
         mcstep.trial_trajectories = [t for t in self]
         mcstep.path = self.path
         if isinstance(mcstep.mover, ModelDependentPathMover):
@@ -505,19 +505,19 @@ class MCstepMemory(collections.abc.Sequence):
 
     def __len__(self):
         # return number of trial trajectories as length
-        return len(self._trials_grp.keys())
+        return len(self._tras_grp.keys())
 
     def __getitem__(self, key):
         if isinstance(key, (int, np.int)):
             if key >= len(self):
                 raise IndexError(f"Index (was {key}) must be <= len(self).")
             else:
-                return ArcdObjectShelf(self._trials_grp[str(key)]).load()
+                return ArcdObjectShelf(self._tras_grp[str(key)]).load()
         elif isinstance(key, slice):
             start, stop, step = key.indices(len(self))
             ret_val = []
             for idx in range(start, stop, step):
-                ret_val += [ArcdObjectShelf(self._trials_grp[str(idx)]).load()]
+                ret_val += [ArcdObjectShelf(self._tras_grp[str(idx)]).load()]
             return ret_val
         else:
             raise TypeError("Keys must be int or slice.")
@@ -525,12 +525,13 @@ class MCstepMemory(collections.abc.Sequence):
     def _append(self, value):
         # append a trajectory to the trajectories associated with this trial
         # TODO: check that value is of type Trajectory?
-        single_trial_grp = self._trials_grp.require_group(str(len(self)))
+        single_tra_grp = self._tras_grp.require_group(str(len(self)))
         # group should be empty so overwrite=False to fail if its not
-        ArcdObjectShelf(single_trial_grp).save(obj=value, overwrite=False)
+        ArcdObjectShelf(single_tra_grp).save(obj=value, overwrite=False)
 
 
 class ChainMemory(collections.abc.Sequence):
+    # TODO: (re)add MCstates!
     # TODO: do we want Sequence behaivour for trials or for MCStates?!
     #       (and have the other available via a method/methods)
     # NOTE: we inherhit from Sequence (instead of MutableSequence) and write a custom .append method
@@ -541,15 +542,11 @@ class ChainMemory(collections.abc.Sequence):
     def __init__(self, root_grp):
         self._root_grp = root_grp
         self._h5py_paths = {"MCsteps": "MCsteps",  # the actual datasets
-                            "MCstates": "MCStates",  # hardlinks to the corresponding trials
                             "modelstore": "RCmodels",  # models used in this chain
                             }
         self._mcsteps_grp = self._root_grp.require_group(
                                                 self._h5py_paths["MCsteps"]
                                                         )
-        self._mcstates_grp = self._root_grp.require_group(
-                                                self._h5py_paths["MCstates"]
-                                                          )
         self._models_grp = self._root_grp.require_group(
                                                 self._h5py_paths["modelstore"]
                                                        )
@@ -585,28 +582,6 @@ class ChainMemory(collections.abc.Sequence):
         _ = MCstepMemory(single_step_grp,
                          modelstore=self.modelstore,
                          mcstep=mcstep)
-        if mcstep.accepted:
-            # add it as active mcstate too
-            self._mcstates_grp[str(n)] = single_step_grp
-        else:
-            # add the previous mcstate as active state again
-            self._mcstates_grp[str(n)] = self._mcstates_grp[str(n - 1)]
-
-    def mcstates(self):
-        """Return a generator over all Markov Chain states."""
-        for idx in range(len(self._mcstates_grp.keys())):
-            yield MCstepMemory(self._mcstates_grp[str(idx)],
-                               modelstore=self.modelstore).load()
-
-    def mcstate(self, idx):
-        """Return the active Markov Chain state at trial with given idx."""
-        if isinstance(idx, (int, np.int)):
-            if idx >= len(self._mcstates_grp.keys()):
-                raise IndexError(f"No Markov Chain state with index {idx}.")
-            return MCstepMemory(self._mcstates_grp[str(idx)],
-                                modelstore=self.modelstore).load()
-        else:
-            raise ValueError("Markov chain state index must be an integer.")
 
 
 class CentralMemory(collections.abc.Sequence):

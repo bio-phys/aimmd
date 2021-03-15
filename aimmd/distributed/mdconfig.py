@@ -138,8 +138,13 @@ class LineBasedMDConfig(MDConfig):
         """
         self._config = {}
         self._changed = False
+        self._type_dispatch = self._construct_type_dispatch()
+        # property to set/check file and parse to config dictionary all in one
+        self.original_file = original_file
+
+    def _construct_type_dispatch(self):
         # construct type conversion dispatch
-        self._type_dispatch = collections.defaultdict(
+        type_dispatch = collections.defaultdict(
                                 # looks a bit strange, but the factory func
                                 # is called to produce the default value, i.e.
                                 # we need a func that returns our default func
@@ -147,19 +152,27 @@ class LineBasedMDConfig(MDConfig):
                                 lambda l: TypedFlagChangeList(data=l,
                                                               dtype=str)
                                                       )
-        self._type_dispatch.update({param: lambda l: TypedFlagChangeList(
-                                                                    data=l,
-                                                                    dtype=float
-                                                                         )
-                                    for param in self._FLOAT_PARAMS})
-        self._type_dispatch.update({param: lambda l: TypedFlagChangeList(
-                                                                    data=l,
-                                                                    dtype=int,
-                                                                         )
-                                    for param in self._INT_PARAMS})
-        self._type_dispatch.update(self._SPECIAL_PARAM_DISPATCH)
-        # property to set/check file and parse to config dictionary all in one
-        self.original_file = original_file
+        type_dispatch.update({param: lambda l: TypedFlagChangeList(
+                                                                   data=l,
+                                                                   dtype=float
+                                                                   )
+                              for param in self._FLOAT_PARAMS})
+        type_dispatch.update({param: lambda l: TypedFlagChangeList(
+                                                                   data=l,
+                                                                   dtype=int,
+                                                                   )
+                              for param in self._INT_PARAMS})
+        type_dispatch.update(self._SPECIAL_PARAM_DISPATCH)
+        return type_dispatch
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_type_dispatch"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._type_dispatch = self._construct_type_dispatch()
 
     @abc.abstractmethod
     def _parse_line(self, line):

@@ -33,6 +33,10 @@ def set_max_process(num=None):
 set_max_process()
 
 
+# ensure that only one Chain can access the central model at a time
+_SEM_BRAIN_MODEL = asyncio.Semaphore(1)
+
+
 # make stuff from submodules available (after defining the semaphores)
 from .trajectory import Trajectory, TrajectoryFunctionWrapper
 from .mdconfig import MDP

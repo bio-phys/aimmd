@@ -148,7 +148,7 @@ class Trajectory:
         state["_func_src_to_idx"] = {}
         return state
 
-    def ready_for_pickle(self, group, overwrite):
+    def object_for_pickle(self, group, overwrite):
         # NOTE: we ignore overwrite and assume the group is always empty
         #       (or at least matches this tra and we can add values?)
         # currently overwrite will always be false and we can just ignore it?!
@@ -330,10 +330,10 @@ class FrameExtractor(abc.ABC):
             # although we would expect that it exists if it comes from an
             # existing traj, we still check to catch other unrelated issues :)
             raise ValueError(f"Output topolgy file must exist ({top_out}).")
-        u = mda.Universe(traj_in.topolgy_file, traj_in.trajectory_file)
+        u = mda.Universe(traj_in.topology_file, traj_in.trajectory_file)
         with mda.Writer(outfile, n_atoms=u.trajectory.n_atoms) as W:
-            _ = u.trajectory[idx]
-            self.apply_modification(u)
+            ts = u.trajectory[idx]
+            self.apply_modification(u, ts)
             W.write(u.atoms)
         return Trajectory(trajectory_file=outfile, topology_file=top_out)
 
@@ -348,8 +348,8 @@ class NoModificationFrameExtractor(FrameExtractor):
 class InvertedVelocitiesFrameExtractor(FrameExtractor):
     """Extract a frame from a trajectory, write it out with inverted velocities."""
 
-    def apply_modification(self, universe):
-        universe.atoms.velocities *= -1
+    def apply_modification(self, universe, ts):
+        ts.velocities *= -1
 
 
 class RandomVelocitiesFrameExtractor(FrameExtractor):
@@ -360,14 +360,14 @@ class RandomVelocitiesFrameExtractor(FrameExtractor):
         self.T = T  # in K
         self._rng = np.random.default_rng()
 
-    def apply_modification(self, universe):
+    def apply_modification(self, universe, ts):
         # MDAnalysis uses kJ/mol as energy unit,
         # so we use kB * NA * 10**(-3) to get kB in kJ/(mol * K)
-        scale = np.array(
-                    [np.sqrt((self.T*constants.k*constants.N_A*10**(-3))
-                             / universe.atoms.masses
-                             )
-                     # sigma is the same for all 3 cartesian dimensions
-                     ] for _ in range(3)
-                         )
-        universe.atoms.velocities = self._rng.normal(loc=0, scale=scale)
+        scale = np.empty((ts.n_atoms, 3), dtype=np.float64)
+        s1d = np.sqrt((self.T*constants.k*constants.N_A*10**(-3))
+                      / universe.atoms.masses
+                      )
+        # sigma is the same for all 3 cartesian dimensions
+        for i in range(3):
+            scale[:, i] = s1d
+        ts.velocities = self._rng.normal(loc=0, scale=scale)

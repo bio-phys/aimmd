@@ -23,7 +23,7 @@ import logging
 import functools
 import numpy as np
 
-from . import _SEM_MAX_PROCESS
+from . import _SEM_MAX_PROCESS, _SEM_BRAIN_MODEL
 from .trajectory import (TrajectoryConcatenator,
                          InvertedVelocitiesFrameExtractor,
                          RandomVelocitiesFrameExtractor,
@@ -54,7 +54,7 @@ class SaveTask(BrainTask):
         self.trainset = trainset
         self.name_prefix = name_prefix
 
-    def run(self, brain, mcstep, chain_idx):
+    async def run(self, brain, mcstep, chain_idx):
         # this only runs when total_steps % interval == 0
         # i.e. we can just save when we run
         self.storage.save_trainset(self.trainset)
@@ -64,12 +64,13 @@ class SaveTask(BrainTask):
 
 class TrainingTask(BrainTask):
     # add stuff to trainset + call model trainhook
-    def __init__(self, model, trainset, interval=1):
+    def __init__(self, model, trainset, descriptor_transform, interval=1):
         super().__init__(interval=interval)
         self.trainset = trainset
         self.model = model
+        self.descriptor_transform = descriptor_transform
 
-    def run(self, brain, mcstep, chain_idx):
+    async def run(self, brain, mcstep, chain_idx):
         try:
             states_reached = mcstep.states_reached
             shooting_snap = mcstep.shooting_snap
@@ -77,7 +78,7 @@ class TrainingTask(BrainTask):
             # wrong kind of move?!
             logger.warning("Tried to add a step that was no shooting snapshot")
         else:
-            descriptors = self.model.descriptor_transform(shooting_snap)
+            descriptors = await self.descriptor_transform(shooting_snap)
             # descriptors is 2d but append_point expects 1d
             self.trainset.append_point(descriptors=descriptors[0],
                                        shot_results=states_reached)
@@ -96,7 +97,7 @@ class DensityCollectionTask(BrainTask):
         self.first_collection = first_collection
         self.recreate_interval = recreate_interval
 
-    def run(self, brain, mcstep, chain_idx):
+    async def run(self, brain, mcstep, chain_idx):
         if brain.storage is None:
             logger.warn("Density collection/adaptation is currently only "
                         + "possible for simulations with attached storage."
@@ -238,9 +239,9 @@ class Brain:
                 if mcstep.accepted:
                     acc += 1
                 # run tasks/hooks
-                self._run_tasks(mcstep=mcstep,
-                                chain_idx=chain_idx,
-                                )
+                await self._run_tasks(mcstep=mcstep,
+                                      chain_idx=chain_idx,
+                                      )
                 # remove old task from list and start next step in the chain
                 # that just finished
                 _ = chain_tasks.pop(chain_idx)
@@ -258,9 +259,9 @@ class Brain:
             if mcstep.accepted:
                 acc += 1
             # run tasks/hooks
-            self._run_tasks(mcstep=mcstep,
-                            chain_idx=chain_idx,
-                            )
+            await self._run_tasks(mcstep=mcstep,
+                                  chain_idx=chain_idx,
+                                  )
 
     async def run_for_n_steps(self, n_steps):
         # run for n_steps total in all chains combined
@@ -277,9 +278,9 @@ class Brain:
                 mcstep = await result
                 self.total_steps += 1
                 # run tasks/hooks
-                self._run_tasks(mcstep=mcstep,
-                                chain_idx=chain_idx,
-                                )
+                await self._run_tasks(mcstep=mcstep,
+                                      chain_idx=chain_idx,
+                                      )
                 # remove old task from list and start next step in the chain
                 # that just finished
                 _ = chain_tasks.pop(chain_idx)
@@ -297,15 +298,15 @@ class Brain:
             mcstep = await result
             self.total_steps += 1
             # run tasks/hooks
-            self._run_tasks(mcstep=mcstep,
-                            chain_idx=chain_idx,
-                            )
+            await self._run_tasks(mcstep=mcstep,
+                                  chain_idx=chain_idx,
+                                  )
 
-    def _run_tasks(self, mcstep, chain_idx):
+    async def _run_tasks(self, mcstep, chain_idx):
         for t in self.tasks:
             if self.total_steps % t.interval == 0:
-                t.run(brain=self, mcstep=mcstep,
-                      chain_idx=chain_idx)
+                await t.run(brain=self, mcstep=mcstep,
+                            chain_idx=chain_idx)
 
 
 class PathSamplingChain:
@@ -458,11 +459,12 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
     backward_deffnm = "backward"  # same for backward shot
     transition_filename = "transition"  # filename for produced transitions
 
-    def __init__(self, modelstore, states, engines, engine_config,
-                 walltime_per_part, T):
+    def __init__(self, modelstore, states, descriptor_transform,
+                 engines, engine_config, walltime_per_part, T):
         """
         modelstore - arcd.storage.RCModelRack
         states - list of state functions, passed to Propagator
+        descriptor_transform - coroutine function used to calculate descriptors
         engines - list/iterable with two initialized engines
         engine_config - MDConfig subclass [used in prepare() method of engines]
         walltime_per_part - simulation walltime per trajectory part
@@ -473,6 +475,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         #       changing anything requires recreating the propagators!
         super().__init__(modelstore=modelstore)
         self.states = states
+        self.descriptor_transform = descriptor_transform
         self.engines = engines
         self.engine_config = engine_config
         try:
@@ -517,12 +520,13 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         # NOTE: need to select and register the SP with the passed model
         # (this is the 'main' model and if it knows about the SPs we can use the
         #  prediction accuracy in the close past to decide if we want to train)
-        # to ensure we simply pick the SP before the first await!
-        self.store_model(model=model, stepnum=stepnum)
-        selector = RCModelSPSelector(model=model)
-        # this also registers the picked SP with the model
-        sp_idx = selector.pick(instep.path)
-        os.mkdir(wdir)
+        async with _SEM_BRAIN_MODEL:
+            self.store_model(model=model, stepnum=stepnum)
+            selector = RCModelSPSelector(model=model,
+                                         descriptor_transform=self.descriptor_transform)
+            # this also registers the picked SP with the model
+            sp_idx = await selector.pick(instep.path)
+        # release the Semaphore, we load the stored model for accept/reject later
         fw_sp_name = os.path.join(wdir, f"{self.forward_deffnm}_SP.trr")
         fw_startconf = self.frame_extractors["fw"].extract(outfile=fw_sp_name,
                                                            traj_in=instep.path,
@@ -530,7 +534,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         bw_sp_name = os.path.join(wdir, f"{self.backward_deffnm}_SP.trr")
         # we only invert the fw SP
         bw_startconf = self.frame_extractors["bw"].extract(outfile=bw_sp_name,
-                                                           traj_in=fw_sp_name,
+                                                           traj_in=fw_startconf,
                                                            idx=0)
         trials = await asyncio.gather(*(
                         p.propagate(starting_configuration=sconf,
@@ -555,6 +559,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
             logger.info(f"Both trials reached state {fw_state}.")
             return MCstep(mover=self,
                           stepnum=stepnum,
+                          directory=wdir,
                           shooting_snap=fw_startconf,
                           states_reached=states_reached,
                           trial_trajectories=fw_trajs + bw_trajs,  # two lists
@@ -645,15 +650,9 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                     path_traj = await loop.run_in_executor(pool, concat)
             # accept or reject?
             model = self.get_model(stepnum=stepnum)
-            # NOTE: we assume that the models descriptor_transform is an arcd
-            # wrapped trajectory func, i.e. that it makes sense to first await
-            # the calculation in a sepearate process and then reuse the cached
-            # value in the selector.probability, which calls
-            # descriptor_transform in a blocking manner
-            _ = await model.descriptor_transform(path_traj)
             selector.model = model
-            p_sel_old = selector.probability(fw_startconf, instep.path)
-            p_sel_new = selector.probability(fw_startconf, path_traj)
+            p_sel_old = await selector.probability(fw_startconf, instep.path)
+            p_sel_new = await selector.probability(fw_startconf, path_traj)
             # p_acc = ((p_sel_new * p_mod_sp_new_to_old * p_eq_sp_new)
             #          / (p_sel_old * p_mod_sp_old_to_new * p_eq_sp_old)
             #          )
@@ -667,6 +666,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                 accepted = True
             return MCstep(mover=self,
                           stepnum=stepnum,
+                          directory=wdir,
                           shooting_snap=fw_startconf,
                           states_reached=states_reached,
                           trial_trajectories=minus_trajs + plus_trajs,
@@ -678,9 +678,11 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
 
 #TODO: DOCUMENT
 class RCModelSPSelector:
-    def __init__(self, model, scale=1., distribution="lorentzian",
-                 density_adaptation=True):
+    def __init__(self, model, descriptor_transform, scale=1.,
+                 distribution="lorentzian", density_adaptation=True):
         self.model = model
+        self.descriptor_transform = descriptor_transform
+        self.distribution = distribution
         self.scale = scale
         self.density_adaptation = density_adaptation
 
@@ -707,10 +709,11 @@ class RCModelSPSelector:
     def _gaussian(self, z):
         return np.exp(-z**2/self.scale)
 
-    def f(self, snapshot, trajectory):
+    async def f(self, snapshot, trajectory):
         """Return the unnormalized proposal probability of a snapshot."""
         # we expect that 'snapshot' is a len 1 trajectory!
-        z_sel = self.model.z_sel(snapshot)
+        snap_descript = await self.descriptor_transform(snapshot)
+        z_sel = self.model.z_sel(snap_descript, use_transform=False)
         any_nan = np.any(np.isnan(z_sel))
         if any_nan:
             logger.error('The model predicts NaNs. '
@@ -718,7 +721,7 @@ class RCModelSPSelector:
             z_sel = np.nan_to_num(z_sel)
         ret = self._f_sel(z_sel)
         if self.density_adaptation:
-            committor_probs = self.model(snapshot)
+            committor_probs = self.model(snap_descript, use_transform=False)
             if any_nan:
                 committor_probs = np.nan_to_num(committor_probs)
             density_fact = self.model.density_collector.get_correction(
@@ -726,26 +729,29 @@ class RCModelSPSelector:
                                                                        )
             ret *= density_fact
         if ret == 0.:
-            if self.sum_bias(trajectory) == 0.:
+            if await self.sum_bias(trajectory) == 0.:
                 return 1.
         return ret
 
-    def probability(self, snapshot, trajectory):
+    async def probability(self, snapshot, trajectory):
         """Return proposal probability of the snapshot for this trajectory."""
         # we expect that 'snapshot' is a len 1 trajectory!
-        sum_bias = self.sum_bias(trajectory)
+        traj_descripts = await self.descriptor_transform(trajectory)
+        biases = self._biases(traj_descripts)
+        sum_bias = np.sum(biases)
         if sum_bias == 0.:
-            return 1./len(trajectory)
-        return self.f(snapshot, trajectory) / sum_bias
+            return 1./len(traj_descripts)
+        return (await self.f(snapshot, trajectory)) / sum_bias
 
-    def sum_bias(self, trajectory):
+    async def sum_bias(self, trajectory):
         """
         Return the partition function of proposal probabilities for trajectory.
         """
-        return np.sum(self._biases(trajectory))
+        traj_descripts = await self.descriptor_transform(trajectory)
+        return np.sum(self._biases(traj_descripts))
 
-    def _biases(self, trajectory):
-        z_sels = self.model.z_sel(trajectory)
+    def _biases(self, traj_descripts):
+        z_sels = self.model.z_sel(traj_descripts, use_transform=False)
         any_nan = np.any(np.isnan(z_sels))
         if any_nan:
             logger.error('The model predicts NaNs. '
@@ -753,28 +759,29 @@ class RCModelSPSelector:
             z_sels = np.nan_to_num(z_sels)
         ret = self._f_sel(z_sels)
         if self.density_adaptation:
-            committor_probs = self.model(trajectory)
+            committor_probs = self.model(traj_descripts, use_transform=False)
             if any_nan:
                 committor_probs = np.nan_to_num(committor_probs)
             density_fact = self.model.density_collector.get_correction(
                                                             committor_probs
                                                                        )
-            ret *= density_fact.reshape((len(trajectory), self.model.n_out))
+            ret *= density_fact.reshape((len(traj_descripts), self.model.n_out))
         return ret
 
-    def pick(self, trajectory):
+    async def pick(self, trajectory):
         """Return the index of the chosen snapshot within trajectory."""
         # NOTE: also registers the SP with model!
         #       slightly different than in the ops selector
         #       but this way we can register before writing out the SP
         #       as a separate trajectory
-        biases = self._biases(trajectory)
+        traj_descripts = await self.descriptor_transform(trajectory)
+        biases = self._biases(traj_descripts)
         sum_bias = np.sum(biases)
         if sum_bias == 0.:
             logger.error('Model not able to give educated guess.\
                          Choosing based on luck.')
             # we can not give any meaningfull advice and choose at random
-            return np.random.randint(len(trajectory))
+            return np.random.randint(len(traj_descripts))
 
         rand = np.random.random() * sum_bias
         idx = 0
@@ -785,8 +792,8 @@ class RCModelSPSelector:
         # we assume that model has a descriptor_transform
         # that works on arcd.trajectories [and that we cache the values :)]
         # so we just get the values for the whole traj
-        qs = self.model.q(trajectory)
-        ps = self.model(trajectory)
+        qs = self.model.q(traj_descripts, use_transform=False)
+        ps = self.model(traj_descripts, use_transform=False)
         # and get the value for the choosen SP to bypass the model.register_sp
         self.model.expected_q.append(qs[idx])
         self.model.expected_p.append(ps[idx])
