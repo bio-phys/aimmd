@@ -16,9 +16,15 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 from . import networks
 from .optim import HMC
+# TODO: should we really make the Model "base" classes available?
+#       i.e. the ones without a train decision function attached?
+#       Or can we expect an import from a user who writes her own train decision? :)
 from .rcmodel import (PytorchRCModel,
                       EEScalePytorchRCModel,
+                      EEScalePytorchRCModelAsync,
                       EERandPytorchRCModel,
+                      EERandPytorchRCModelAsync,
+                      # TODO: async versions for the other models?!
                       EnsemblePytorchRCModel,
                       EEScaleEnsemblePytorchRCModel,
                       EERandEnsemblePytorchRCModel,

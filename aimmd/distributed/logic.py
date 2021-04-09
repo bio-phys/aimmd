@@ -252,8 +252,8 @@ class Brain:
                                                        )
                                    )
         # now that we have enough accepts finish all steps that are still pending
-        done, pending = asyncio.wait(chain_tasks,
-                                     return_when=asyncio.ALL_COMPLETED)
+        done, pending = await asyncio.wait(chain_tasks,
+                                           return_when=asyncio.ALL_COMPLETED)
         for result in done:
             chain_idx = chain_tasks.index(result)
             mcstep = await result
@@ -293,8 +293,8 @@ class Brain:
                 n_started += 1
 
         # enough started, finish steps that are still pending
-        done, pending = asyncio.wait(chain_tasks,
-                                     return_when=asyncio.ALL_COMPLETED)
+        done, pending = await asyncio.wait(chain_tasks,
+                                           return_when=asyncio.ALL_COMPLETED)
         for result in done:
             chain_idx = chain_tasks.index(result)
             mcstep = await result
@@ -558,7 +558,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         model = self.get_model(stepnum=stepnum)
         selector.model = model
         # use selecting model to predict the commitment probabilities for the SP
-        predicted_committors_sp = model(fw_startconf)[0]
+        predicted_committors_sp = (await model(fw_startconf))[0]
         # check if they end in different states
         if fw_state == bw_state:
             logger.info(f"Both trials reached state {fw_state}.")

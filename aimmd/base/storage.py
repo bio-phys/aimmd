@@ -460,12 +460,15 @@ class MCstepMemory(collections.abc.Sequence):
         py_grp = self._root_grp.require_group(self._h5py_paths["py_data"])
         if isinstance(mover, ModelDependentPathMover):
             mover_modelstore = mover.modelstore
-            if mover_modelstore is not self._modelstore:
+            # check if they use the same hdf5 group, the RCModelshelf objects
+            # do not need to be the same (and most often often are not)
+            if mover_modelstore._group is not self._modelstore._group:
                 logger.error("saving a mcstep with a 'foreign' modelstore")
             mcstep.mover.modelstore = None
         MutableObjectShelf(py_grp).save(obj=mcstep, overwrite=True)
-        # reset the modelstore of the mc.mover in case we use it somewhere else
-        mcstep.mover.modelstore = mover_modelstore
+        if isinstance(mover, ModelDependentPathMover):
+            # reset the modelstore of the mc.mover in case we use it somewhere else
+            mcstep.mover.modelstore = mover_modelstore
 
     def load(self):
         try:
@@ -542,11 +545,15 @@ class ChainMemory(collections.abc.Sequence):
     def __init__(self, root_grp):
         self._root_grp = root_grp
         self._h5py_paths = {"MCsteps": "MCsteps",  # the actual datasets
+                            "MCstates": "MCstates",  # links to the current (accepted) MC states
                             "modelstore": "RCmodels",  # models used in this chain
                             }
         self._mcsteps_grp = self._root_grp.require_group(
                                                 self._h5py_paths["MCsteps"]
                                                         )
+        self._mcstates_grp = self._root_grp.require_group(
+                                                self._h5py_paths["MCstates"]
+                                                         )
         self._models_grp = self._root_grp.require_group(
                                                 self._h5py_paths["modelstore"]
                                                        )
@@ -582,6 +589,28 @@ class ChainMemory(collections.abc.Sequence):
         _ = MCstepMemory(single_step_grp,
                          modelstore=self.modelstore,
                          mcstep=mcstep)
+        if mcstep.accepted:
+            # add it as active mcstate too
+            self._mcstates_grp[str(n)] = single_step_grp
+        else:
+            # add the previous mcstate as active state again
+            self._mcstates_grp[str(n)] = self._mcstates_grp[str(n - 1)]
+
+    def mcstates(self):
+        """Return a generator over all Markov Chain states."""
+        for idx in range(len(self._mcstates_grp.keys())):
+            yield MCstepMemory(self._mcstates_grp[str(idx)],
+                               modelstore=self.modelstore).load()
+
+    def mcstate(self, idx):
+        """Return the active Markov Chain state at trial with given idx."""
+        if isinstance(idx, (int, np.int)):
+            if idx >= len(self._mcstates_grp.keys()):
+                raise IndexError(f"No Markov Chain state with index {idx}.")
+            return MCstepMemory(self._mcstates_grp[str(idx)],
+                                modelstore=self.modelstore).load()
+        else:
+            raise ValueError("Markov chain state index must be an integer.")
 
 
 class CentralMemory(collections.abc.Sequence):
@@ -594,15 +623,22 @@ class CentralMemory(collections.abc.Sequence):
                                                 self._h5py_paths["chains"]
                                                         )
 
-    def set_n_chains(self, n_chains):
-        # we assume this will be set only once per sim + storage
-        # but because we are nice we enable to increase n_chains
+    @property
+    def n_chains(self):
+        return len(self)
+
+    @n_chains.setter
+    def n_chains(self, value):
+        # can only increase n_chains
         le = len(self)
+        if value == le:
+            # nothing to do
+            return
         if le != 0:
-            logger.warn("Resetting the number of chains for initialized storage.")
-        if n_chains <= le:
+            logger.info("Resetting the number of chains for initialized storage.")
+        if value < le:
             raise ValueError("Can only increase number of chains.")
-        for i in range(le, n_chains):
+        for i in range(le, value):
             _ = self._chains_grp.create_group(str(i))
 
     def __len__(self):
@@ -757,7 +793,7 @@ class Storage:
         """Initialize central_memory for distributed TPS with n_chains."""
         cm_grp = self.file.require_group(self.h5py_path_dict["distributed_cm"])
         self._central_memory = CentralMemory(cm_grp)
-        self._central_memory.set_n_chains(n_chains=n_chains)
+        self.central_memory.n_chains = n_chains
 
     # make possible to use in with statements
     def __enter__(self):

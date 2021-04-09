@@ -20,7 +20,7 @@ import torch
 import numpy as np
 from abc import abstractmethod
 from ..base import Properties
-from ..base.rcmodel import RCModel
+from ..base.rcmodel import RCModel, RCModelAsync
 from ..base.rcmodel_train_decision import (_train_decision_funcs,
                                            _train_decision_defaults,
                                            _train_decision_docs)
@@ -146,10 +146,16 @@ class PytorchRCModel(RCModel):
                 n_out = nnet.n_out
             except AttributeError:
                 pass
-        super().__init__(states=states,
-                         descriptor_transform=descriptor_transform,
-                         cache_file=cache_file,
-                         n_out=n_out)
+        # using super() this way enables us to inject the Async model into MRO
+        # and 'steal' all methods we define here for the PytorchRCModelAsync
+        super_type = (PytorchRCModelAsync if isinstance(self, RCModelAsync)
+                      else PytorchRCModel)
+        super(super_type, self).__init__(
+                                    states=states,
+                                    descriptor_transform=descriptor_transform,
+                                    cache_file=cache_file,
+                                    n_out=n_out,
+                                         )
         self.nnet = nnet  # a pytorch.nn.Module
         # any pytorch.optim optimizer, model parameters need to be registered already
         self.optimizer = optimizer
@@ -223,8 +229,11 @@ class PytorchRCModel(RCModel):
         ret_obj.__dict__.update(state)
         # and call supers object_for_pickle in case there is something left
         # in ret_obj.__dict__ that we can not pickle
-        return super(PytorchRCModel,
-                     ret_obj).object_for_pickle(group, overwrite=overwrite, **kwargs)
+        super_type = (PytorchRCModelAsync if isinstance(self, RCModelAsync)
+                      else PytorchRCModel)
+        return super(super_type, ret_obj).object_for_pickle(group,
+                                                            overwrite=overwrite,
+                                                            **kwargs)
 
     def complete_from_h5py_group(self, group, device=None):
         """
@@ -257,7 +266,9 @@ class PytorchRCModel(RCModel):
         #opt_sdict = optimizer_state_to_device(self.optimizer, device)
         optimizer.load_state_dict(optim_state)
         self.optimizer = optimizer
-        return super(PytorchRCModel, self).complete_from_h5py_group(group)
+        super_type = (PytorchRCModelAsync if isinstance(self, RCModelAsync)
+                      else PytorchRCModel)
+        return super(super_type, self).complete_from_h5py_group(group)
 
     @abstractmethod
     def train_decision(self, trainset):
@@ -362,6 +373,13 @@ class PytorchRCModel(RCModel):
         return np.concatenate(predictions, axis=0)
 
 
+# the async version is the same, it just uses the async base class
+PytorchRCModelAsync = type("PytorchRCModelAsync",
+                           (RCModelAsync,),
+                           dict(PytorchRCModel.__dict__)
+                           )
+
+
 class EEScalePytorchRCModel(PytorchRCModel):
     """Expected efficiency scale PytorchRCModel."""
     __doc__ += _train_decision_docs['EEscale']
@@ -370,16 +388,27 @@ class EEScalePytorchRCModel(PytorchRCModel):
                  ee_params=_train_decision_defaults['EEscale'],
                  descriptor_transform=None, loss=None, cache_file=None,
                  n_out=None):
-        super().__init__(nnet=nnet, optimizer=optimizer, states=states,
-                         descriptor_transform=descriptor_transform,
-                         loss=loss, cache_file=cache_file, n_out=n_out,
-                         )
+        super_type = (EEScalePytorchRCModelAsync if isinstance(self, RCModelAsync)
+                      else EEScalePytorchRCModel)
+        super(super_type, self).__init__(
+                                nnet=nnet, optimizer=optimizer, states=states,
+                                descriptor_transform=descriptor_transform,
+                                loss=loss, cache_file=cache_file, n_out=n_out,
+                                         )
         # make it possible to pass only the altered values in dictionary
         defaults = copy.deepcopy(_train_decision_defaults['EEscale'])
         defaults.update(ee_params)
         self.ee_params = defaults
 
     train_decision = _train_decision_funcs['EEscale']
+
+
+# inject the async RCModels at the right point in bases to get the correct MRO
+#  Method Resolution Order (class resolution order)
+EEScalePytorchRCModelAsync = type("EEScalePytorchRCModelAsync",
+                                  (PytorchRCModelAsync, RCModelAsync),
+                                  dict(EEScalePytorchRCModel.__dict__)
+                                  )
 
 
 class EERandPytorchRCModel(PytorchRCModel):
@@ -390,10 +419,13 @@ class EERandPytorchRCModel(PytorchRCModel):
                  ee_params=_train_decision_defaults['EErand'],
                  descriptor_transform=None, loss=None, cache_file=None,
                  n_out=None):
-        super().__init__(nnet=nnet, optimizer=optimizer, states=states,
-                         descriptor_transform=descriptor_transform,
-                         loss=loss, cache_file=cache_file, n_out=n_out,
-                         )
+        super_type = (EERandPytorchRCModelAsync if isinstance(self, RCModelAsync)
+                      else EERandPytorchRCModel)
+        super(super_type, self).__init__(
+                                nnet=nnet, optimizer=optimizer, states=states,
+                                descriptor_transform=descriptor_transform,
+                                loss=loss, cache_file=cache_file, n_out=n_out,
+                                         )
         # make it possible to pass only the altered values in dictionary
         defaults = copy.deepcopy(_train_decision_defaults['EErand'])
         defaults.update(ee_params)
@@ -401,6 +433,12 @@ class EERandPytorchRCModel(PytorchRCModel):
         self._decisions_since_last_train = 0
 
     train_decision = _train_decision_funcs['EErand']
+
+
+EERandPytorchRCModelAsync = type("EERandPytorchRCModelAsync",
+                                 (PytorchRCModelAsync, RCModelAsync),
+                                 dict(EERandPytorchRCModel.__dict__)
+                                 )
 
 
 # (Bayesian) ensemble RCModel
