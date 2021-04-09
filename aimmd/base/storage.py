@@ -462,7 +462,7 @@ class MCstepMemory(collections.abc.Sequence):
             mover_modelstore = mover.modelstore
             # check if they use the same hdf5 group, the RCModelshelf objects
             # do not need to be the same (and most often often are not)
-            if mover_modelstore._group is not self._modelstore._group:
+            if mover_modelstore._group != self._modelstore._group:
                 logger.error("saving a mcstep with a 'foreign' modelstore")
             mcstep.mover.modelstore = None
         MutableObjectShelf(py_grp).save(obj=mcstep, overwrite=True)
