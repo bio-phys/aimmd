@@ -341,7 +341,6 @@ class RCModel(ABC):
                 )
 
 
-#TODO: write this!
 class RCModelAsync(RCModel):
     """
     RCModelAsync for coroutine descriptor transforms.
@@ -362,10 +361,10 @@ class RCModelAsync(RCModel):
     #       can just continue to use the expected_eff functions we have on the
     #       trainset
     # Todo: should we then remove the function below?! yes!
-    def register_sp(self, shoot_snap, use_transform=True):
-        """Will be called by arcd.RCModelSelector after selecting a SP."""
-        self.expected_q.append(self.q(shoot_snap, use_transform)[0])
-        self.expected_p.append(self(shoot_snap, use_transform)[0])
+    #def register_sp(self, shoot_snap, use_transform=True):
+    #    """Will be called by arcd.RCModelSelector after selecting a SP."""
+    #    self.expected_q.append(self.q(shoot_snap, use_transform)[0])
+    #    self.expected_p.append(self(shoot_snap, use_transform)[0])
 
     async def _apply_descriptor_transform(self, descriptors):
         if self.descriptor_transform is not None:

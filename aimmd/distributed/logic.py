@@ -64,25 +64,27 @@ class SaveTask(BrainTask):
 
 class TrainingTask(BrainTask):
     # add stuff to trainset + call model trainhook
-    def __init__(self, model, trainset, descriptor_transform, interval=1):
+    def __init__(self, model, trainset, interval=1):
         super().__init__(interval=interval)
         self.trainset = trainset
         self.model = model
-        self.descriptor_transform = descriptor_transform
 
     async def run(self, brain, mcstep, chain_idx):
         try:
             states_reached = mcstep.states_reached
             shooting_snap = mcstep.shooting_snap
+            predicted_committors_sp = mcstep.predicted_committors_sp
         except AttributeError:
             # wrong kind of move?!
             logger.warning("Tried to add a step that was no shooting snapshot")
         else:
-            descriptors = await self.descriptor_transform(shooting_snap)
+            descriptors = await self.model.descriptor_transform(shooting_snap)
             # descriptors is 2d but append_point expects 1d
             self.trainset.append_point(descriptors=descriptors[0],
                                        shot_results=states_reached)
-        # always call the train hook
+            # append the committor prediction at the time of selection for the SP
+            self.model.expected_p.append(predicted_committors_sp)
+        # always call the train hook, the model 'decides' on its own if it trains
         self.model.train_hook(self.trainset)
 
 
@@ -387,13 +389,15 @@ class PathSamplingChain:
 
 class MCstep:
     # TODO: make this 'immutable'? i.e. expose everything as get-only-properties?
-    def __init__(self, mover, stepnum, directory,
+    # TODO: some of the attributes are only relevant for shooting,
+    #       do we want a subclass for shooting MCsteps?
+    def __init__(self, mover, stepnum, directory, predicted_committors_sp=None,
                  shooting_snap=None, states_reached=None,
                  path=None, trial_trajectories=[], accepted=False, p_acc=0):
         self.mover = mover  # TODO: should this be the obj? or an unique string identififer? or...?
         self.stepnum = stepnum
         self.directory = directory
-        # TODO: this is special to shooting, should it be in a subclass?!
+        self.predicted_committors_sp = predicted_committors_sp
         self.shooting_snap = shooting_snap
         self.states_reached = states_reached
         self.path = path
@@ -433,7 +437,6 @@ class ModelDependentPathMover(PathMover):
     # NOTE: we take care of the modelstore in storage to
     #       enable us to set the mover as MCstep attribute directly
     #       (instead of an identifying string)
-    #TODO:
     # NOTE 2: when saving a MCstep we ensure that the modelstore is the correct
     #         (as in associated with that MCchain) RCModel rack
     #         and when loading a MCstep we can set the movers.modelstore?!
@@ -459,8 +462,8 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
     backward_deffnm = "backward"  # same for backward shot
     transition_filename = "transition"  # filename for produced transitions
 
-    def __init__(self, modelstore, states, descriptor_transform,
-                 engines, engine_config, walltime_per_part, T):
+    def __init__(self, modelstore, states, engines, engine_config,
+                 walltime_per_part, T):
         """
         modelstore - arcd.storage.RCModelRack
         states - list of state functions, passed to Propagator
@@ -475,7 +478,6 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         #       changing anything requires recreating the propagators!
         super().__init__(modelstore=modelstore)
         self.states = states
-        self.descriptor_transform = descriptor_transform
         self.engines = engines
         self.engine_config = engine_config
         try:
@@ -494,7 +496,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
 
     def _build_extracts_and_propas(self):
         self.frame_extractors = {"fw": RandomVelocitiesFrameExtractor(T=self.T),
-                                 # will be used on the extracted Randomized fw SP
+                                 # will be used on the extracted randomized fw SP
                                  "bw": InvertedVelocitiesFrameExtractor(),
                                  }
         self.propagators = [PropagatorUntilAnyState(
@@ -517,14 +519,12 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
     async def move(self, instep, stepnum, wdir, model, **kwargs):
         # NOTE/FIXME: we assume wdir is an absolute path
         #             (or at least that it is relative to cwd)
-        # NOTE: need to select and register the SP with the passed model
+        # NOTE: need to select (and later register) the SP with the passed model
         # (this is the 'main' model and if it knows about the SPs we can use the
         #  prediction accuracy in the close past to decide if we want to train)
         async with _SEM_BRAIN_MODEL:
             self.store_model(model=model, stepnum=stepnum)
-            selector = RCModelSPSelector(model=model,
-                                         descriptor_transform=self.descriptor_transform)
-            # this also registers the picked SP with the model
+            selector = RCModelSPSelector(model=model)
             sp_idx = await selector.pick(instep.path)
         # release the Semaphore, we load the stored model for accept/reject later
         fw_sp_name = os.path.join(wdir, f"{self.forward_deffnm}_SP.trr")
@@ -554,12 +554,18 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         states_reached = np.array([0. for _ in range(len(self.states))])
         states_reached[fw_state] += 1
         states_reached[bw_state] += 1
-        # check if they end in differnt states
+        # load the selecting model and set it in the selector
+        model = self.get_model(stepnum=stepnum)
+        selector.model = model
+        # use selecting model to predict the commitment probabilities for the SP
+        predicted_committors_sp = model(fw_startconf)[0]
+        # check if they end in different states
         if fw_state == bw_state:
             logger.info(f"Both trials reached state {fw_state}.")
             return MCstep(mover=self,
                           stepnum=stepnum,
                           directory=wdir,
+                          predicted_committors_sp=predicted_committors_sp,
                           shooting_snap=fw_startconf,
                           states_reached=states_reached,
                           trial_trajectories=fw_trajs + bw_trajs,  # two lists
@@ -588,7 +594,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
             frames_in_minus, = np.where(minus_state_vals)  # where always returns a tuple
             first_frame_in_minus = np.min(frames_in_minus)
             # TODO: I think this is overkill, i.e. we can always expect that
-            #       first frame in state is in laast part?!
+            #       first frame in state is in last part?!
             #       [this could potentially make this a bit shorter and maybe
             #        even a bit more readable :)]
             # find the part
@@ -649,8 +655,6 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                 with concurrent.futures.ProcessPoolExecutor(1) as pool:
                     path_traj = await loop.run_in_executor(pool, concat)
             # accept or reject?
-            model = self.get_model(stepnum=stepnum)
-            selector.model = model
             p_sel_old = await selector.probability(fw_startconf, instep.path)
             p_sel_new = await selector.probability(fw_startconf, path_traj)
             # p_acc = ((p_sel_new * p_mod_sp_new_to_old * p_eq_sp_new)
@@ -667,6 +671,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
             return MCstep(mover=self,
                           stepnum=stepnum,
                           directory=wdir,
+                          predicted_committors_sp=predicted_committors_sp,
                           shooting_snap=fw_startconf,
                           states_reached=states_reached,
                           trial_trajectories=minus_trajs + plus_trajs,
@@ -678,10 +683,9 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
 
 #TODO: DOCUMENT
 class RCModelSPSelector:
-    def __init__(self, model, descriptor_transform, scale=1.,
+    def __init__(self, model, scale=1.,
                  distribution="lorentzian", density_adaptation=True):
         self.model = model
-        self.descriptor_transform = descriptor_transform
         self.distribution = distribution
         self.scale = scale
         self.density_adaptation = density_adaptation
@@ -712,16 +716,17 @@ class RCModelSPSelector:
     async def f(self, snapshot, trajectory):
         """Return the unnormalized proposal probability of a snapshot."""
         # we expect that 'snapshot' is a len 1 trajectory!
-        snap_descript = await self.descriptor_transform(snapshot)
-        z_sel = self.model.z_sel(snap_descript, use_transform=False)
+        z_sel = await self.model.z_sel(snapshot)
         any_nan = np.any(np.isnan(z_sel))
         if any_nan:
             logger.error('The model predicts NaNs. '
                          + 'We used np.nan_to_num to proceed')
             z_sel = np.nan_to_num(z_sel)
-        ret = self._f_sel(z_sel)
+        # casting to float makes errors when the np-array is not size-1,
+        # i.e. we check that snapshot really was a len-1 trajectory
+        ret = float(self._f_sel(z_sel))
         if self.density_adaptation:
-            committor_probs = self.model(snap_descript, use_transform=False)
+            committor_probs = await self.model(snapshot)
             if any_nan:
                 committor_probs = np.nan_to_num(committor_probs)
             density_fact = self.model.density_collector.get_correction(
@@ -736,22 +741,20 @@ class RCModelSPSelector:
     async def probability(self, snapshot, trajectory):
         """Return proposal probability of the snapshot for this trajectory."""
         # we expect that 'snapshot' is a len 1 trajectory!
-        traj_descripts = await self.descriptor_transform(trajectory)
-        biases = self._biases(traj_descripts)
+        biases = await self._biases(trajectory)
         sum_bias = np.sum(biases)
         if sum_bias == 0.:
-            return 1./len(traj_descripts)
+            return 1./len(biases)
         return (await self.f(snapshot, trajectory)) / sum_bias
 
     async def sum_bias(self, trajectory):
         """
         Return the partition function of proposal probabilities for trajectory.
         """
-        traj_descripts = await self.descriptor_transform(trajectory)
-        return np.sum(self._biases(traj_descripts))
+        return np.sum(await self._biases(trajectory))
 
-    def _biases(self, traj_descripts):
-        z_sels = self.model.z_sel(traj_descripts, use_transform=False)
+    async def _biases(self, trajectory):
+        z_sels = await self.model.z_sel(trajectory)
         any_nan = np.any(np.isnan(z_sels))
         if any_nan:
             logger.error('The model predicts NaNs. '
@@ -759,29 +762,30 @@ class RCModelSPSelector:
             z_sels = np.nan_to_num(z_sels)
         ret = self._f_sel(z_sels)
         if self.density_adaptation:
-            committor_probs = self.model(traj_descripts, use_transform=False)
+            committor_probs = await self.model(trajectory)
             if any_nan:
                 committor_probs = np.nan_to_num(committor_probs)
             density_fact = self.model.density_collector.get_correction(
                                                             committor_probs
                                                                        )
-            ret *= density_fact.reshape((len(traj_descripts), self.model.n_out))
+            ret *= density_fact.reshape(committor_probs.shape)
         return ret
 
     async def pick(self, trajectory):
         """Return the index of the chosen snapshot within trajectory."""
-        # NOTE: also registers the SP with model!
-        #       slightly different than in the ops selector
-        #       but this way we can register before writing out the SP
-        #       as a separate trajectory
-        traj_descripts = await self.descriptor_transform(trajectory)
-        biases = self._biases(traj_descripts)
+        # NOTE: this does not register the SP with model!
+        #       i.e. we do stuff different than in the ops selector
+        #       For the distributed case we need to save the predicted
+        #       commitment probabilities at the shooting point with the MCStep
+        #       this way we can make sure that they are added to the central model
+        #       in the same order as the shooting results to the trainset
+        biases = await self._biases(trajectory)
         sum_bias = np.sum(biases)
         if sum_bias == 0.:
             logger.error('Model not able to give educated guess.\
                          Choosing based on luck.')
             # we can not give any meaningfull advice and choose at random
-            return np.random.randint(len(traj_descripts))
+            return np.random.randint(len(biases))
 
         rand = np.random.random() * sum_bias
         idx = 0
@@ -789,14 +793,6 @@ class RCModelSPSelector:
         while prob <= rand and idx < len(biases):
             idx += 1
             prob += biases[idx]
-        # we assume that model has a descriptor_transform
-        # that works on arcd.trajectories [and that we cache the values :)]
-        # so we just get the values for the whole traj
-        qs = self.model.q(traj_descripts, use_transform=False)
-        ps = self.model(traj_descripts, use_transform=False)
-        # and get the value for the choosen SP to bypass the model.register_sp
-        self.model.expected_q.append(qs[idx])
-        self.model.expected_p.append(ps[idx])
         # and return chosen idx
         return idx
 
