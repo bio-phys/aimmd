@@ -28,6 +28,7 @@ from .trajectory import (TrajectoryConcatenator,
                          InvertedVelocitiesFrameExtractor,
                          RandomVelocitiesFrameExtractor,
                          )
+from .mdengine import EngineCrashedError
 
 
 logger = logging.getLogger(__name__)
@@ -318,6 +319,8 @@ class PathSamplingChain:
     mcstep_foldername_prefix = "mcstep_"  # name = prefix + str(stepnum)
     mcstate_name_prefix = "mcstate_"  # name for symlinks to folders with
                                       # accepted step at stepnum
+    max_tries_on_crash = 2  # maximum number of *tries* when MD engine crashes
+                            # i.e. setting to 2 means *retry* once on crash
     # TODO: make this saveable!? together with its brain!
     # TODO: make it possible to run post-processing 'hooks'?!
     # TODO: initialize from directory structure?
@@ -359,14 +362,32 @@ class PathSamplingChain:
         if instep is None:
             raise ValueError("current_step must be set.")
         self._stepnum += 1
-        mover = self._rng.choice(self.movers, p=self.mover_weights)
-        step_dir = os.path.join(self.workdir,
-                                f"{self.mcstep_foldername_prefix}"
-                                + f"{self._stepnum}"
-                                )
-        os.mkdir(step_dir)
-        outstep = await mover.move(instep=instep, stepnum=self._stepnum,
-                                   wdir=step_dir, model=model)
+        done = False
+        n = 0
+        while not done:
+            mover = self._rng.choice(self.movers, p=self.mover_weights)
+            step_dir = os.path.join(self.workdir,
+                                    f"{self.mcstep_foldername_prefix}"
+                                    + f"{self._stepnum}"
+                                    )
+            os.mkdir(step_dir)
+            try:
+                outstep = await mover.move(instep=instep, stepnum=self._stepnum,
+                                           wdir=step_dir, model=model)
+            except EngineCrashedError as e:
+                # catch error raised when gromacs crashes
+                if n < self.max_tries_on_crash:
+                    logger.warning("MD engine crashed. Retrying MC step.")
+                    # move stepdir and retry
+                    os.rename(step_dir, step_dir + f"_crash{n+1}")
+                else:
+                    # reached maximum tries, raise the error and crash the sampling :)
+                    raise e
+            else:
+                done = True
+            finally:
+                n += 1
+
         self.chainstore.append(outstep)
         if outstep.accepted:
             self._accepts.append(1)
@@ -970,7 +991,7 @@ class PropagatorUntilAnyState:
                      in zip(self.states, self._state_func_is_coroutine)
                      if s_is_coro
                      ]
-            coro_res = asyncio.gather(*coros)
+            coro_res = await asyncio.gather(*coros)
             # now either take the result from coro execution or calculate it
             all_results = []
             for s, s_is_coro in zip(self.states, self._state_func_is_coroutine):

@@ -28,6 +28,16 @@ from .mdconfig import MDP
 logger = logging.getLogger(__name__)
 
 
+class MDEngineError(RuntimeError):
+    """Exception raised when something goes wrong with the MDEngine."""
+    pass
+
+
+class EngineCrashedError(MDEngineError):
+    """Exception raised when the MDEngine crashes during a run."""
+    pass
+
+
 class MDEngine(abc.ABC):
     @abc.abstractmethod
     # TODO: should we expect (require?) run_config to be a subclass of MDConfig?!
@@ -301,7 +311,7 @@ class GmxEngine(MDEngine):
         await self._start_gmx_mdrun(cmd_str=cmd_str)
         exit_code = await self.wait()
         if exit_code != 0:
-            raise RuntimeError("Non-zero exit code from mdrun.")
+            raise EngineCrashedError("Non-zero exit code from mdrun.")
         return self.current_trajectory
 
     async def run_nsteps(self, nsteps):
