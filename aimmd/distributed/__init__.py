@@ -15,6 +15,9 @@ You should have received a copy of the GNU General Public License
 along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 """
 # TODO: is the the best place for our semaphore(s)?
+# TODO?: introduce a maximum for the number of slurm jobs? _SEM_MAX_SLURM_JOB
+# NOTE: this is actually not that useful as you could run multiple python
+#       processes with arcd on the same cluster, and then this would not work
 import os
 import asyncio
 
@@ -41,4 +44,4 @@ _SEM_BRAIN_MODEL = asyncio.Semaphore(1)
 from .trajectory import Trajectory, TrajectoryFunctionWrapper
 from .mdconfig import MDP
 from .mdengine import GmxEngine, SlurmGmxEngine
-from .logic import MCstep, Brain, TwoWayShootingPathMover
+from .logic import MCstep, Brain, TwoWayShootingPathMover, CommittorSimulation

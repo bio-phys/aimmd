@@ -382,7 +382,7 @@ class PathSamplingChain:
                     os.rename(step_dir, step_dir + f"_crash{n+1}")
                 else:
                     # reached maximum tries, raise the error and crash the sampling :)
-                    raise e
+                    raise e from None
             else:
                 done = True
             finally:
@@ -495,6 +495,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         T - temperature in degree K (used for velocity randomization)
         """
         # NOTE: we expect state funcs to be coroutinefuncs!
+        # TODO: check that we use the same T as GMX? or maybe even directly take T from GMX (mdp)?
         # TODO: we should make properties out of everything
         #       changing anything requires recreating the propagators!
         super().__init__(modelstore=modelstore)
@@ -602,79 +603,13 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                 # can only be the other way round
                 minus_trajs, minus_state = fw_trajs, fw_state
                 plus_trajs, plus_state = bw_trajs, bw_state
-            # now find the slices to concatenate
-            # minus state first
-            minus_state_vals = await asyncio.gather(
-                                            *(self.states[minus_state](t)
-                                              for t in minus_trajs)
-                                                    )
-            part_lens = [len(v) for v in minus_state_vals]
-            # make it into one long array
-            minus_state_vals = np.concatenate(minus_state_vals, axis=0)
-            # get the first frame in state
-            frames_in_minus, = np.where(minus_state_vals)  # where always returns a tuple
-            first_frame_in_minus = np.min(frames_in_minus)
-            # TODO: I think this is overkill, i.e. we can always expect that
-            #       first frame in state is in last part?!
-            #       [this could potentially make this a bit shorter and maybe
-            #        even a bit more readable :)]
-            # find the part
-            last_part_idx = 0
-            frame_sum = part_lens[0]
-            while first_frame_in_minus > frame_sum:
-                last_part_idx += 1
-                frame_sum += part_lens[last_part_idx]
-            # find the first frame in state (counting from start of last part)
-            _first_frame_in_minus = (first_frame_in_minus
-                                     - sum(part_lens[:last_part_idx]))  # >= 0
-            # now construct the slices and trajs list (backwards!)
-            # the last/first part
-            slices = [(_first_frame_in_minus + 1, 0, -1)]  # negative stride!
-            trajs = [minus_trajs[last_part_idx]]
-            # the ones we take fully (if any) [the range looks a bit strange
-            # because we dont take last_part_index but include the zero as idx]
-            slices += [(-1, 0, -1) for _ in range(last_part_idx - 1, -1, -1)]
-            trajs += [minus_trajs[i] for i in range(last_part_idx - 1, -1, -1)]
-
-            # now plus trajectories, i.e. the part we put in positive stride
-            plus_state_vals = await asyncio.gather(
-                                            *(self.states[plus_state](t)
-                                              for t in plus_trajs)
-                                                    )
-            part_lens = [len(v) for v in plus_state_vals]
-            # make it into one long array
-            plus_state_vals = np.concatenate(plus_state_vals, axis=0)
-            # get the first frame in state
-            frames_in_plus, = np.where(plus_state_vals)
-            first_frame_in_plus = np.min(frames_in_plus)
-            # find the part
-            last_part_idx = 0
-            frame_sum = part_lens[0]
-            while first_frame_in_plus > frame_sum:
-                last_part_idx += 1
-                frame_sum += part_lens[last_part_idx]
-            # find the first frame in state (counting from start of last part)
-            _first_frame_in_plus = (first_frame_in_plus
-                                    - sum(part_lens[:last_part_idx]))  # >= 0
-            # construct the slices and add trajs to list (forward!)
-            # [this excludes last_part_idx so far]
-            slices += [(0, -1, 1) for _ in range(last_part_idx)]
-            trajs += [plus_trajs[i] for i in range(last_part_idx)]
-            # add last part (with the last frame as first frame in plus state)
-            slices += [(0, _first_frame_in_plus + 1, 1)]
-            trajs += [plus_trajs[last_part_idx]]
-            # finally produce thew concatenated path
             tra_out = os.path.join(wdir, f"{self.transition_filename}.trr")
-            concat = functools.partial(TrajectoryConcatenator().concatenate,
-                                       trajs=trajs,
-                                       slices=slices,
-                                       tra_out=tra_out, top_out=None,
-                                       overwrite=False)
-            loop = asyncio.get_running_loop()
-            async with _SEM_MAX_PROCESS:
-                # run concatenator in its own python process
-                with concurrent.futures.ProcessPoolExecutor(1) as pool:
-                    path_traj = await loop.run_in_executor(pool, concat)
+            path_traj = await construct_TP_from_plus_and_minus_traj_segments(
+                            minus_trajs=minus_trajs, minus_state=minus_state,
+                            plus_trajs=plus_trajs, plus_state=plus_state,
+                            state_funcs=self.states, tra_out=tra_out,
+                            top_out=None, overwrite=False,
+                                                                             )
             # accept or reject?
             p_sel_old = await selector.probability(fw_startconf, instep.path)
             p_sel_new = await selector.probability(fw_startconf, path_traj)
@@ -816,6 +751,431 @@ class RCModelSPSelector:
             prob += biases[idx]
         # and return chosen idx
         return idx
+
+
+# TODO: DOCUMENT! (and clean up)
+class CommittorSimulation:
+    # TODO: remove when done! also document!
+    # takes:
+    # - a list of tuples (traj, idx) [starting structs]
+    # - a list of state-funcs
+    # - an engine-class (uninitialized) and a dict with kwargs needed to initialize the engine
+    # - an int: shots per stucture [this should be a param to the .run() method!]
+    # - an int: max concurrent shots (to limit e.g. number of slurm jobs)
+    # - a float: the temperature to use for random velocity generation
+    # - a float: walltime per part
+    # - a bool: if we should do TwoWay shots (i.e. also propagate with inverted velocites in the hope of producing a TP)
+
+    # NOTE: the defaults here will results in the layout:
+    # $WORKDIR/configuration_$CONF_NUM/shot_$SHOT_NUM,
+    # where $WORKDIR is the workdir given at init, and $CONF_NUM, $SHOT_NUM are
+    # the index to the input list starting_configurations and a counter for the shots
+    configuration_dir_prefix = "configuration"
+    shot_dir_prefix = "shot"
+    # together with deffnm this results in "start_conf_trial_bw.trr" and
+    # "start_conf_trial_fw.trr"
+    start_conf_name_prefix = "start_conf"
+    fname_traj_to_state = "traj_to_state.trr"
+    fname_traj_to_state_bw = "traj_to_state_bw.trr"  # only in TwoWay
+    fname_transition_traj = "transition_traj.trr"  # only in TwoWay
+    deffnm_engine_out = "trial_fw"
+    deffnm_engine_out_bw = "trial_bw"  # only in twoway (for runs with inverted v)
+    max_tries_on_crash = 2  # maximum number of *tries* when MD engine crashes
+                            # i.e. setting to 2 means *retry* once on crash
+
+    def __init__(self, workdir, starting_configurations, states, engine_cls,
+                 engine_kwargs, engine_mdconfig, T, walltime_per_part,
+                 n_max_concurrent=500, two_way=False, **kwargs):
+        # TODO: should some of these be properties?
+        self.workdir = os.path.abspath(workdir)
+        self.starting_configurations = starting_configurations
+        self.states = states
+        self.engine_cls = engine_cls
+        self.engine_kwargs = engine_kwargs
+        try:
+            # make sure we do not generate velocities with gromacs
+            gen_vel = engine_mdconfig["gen-vel"]
+        except KeyError:
+            logger.info("Setting 'gen-vel = no' in mdp.")
+            engine_mdconfig["gen-vel"] = ["no"]
+        else:
+            if gen_vel[0] != "no":
+                logger.warning("Setting 'gen-vel = no' in mdp (was 'yes').")
+                engine_mdconfig["gen-vel"] = ["no"]
+        self.engine_mdconfig = engine_mdconfig
+        self.T = T
+        self.walltime_per_part = walltime_per_part
+        self.n_max_concurrent = n_max_concurrent
+        self.two_way = two_way
+        # make it possible to set all existing attributes via kwargs
+        # check the type for attributes with default values
+        dval = object()
+        for kwarg, value in kwargs.items():
+            cval = getattr(self, kwarg, dval)
+            if cval is not dval:
+                if isinstance(value, type(cval)):
+                    # value is of same type as default so set it
+                    setattr(self, kwarg, value)
+                else:
+                    raise TypeError(f"Setting attribute {kwarg} with "
+                                    + f"mismatching type ({type(value)}). "
+                                    + f" Default type is {type(cval)}."
+                                    )
+        # set counter etc after to make sure they have the value we expect
+        self._shot_counter = 0
+        self._states_reached = [[] for _ in range(len(self.starting_configurations))]
+        # create directories for the configurations if they dont exist
+        for i in range(len(self.starting_configurations)):
+            conf_dir = os.path.join(self.workdir,
+                                    f"{self.configuration_dir_prefix}_{str(i)}")
+            if not os.path.isdir(conf_dir):
+                # if its not a directory it either exists (then we will err)
+                # or we just create it
+                os.mkdir(conf_dir)
+
+    # TODO!:
+    # should be possible to restart from working directory
+    # possibly we will have to save some variables in init (e.g. T)
+    # we will need to repopulate self._states_reached !
+    @classmethod
+    def from_workdir(cls):
+        raise NotImplementedError
+
+    @property
+    def states_reached(self):
+        # states_reached per configuration (i.e. summed over shots)
+        # returns states_reached as a np array shape (n_conf, n_states)
+        # the entries give the counts of states reached,
+        # i.e. format is as in the arcd.TrainSet
+        ret = np.zeros((len(self.starting_configurations), len(self.states)))
+        for i, results_for_conf in enumerate(self._states_reached):
+            for state_reached in results_for_conf:
+                ret[i][state_reached] += 1
+        return ret
+
+    @property
+    def states_reached_per_shot(self):
+        # states_reached per shot (i.e. single trial results)
+        # returns a np array shape (n_conf, n_shots, n_states)
+        # the entries give the counts of states reached,
+        # i.e. format is as in the arcd.TrainSet
+        ret = np.zeros((len(self.starting_configurations),
+                        self._shot_counter,
+                        len(self.states))
+                       )
+        for i, results_for_conf in enumerate(self._states_reached):
+            for j, state_reached in enumerate(results_for_conf):
+                ret[i][j][state_reached] += 1
+        return ret
+
+    async def _run_single_trial_ow(self, conf_num, shot_num, step_dir):
+        # construct engine
+        engine = self.engine_cls(**self.engine_kwargs)
+        # construct propagator
+        propagator = PropagatorUntilAnyState(
+                                    states=self.states,
+                                    engine=engine,
+                                    walltime_per_part=self.walltime_per_part,
+                                             )
+        # get starting configuration and write it out with random velocities
+        extractor_fw = RandomVelocitiesFrameExtractor(T=self.T)
+        start_conf_name = os.path.join(step_dir,
+                                       (f"{self.start_conf_name_prefix}_"
+                                        + f"{self.deffnm_engine_out}.trr"),
+                                       )
+        starting_conf = extractor_fw.extract(
+                            outfile=start_conf_name,
+                            traj_in=self.starting_configurations[conf_num][0],
+                            idx=self.starting_configurations[conf_num][1],
+                                             )
+        # and propagate
+        out = await propagator.propagate_and_concatenate(
+                                starting_configuration=starting_conf,
+                                workdir=step_dir,
+                                deffnm=self.deffnm_engine_out,
+                                run_config=self.engine_mdconfig,
+                                tra_out=os.path.join(step_dir,
+                                                     self.fname_traj_to_state
+                                                     ),
+                                                         )
+        tra_out, state_reached = out
+        return state_reached
+
+    async def _run_single_trial_tw(self, conf_num, shot_num, step_dir):
+        # NOTE: this is a potential misuse of a committor simulation,
+        #       see the note further down for more on why it is/should be ok
+        # construct engines
+        engines = [self.engine_cls(**self.engine_kwargs) for _ in range(2)]
+        # propagators
+        propagators = [PropagatorUntilAnyState(
+                                    states=self.states,
+                                    engine=eng,
+                                    walltime_per_part=self.walltime_per_part,
+                                               )
+                       for eng in engines]
+        # forward starting configuration
+        extractor_fw = RandomVelocitiesFrameExtractor(T=self.T)
+        start_conf_name_fw = os.path.join(step_dir,
+                                          (f"{self.start_conf_name_prefix}_"
+                                           + f"{self.deffnm_engine_out}.trr"),
+                                          )
+        starting_conf_fw = extractor_fw.extract(
+                              outfile=start_conf_name_fw,
+                              traj_in=self.starting_configurations[conf_num][0],
+                              idx=self.starting_configurations[conf_num][1],
+                                               )
+        # backwards starting configuration (forward with inverted velocities)
+        extractor_bw = InvertedVelocitiesFrameExtractor()
+        start_conf_name_bw = os.path.join(step_dir,
+                                          (f"{self.start_conf_name_prefix}_"
+                                           + f"{self.deffnm_engine_out_bw}.trr"),
+                                          )
+        starting_conf_bw = extractor_bw.extract(
+                              outfile=start_conf_name_bw,
+                              traj_in=starting_conf_fw,
+                              idx=0,
+                                               )
+        # and propagate
+        trials = await asyncio.gather(*(
+                        p.propagate(starting_configuration=sconf,
+                                    workdir=step_dir,
+                                    deffnm=deffnm,
+                                    run_config=self.engine_mdconfig)
+                        for p, sconf, deffnm in zip(propagators,
+                                                    [starting_conf_fw,
+                                                     starting_conf_bw],
+                                                    [self.deffnm_engine_out,
+                                                     self.deffnm_engine_out_bw]
+                                                    )
+                                        )
+                                      )
+        # check where they went: construct TP if possible, else concatenate
+        (fw_trajs, fw_state), (bw_trajs, bw_state) = trials
+        if fw_state == bw_state:
+            logger.info(f"Both trials reached state {fw_state}.")
+        else:
+            # we can form a TP, so do it (low idx state to high idx state)
+            logger.info(f"TP from state {bw_state} to {fw_state} was generated.")
+            if fw_state > bw_state:
+                minus_trajs, minus_state = bw_trajs, bw_state
+                plus_trajs, plus_state = fw_trajs, fw_state
+            else:
+                # can only be the other way round
+                minus_trajs, minus_state = fw_trajs, fw_state
+                plus_trajs, plus_state = bw_trajs, bw_state
+            tra_out = os.path.join(step_dir, self.fname_transition_traj)
+            # TODO: we currently dont use the return, should call as _ = ... ?
+            path_traj = await construct_TP_from_plus_and_minus_traj_segments(
+                            minus_trajs=minus_trajs, minus_state=minus_state,
+                            plus_trajs=plus_trajs, plus_state=plus_state,
+                            state_funcs=self.states, tra_out=tra_out,
+                            top_out=None, overwrite=False,
+                                                                             )
+        # TODO: do we want to concatenate the trials to states in any way?
+        # i.e. independent of if we can form a TP? or only for no TP cases?
+        # NOTE: (answer to todo?!)
+        # I think this is best as we can then return the fw trial only
+        # and treat all fw trials as truly independent realizations
+        # i.e. this makes sure the committor simulation stays a committor
+        # simulation, even for users who do not think about velocity
+        # correlation times
+        out_tra_names = [os.path.join(step_dir, self.fname_traj_to_state),
+                         os.path.join(step_dir, self.fname_traj_to_state_bw),
+                         ]
+        # TODO: we currently dont use the return, should call as _ = ... ?
+        concats = await asyncio.gather(*(
+                        p.cut_and_concatenate(trajs=trajs, tra_out=tra_out)
+                        for p, trajs, tra_out in zip(propagators,
+                                                     [fw_trajs, bw_trajs],
+                                                     out_tra_names
+                                                     )
+                                         )
+                                       )
+        # (tra_out_fw, fw_state), (tra_out_bw, bw_state) = concats
+        return fw_state
+
+    async def _run_single_trial(self, conf_num, shot_num, two_way):
+        n = 0
+        step_dir = os.path.join(
+                        self.workdir,
+                        f"{self.configuration_dir_prefix}_{str(conf_num)}",
+                        f"{self.shot_dir_prefix}_{str(shot_num)}",
+                                )
+        while True:  # what could possibly go wrong? ;)
+            # retry max_tries_on_crash times before giving up
+            os.mkdir(step_dir)
+            try:
+                if two_way:
+                    state_reached = await self._run_single_trial_tw(
+                                                            conf_num=conf_num,
+                                                            shot_num=shot_num,
+                                                            step_dir=step_dir,
+                                                                    )
+                else:
+                    state_reached = await self._run_single_trial_ow(
+                                                            conf_num=conf_num,
+                                                            shot_num=shot_num,
+                                                            step_dir=step_dir,
+                                                                    )
+            except EngineCrashedError as e:
+                # catch error raised when gromacs crashes
+                if n < self.max_tries_on_crash:
+                    logger.warning("MD engine crashed. Retrying committor step: "
+                                   + f"Configuration {str(conf_num)}, "
+                                   + f"shot {str(shot_num)}.")
+                    # move stepdir and retry
+                    os.rename(step_dir, step_dir + f"_crash{n+1}")
+                else:
+                    # reached maximum tries, raise the error and crash the sampling :)
+                    raise e from None
+            else:
+                return state_reached
+            finally:
+                n += 1
+
+    async def run(self, n_per_struct):
+        # first construct the list of all coroutines
+        # Note that calling them will not (yet) schedule them for execution
+        # we do this later while respecting self.n_max_concurrent
+        # using the little func below
+        async def gather_with_concurrency(n, *tasks):
+            semaphore = asyncio.Semaphore(n)
+
+            async def sem_task(task):
+                async with semaphore:
+                    return await task
+            return await asyncio.gather(*(sem_task(task) for task in tasks))
+
+        # construct the tasks all at once,
+        # ordering is such that we first finish all trials for configuration 0
+        # then configuration 1, i.e. we order by configuration and not by shotnum
+        tasks = []
+        for cnum in range(len(self.starting_configurations)):
+            tasks += [self._run_single_trial(conf_num=cnum,
+                                             shot_num=snum,
+                                             two_way=self.two_way,
+                                             )
+                      for snum in range(self._shot_counter,
+                                        self._shot_counter + n_per_struct
+                                        )
+                      ]
+        results = await gather_with_concurrency(self.n_max_concurrent, *tasks)
+        # results is a list of idx to the states reached
+        # we unpack it and add it to the internal states_reached counter
+        for cnum in range(len(self.starting_configurations)):
+            self._states_reached[cnum] += results[cnum * n_per_struct:
+                                                  (cnum + 1) * n_per_struct]
+        # increment internal shot (per struct) counter
+        self._shot_counter += n_per_struct
+        # TODO: we return the total states reached per shot?!
+        #       or should we return only for this run?
+        return self.states_reached_per_shot
+
+
+async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_state,
+                                                         plus_trajs, plus_state,
+                                                         state_funcs, tra_out,
+                                                         top_out=None,
+                                                         overwrite=False):
+    """
+    Construct a continous TP from plus and minus segments until states.
+
+    This is used e.g. in TwoWay TPS or if you try to get TPs out of a committor
+    simulation. Note, that this inverts all velocities on the minus segments.
+
+    Arguments:
+    ----------
+    minus_trajs - list of arcd.Trajectories, backward in time,
+                  these are going to be inverted
+    minus_state - int, idx to the first state reached on the minus trajs
+    plus_trajs - list of arcd.Trajectories, forward in time
+    plus_state - int, idx to the first state reached on the plus trajs
+    state_funcs - list of state functions, the indices to the states must match
+                  the minus and plus state indices!
+    tra_out - path to the output trajectory file
+    top_out - None or path to a topology file, the topology to associate with
+              the concatenated TP, taken from input trajs if None (the default)
+    overwrite - bool (default False), wheter to overwrite an existing output
+    """
+    # first find the slices to concatenate
+    # minus state first
+    minus_state_vals = await asyncio.gather(*(state_funcs[minus_state](t)
+                                              for t in minus_trajs)
+                                            )
+    part_lens = [len(v) for v in minus_state_vals]
+    # make it into one long array
+    minus_state_vals = np.concatenate(minus_state_vals, axis=0)
+    # get the first frame in state
+    frames_in_minus, = np.where(minus_state_vals)  # where always returns a tuple
+    first_frame_in_minus = np.min(frames_in_minus)
+    # I think this is overkill, i.e. we can always expect that
+    # first frame in state is in last part?!
+    # [this could potentially make this a bit shorter and maybe
+    #  even a bit more readable :)]
+    # But for now: better be save than sorry :)
+    # find the part in which minus state is reached
+    last_part_idx = 0
+    frame_sum = part_lens[0]
+    while first_frame_in_minus > frame_sum:
+        last_part_idx += 1
+        frame_sum += part_lens[last_part_idx]
+    # find the first frame in state (counting from start of last part)
+    _first_frame_in_minus = (first_frame_in_minus
+                             - sum(part_lens[:last_part_idx]))  # >= 0
+    # now construct the slices and trajs list (backwards!)
+    # the last/first part
+    slices = [(_first_frame_in_minus + 1, 0, -1)]  # negative stride!
+    trajs = [minus_trajs[last_part_idx]]
+    # the ones we take fully (if any) [the range looks a bit strange
+    # because we dont take last_part_index but include the zero as idx]
+    slices += [(-1, 0, -1) for _ in range(last_part_idx - 1, -1, -1)]
+    trajs += [minus_trajs[i] for i in range(last_part_idx - 1, -1, -1)]
+
+    # now plus trajectories, i.e. the part we put in positive stride
+    plus_state_vals = await asyncio.gather(*(state_funcs[plus_state](t)
+                                             for t in plus_trajs)
+                                           )
+    part_lens = [len(v) for v in plus_state_vals]
+    # make it into one long array
+    plus_state_vals = np.concatenate(plus_state_vals, axis=0)
+    # get the first frame in state
+    frames_in_plus, = np.where(plus_state_vals)
+    first_frame_in_plus = np.min(frames_in_plus)
+    # find the part
+    last_part_idx = 0
+    frame_sum = part_lens[0]
+    while first_frame_in_plus > frame_sum:
+        last_part_idx += 1
+        frame_sum += part_lens[last_part_idx]
+    # find the first frame in state (counting from start of last part)
+    _first_frame_in_plus = (first_frame_in_plus
+                            - sum(part_lens[:last_part_idx]))  # >= 0
+    # construct the slices and add trajs to list (forward!)
+    # NOTE: here we exclude the starting configuration, i.e. the SP,
+    #       such that it is in the concatenated trajectory only once!
+    #       (gromacs has the first frame in the trajectory)
+    slices += [(1, -1, 1)]
+    trajs += [plus_trajs[0]]
+    # these are the trajectory segments we take completely
+    # [this excludes last_part_idx so far]
+    slices += [(0, -1, 1) for _ in range(1, last_part_idx)]
+    trajs += [plus_trajs[i] for i in range(1, last_part_idx)]
+    # add last part (with the last frame as first frame in plus state)
+    slices += [(0, _first_frame_in_plus + 1, 1)]
+    trajs += [plus_trajs[last_part_idx]]
+    # finally produce thew concatenated path
+    concat = functools.partial(TrajectoryConcatenator().concatenate,
+                               trajs=trajs,
+                               slices=slices,
+                               tra_out=tra_out,
+                               top_out=top_out,
+                               overwrite=overwrite)
+    loop = asyncio.get_running_loop()
+    async with _SEM_MAX_PROCESS:
+        # run concatenator in its own python process
+        with concurrent.futures.ProcessPoolExecutor(1) as pool:
+            path_traj = await loop.run_in_executor(pool, concat)
+    return path_traj
 
 
 # TODO: DOCUMENT
