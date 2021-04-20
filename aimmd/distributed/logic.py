@@ -1039,6 +1039,7 @@ class CommittorSimulation:
         # we do this later while respecting self.n_max_concurrent
         # using the little func below
         async def gather_with_concurrency(n, *tasks):
+            # https://stackoverflow.com/questions/48483348/how-to-limit-concurrency-with-python-asyncio/61478547#61478547
             semaphore = asyncio.Semaphore(n)
 
             async def sem_task(task):
