@@ -177,7 +177,7 @@ class GmxEngine(MDEngine):
         if self._proc is None:
             # this happens when we did not call run() yet
             return False
-        if self._proc.returncode is None:
+        if self.returncode is None:
             # no return code means it is still running
             return True
         # dont care for the value of the exit code,
@@ -483,10 +483,6 @@ class SlurmGmxEngine(GmxEngine):
             splits = line.split("|")
             if len(splits) == 3:
                 jobid, state, exitcode = splits
-                print("jobid, state, exitcode:", jobid, state, exitcode)
-                print("self._proc:", self._proc)
-                print("lens: self._proc, jobid:", len(self._proc), len(jobid))
-                print("types: self._proc, jobid", type(self._proc), type(jobid))
                 if jobid.strip() == self._proc:
                     # TODO: parse and return the exitcode too?
                     return state
