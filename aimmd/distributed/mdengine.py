@@ -484,6 +484,9 @@ class SlurmGmxEngine(GmxEngine):
             if len(splits) == 3:
                 jobid, state, exitcode = splits
                 print("jobid, state, exitcode:", jobid, state, exitcode)
+                print("self._proc:", self._proc)
+                print("lens: self._proc, jobid:", len(self._proc), len(jobid))
+                print("types: self._proc, jobid", type(self._proc), type(jobid))
                 if jobid == self._proc:
                     # TODO: parse and return the exitcode too?
                     return state
