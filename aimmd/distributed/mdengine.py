@@ -466,8 +466,6 @@ class SlurmGmxEngine(GmxEngine):
         sbatch_return = stdout.decode()
         # only jobid (and possibly clustername) returned, semikolon to separate
         jobid = sbatch_return.split(";")[0]
-        print("slurm jobid:", jobid)
-        print('slurm jobid type', type(jobid))
         self._proc = jobid
 
     @property
@@ -485,13 +483,14 @@ class SlurmGmxEngine(GmxEngine):
             splits = line.split("|")
             if len(splits) == 3:
                 jobid, state, exitcode = splits
+                print("jobid, state, exitcode:", jobid, state, exitcode)
                 if jobid == self._proc:
                     # TODO: parse and return the exitcode too?
                     return state
-            else:
-                # something probably went wrong checking for the job
-                # TODO/FIXME; is this what we want
-                return "PENDING"  # this will make us check again in a bit
+        # if we get until here something probably went wrong checking for the job
+        # TODO/FIXME: is this what we want
+        print("returned PENDING")
+        return "PENDING"  # this will make us check again in a bit
 
 # NOTE: poll() is redundant to wait()
 #    def poll(self):
