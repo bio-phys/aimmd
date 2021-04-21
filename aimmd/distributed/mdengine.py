@@ -398,7 +398,7 @@ class SlurmGmxEngine(GmxEngine):
     mdrun_executable = "gmx_mpi mdrun"  # MPI as default for clusters
     # since we can not simply wait for the subprocess, since slurm exits immidiately
     # we will sleep for this long between checks if mdrun/slurm-job completed
-    sleep_time = 60  # TODO: heuristic? dynamically adapt?
+    sleep_time = 5  # TODO: heuristic? dynamically adapt?
     # NOTE: no options to set/pass extra_args for sbatch and sacct:
     #       I think all sbatch options can also be set via SBATCH directives?!
     #       and sacct options would probably only mess up our parsing... ;)
@@ -488,7 +488,6 @@ class SlurmGmxEngine(GmxEngine):
                     return state
         # if we get until here something probably went wrong checking for the job
         # TODO/FIXME: is this what we want
-        print("returned PENDING")
         return "PENDING"  # this will make us check again in a bit
 
 # NOTE: poll() is redundant to wait()

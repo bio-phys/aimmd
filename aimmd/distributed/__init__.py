@@ -27,13 +27,15 @@ def set_max_process(num=None):
     Set the maximum number of concurrent python processes.
     If num is None, default to os.cpu_count().
     """
+    # TODO: I think we should use less as default, maybe 0.25*cpu_count()?
+    # and limit to 30-40?, i.e never higher even if we have 1111 cores?
     global _SEM_MAX_PROCESS
     if num is None:
-        num = os.cpu_count()
+        num = int(os.cpu_count() / 4)
     _SEM_MAX_PROCESS = asyncio.Semaphore(num)
 
 
-set_max_process()
+set_max_process(1)
 
 
 # ensure that only one Chain can access the central model at a time
