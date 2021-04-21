@@ -473,6 +473,7 @@ class SlurmGmxEngine(GmxEngine):
         if self._proc is None:
             return None
         sacct_cmd = f"{self.sacct_executable} --noheader"
+        sacct_cmd += f" -j {self._proc}"  # query only for the specific job we are running
         sacct_cmd += " -o jobid,state,exitcode --parsable2"  # separate with |
         sacct_out = subprocess.check_output(shlex.split(sacct_cmd), text=True)
         # sacct returns one line per substep, we only care for the whole job
