@@ -107,6 +107,7 @@ class GmxEngine(MDEngine):
     grompp_extra_args = ""
     mdrun_extra_args = ""
 
+    # TODO/FIXME: option to pass an index file!
     def __init__(self, gro_file, top_file, **kwargs):
         # TODO: store a hash/the file contents for gro and top?
         #       to check against when we load from storage/restart?
