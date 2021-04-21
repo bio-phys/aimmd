@@ -465,7 +465,7 @@ class SlurmGmxEngine(GmxEngine):
         stdout, stderr = await sbatch_proc.communicate()
         sbatch_return = stdout.decode()
         # only jobid (and possibly clustername) returned, semikolon to separate
-        jobid = sbatch_return.split(";")[0]
+        jobid = sbatch_return.split(";")[0].strip()
         self._proc = jobid
 
     @property
@@ -487,7 +487,7 @@ class SlurmGmxEngine(GmxEngine):
                 print("self._proc:", self._proc)
                 print("lens: self._proc, jobid:", len(self._proc), len(jobid))
                 print("types: self._proc, jobid", type(self._proc), type(jobid))
-                if jobid == self._proc:
+                if jobid.strip() == self._proc:
                     # TODO: parse and return the exitcode too?
                     return state
         # if we get until here something probably went wrong checking for the job
