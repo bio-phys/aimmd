@@ -35,7 +35,7 @@ def set_max_process(num=None):
     _SEM_MAX_PROCESS = asyncio.Semaphore(num)
 
 
-set_max_process(1)
+set_max_process()
 
 
 # ensure that only one Chain can access the central model at a time
