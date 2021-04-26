@@ -114,6 +114,7 @@ class Trajectory:
                 loop = asyncio.get_running_loop()
                 async with _SEM_MAX_PROCESS:
                     # NOTE: make sure we do not fork! (not save with multithreading)
+                    # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
                     ctx = multiprocessing.get_context("forkserver")
                     # use one python subprocess: if func releases the GIL
                     # it does not matter anyway, if func is full py 1 is enough
@@ -132,6 +133,7 @@ class Trajectory:
             loop = asyncio.get_running_loop()
             async with _SEM_MAX_PROCESS:
                 # NOTE: make sure we do not fork! (not save with multithreading)
+                # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
                 ctx = multiprocessing.get_context("forkserver")
                 # use one python subprocess: if func releases the GIL
                 # it does not matter anyway, if func is full py 1 is enough

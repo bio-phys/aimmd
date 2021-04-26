@@ -17,7 +17,7 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 # TODO: is the the best place for our semaphore(s)?
 # TODO?: introduce a maximum for the number of slurm jobs? _SEM_MAX_SLURM_JOB
 # NOTE: this is actually not that useful as you could run multiple python
-#       processes with arcd on the same cluster, and then this would not work
+#       processes with arcd on the same cluster, and then this could not work as intended
 import os
 import asyncio
 
@@ -35,6 +35,10 @@ def set_max_process(num=None):
     _SEM_MAX_PROCESS = asyncio.Semaphore(num)
 
 
+# TODO/FIXME: calling this function again does not chnage the semaphore?!
+#             i.e. we can only set max_processes when intitially importing?!
+#             since this really sux we should think about passing the/a semaphore to
+#             the sampling simulation?
 set_max_process()
 
 
