@@ -17,11 +17,12 @@ along with ARCD. If not, see <https://www.gnu.org/licenses/>.
 import os
 import abc
 import asyncio
-import concurrent.futures
+import multiprocessing
 import inspect
 import logging
 import functools
 import numpy as np
+from concurrent.futures import ProcessPoolExecutor
 
 from . import _SEM_MAX_PROCESS, _SEM_BRAIN_MODEL
 from .trajectory import (TrajectoryConcatenator,
@@ -1173,8 +1174,10 @@ async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_stat
                                overwrite=overwrite)
     loop = asyncio.get_running_loop()
     async with _SEM_MAX_PROCESS:
-        # run concatenator in its own python process
-        with concurrent.futures.ProcessPoolExecutor(1) as pool:
+        # NOTE: make sure we do not fork! (not save with multithreading)
+        # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
+        ctx = multiprocessing.get_context("forkserver")
+        with ProcessPoolExecutor(1, mp_context=ctx) as pool:
             path_traj = await loop.run_in_executor(pool, concat)
     return path_traj
 
@@ -1332,8 +1335,10 @@ class PropagatorUntilAnyState:
                                    overwrite=overwrite)
         loop = asyncio.get_running_loop()
         async with _SEM_MAX_PROCESS:
-            # run concatenator in its own python process
-            with concurrent.futures.ProcessPoolExecutor(1) as pool:
+            # NOTE: make sure we do not fork! (not save with multithreading)
+            # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
+            ctx = multiprocessing.get_context("forkserver")
+            with ProcessPoolExecutor(1, mp_context=ctx) as pool:
                 full_traj = await loop.run_in_executor(pool, concat)
         return full_traj, first_state_reached
 

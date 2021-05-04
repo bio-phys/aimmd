@@ -18,12 +18,12 @@ import os
 import abc
 import collections
 import asyncio
-import concurrent.futures
 import inspect
 import logging
 import multiprocessing
 import numpy as np
 import MDAnalysis as mda
+from concurrent.futures import ProcessPoolExecutor
 from scipy import constants
 
 from . import _SEM_MAX_PROCESS
@@ -118,7 +118,7 @@ class Trajectory:
                     ctx = multiprocessing.get_context("forkserver")
                     # use one python subprocess: if func releases the GIL
                     # it does not matter anyway, if func is full py 1 is enough
-                    with concurrent.futures.ProcessPoolExecutor(1, mp_context=ctx) as pool:
+                    with ProcessPoolExecutor(1, mp_context=ctx) as pool:
                         vals = await loop.run_in_executor(pool, func, self)
                 self._h5py_cache.append(src, vals)
                 return vals
@@ -137,7 +137,7 @@ class Trajectory:
                 ctx = multiprocessing.get_context("forkserver")
                 # use one python subprocess: if func releases the GIL
                 # it does not matter anyway, if func is full py 1 is enough
-                with concurrent.futures.ProcessPoolExecutor(1, mp_context=ctx) as pool:
+                with ProcessPoolExecutor(1, mp_context=ctx) as pool:
                     vals = await loop.run_in_executor(pool, func, self)
             self._func_src_to_idx[src] = len(self._func_src_to_idx)
             self._func_values.append(vals)
