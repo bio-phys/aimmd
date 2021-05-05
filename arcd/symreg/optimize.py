@@ -68,27 +68,27 @@ dCGPy is GPL licensed.
     # to get the derivatives
     loss_functions = {}
     if complexity_regularization and weight_regularization:
-        loss_functions['full'] = lambda ex, x, y, aw: (loss_function(ex, x, y)
+        loss_functions['full'] = lambda ex, x, y, aw: (sum(loss_function(ex, x, y).constant_cf)
                                                        + complexity_regularization(ex)
                                                        + weight_regularization(aw)
                                                        )
         loss_functions['newton'] = lambda ex, x, y, aw: (loss_function(ex, x, y)
-                                                         + weight_regularization(aw)
+                                                         + weight_regularization(aw) / len(x[0].constant_cf)
                                                          )
     elif complexity_regularization:
-        loss_functions['full'] = lambda ex, x, y, aw: (loss_function(ex, x, y)
+        loss_functions['full'] = lambda ex, x, y, aw: (sum(loss_function(ex, x, y).constant_cf)
                                                        + complexity_regularization(ex)
                                                        )
         loss_functions['newton'] = lambda ex, x, y, aw: loss_function(ex, x, y)
     elif weight_regularization:
-        loss_functions['full'] = lambda ex, x, y, aw: (loss_function(ex, x, y)
+        loss_functions['full'] = lambda ex, x, y, aw: (sum(loss_function(ex, x, y).constant_cf)
                                                        + weight_regularization(aw)
                                                        )
         loss_functions['newton'] = lambda ex, x, y, aw: (loss_function(ex, x, y)
-                                                         + weight_regularization(aw)
+                                                         + weight_regularization(aw) / len(x[0].constant_cf)
                                                          )
     else:
-        loss_functions['full'] = lambda ex, x, y, aw: loss_function(ex, x, y)
+        loss_functions['full'] = lambda ex, x, y, aw: sum(loss_function(ex, x, y).constant_cf)
         loss_functions['newton'] = lambda ex, x, y, aw: loss_function(ex, x, y)
 
     # The offsprings chromosome, loss and weights
@@ -99,7 +99,7 @@ dCGPy is GPL licensed.
     best_chromosome = expression.get()
     best_weights = expression.get_weights()
     aw_list = _get_active_weights(expression)
-    best_loss = sum(loss_functions['full'](expression, xt, yt, aw_list).constant_cf)
+    best_loss = loss_functions['full'](expression, xt, yt, aw_list)
     if math.isnan(best_loss):
         # if initial expression loss is NaN we set loss to inf
         # such that we later take the first nonNan expression
@@ -123,7 +123,7 @@ dCGPy is GPL licensed.
                 newton(expression, loss_functions['newton'], xt, yt, **newtonParams)
             # get the loss
             aw_list = _get_active_weights(expression)
-            loss[i] = sum(loss_functions['full'](expression, xt, yt, aw_list).constant_cf)
+            loss[i] = loss_functions['full'](expression, xt, yt, aw_list)
             chromosome[i] = expression.get()
             weights[i] = expression.get_weights()
         for i in range(offsprings):
