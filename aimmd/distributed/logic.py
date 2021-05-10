@@ -1021,8 +1021,8 @@ class CommittorSimulation:
             except EngineCrashedError as e:
                 # catch error raised when gromacs crashes
                 if n < self.max_tries_on_crash:
-                    logger.warning("MD engine crashed. Retrying committor step: "
-                                   + f"Configuration {str(conf_num)}, "
+                    logger.warning("MD engine crashed. Retrying committor step"
+                                   + f": Configuration {str(conf_num)}, "
                                    + f"shot {str(shot_num)}.")
                     # move stepdir and retry
                     os.rename(step_dir, step_dir + f"_crash{n+1}")
@@ -1117,8 +1117,8 @@ async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_stat
     # But for now: better be save than sorry :)
     # find the part in which minus state is reached
     last_part_idx = 0
-    frame_sum = part_lens[0]
-    while first_frame_in_minus > frame_sum:
+    frame_sum = part_lens[last_part_idx]
+    while first_frame_in_minus >= frame_sum:
         last_part_idx += 1
         frame_sum += part_lens[last_part_idx]
     # find the first frame in state (counting from start of last part)
@@ -1145,8 +1145,8 @@ async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_stat
     first_frame_in_plus = np.min(frames_in_plus)
     # find the part
     last_part_idx = 0
-    frame_sum = part_lens[0]
-    while first_frame_in_plus > frame_sum:
+    frame_sum = part_lens[last_part_idx]
+    while first_frame_in_plus >= frame_sum:
         last_part_idx += 1
         frame_sum += part_lens[last_part_idx]
     # find the first frame in state (counting from start of last part)
@@ -1165,7 +1165,7 @@ async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_stat
     # add last part (with the last frame as first frame in plus state)
     slices += [(0, _first_frame_in_plus + 1, 1)]
     trajs += [plus_trajs[last_part_idx]]
-    # finally produce thew concatenated path
+    # finally produce the concatenated path
     concat = functools.partial(TrajectoryConcatenator().concatenate,
                                trajs=trajs,
                                slices=slices,
@@ -1215,13 +1215,14 @@ class PropagatorUntilAnyState:
                                          for s in states]
         if not all(self._state_func_is_coroutine):
             # and warn if it is not
-            logger.warning("It is recommended to use coroutinefunctions for all "
-                        + "states. This can easily be achieved by wrapping any"
-                        + " function in a TrajectoryFunctionWrapper. All "
-                        + "non-coroutine state functions will be blocking when"
-                        + " applied! ([s is coroutine for s in states] = "
-                        + f"{self._state_func_is_coroutine})"
-                        )
+            logger.warning(
+                    "It is recommended to use coroutinefunctions for all "
+                    + "states. This can easily be achieved by wrapping any"
+                    + " function in a TrajectoryFunctionWrapper. All "
+                    + "non-coroutine state functions will be blocking when"
+                    + " applied! ([s is coroutine for s in states] = "
+                    + f"{self._state_func_is_coroutine})"
+                           )
         self._states = states
 
     async def propagate_and_concatenate(self, starting_configuration, workdir,
@@ -1310,8 +1311,8 @@ class PropagatorUntilAnyState:
         # TODO: is this overkill? can we assume first state occurence is in the
         #       last traj part?!
         last_part_idx = 0
-        frame_sum = part_lens[0]
-        while first_frame_in_state > frame_sum:
+        frame_sum = part_lens[last_part_idx]
+        while first_frame_in_state >= frame_sum:
             last_part_idx += 1
             frame_sum += part_lens[last_part_idx]
         # find the first frame in state (counting from start of last part)
