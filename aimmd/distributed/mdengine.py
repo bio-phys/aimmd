@@ -19,9 +19,9 @@ import abc
 import shlex
 import asyncio
 import logging
-import subprocess
 
 from .trajectory import Trajectory
+from .slurm import SlurmProcess
 from .mdconfig import MDP
 
 
@@ -184,12 +184,6 @@ class GmxEngine(MDEngine):
         # we are not running anymore if we crashed ;)
         return False
 
-    # NOTE: this is redundant and poll() is not very async/await like
-    #def poll(self):
-    #    if self._proc is None:
-    #        return None
-    #    return self._proc.poll()
-
     @property
     def returncode(self):
         if self._proc is not None:
@@ -310,10 +304,14 @@ class GmxEngine(MDEngine):
                                   maxh=walltime, nsteps=nsteps)
         logger.info(f"{cmd_str}")
         await self._start_gmx_mdrun(cmd_str=cmd_str)
-        exit_code = await self.wait()
-        if exit_code != 0:
-            raise EngineCrashedError("Non-zero exit code from mdrun.")
-        return self.current_trajectory
+        try:
+            exit_code = await self.wait()
+        except asyncio.CancelledError:
+            self._proc.kill()
+        else:
+            if exit_code != 0:
+                raise EngineCrashedError("Non-zero exit code from mdrun.")
+            return self.current_trajectory
 
     async def run_nsteps(self, nsteps):
         # TODO:
@@ -377,8 +375,6 @@ class GmxEngine(MDEngine):
         return cmd
 
 
-# TODO: test this! (it should work with a working slurm script,
-#                   the local engine works and the parsing is tested)
 class SlurmGmxEngine(GmxEngine):
     # use local prepare (i.e. grompp) of GmxEngine then submit run to slurm
     # we reuse the `GmxEngine._proc` to keep the jobid
@@ -396,40 +392,6 @@ class SlurmGmxEngine(GmxEngine):
     #          (it seems submission is frickly in pyslurm)
 
     mdrun_executable = "gmx_mpi mdrun"  # MPI as default for clusters
-    # since we can not simply wait for the subprocess, since slurm exits immidiately
-    # we will sleep for this long between checks if mdrun/slurm-job completed
-    sleep_time = 5  # TODO: heuristic? dynamically adapt?
-    # NOTE: no options to set/pass extra_args for sbatch and sacct:
-    #       I think all sbatch options can also be set via SBATCH directives?!
-    #       and sacct options would probably only mess up our parsing... ;)
-    sacct_executable = "sacct"
-    sbatch_executable = "sbatch"
-    # rudimentary map for slurm state codes to int return codes for poll
-    slurm_state_to_exitcode = {
-        "BOOT_FAIL": 1,  # Job terminated due to launch failure
-        #  Job was explicitly cancelled by the user or system administrator.
-        "CANCELLED": 1,
-        #  Job has terminated all processes on all nodes with an exit code of zero.
-        "COMPLETED": 0,
-        "DEADLINE": 1,  # Job terminated on deadline.
-        # Job terminated with non-zero exit code or other failure condition.
-        "FAILED": 1,
-        # Job terminated due to failure of one or more allocated nodes.
-        "NODE_FAIL": 1,
-        "OUT_OF_MEMORY": 1,  # Job experienced out of memory error.
-        "PENDING": None,  # Job is awaiting resource allocation.
-        "PREEMPTED": 1,  # Job terminated due to preemption.
-        "RUNNING": None,  # Job currently has an allocation.
-        "REQUEUED": None,  # Job was requeued.
-        # Job is about to change size.
-        #"RESIZING" TODO: when does this happen? what should we return?
-        # Sibling was removed from cluster due to other cluster starting the job.
-        "REVOKED": 1,
-        # Job has an allocation, but execution has been suspended and CPUs have been released for other jobs.
-        "SUSPENDED": None,
-        # Job terminated upon reaching its time limit.
-        "TIMEOUT": 1,  # TODO: can this happen for jobs that finish properly?
-    }
 
     def __init__(self, gro_file, top_file, sbatch_script, **kwargs):
         super().__init__(gro_file=gro_file, top_file=top_file, **kwargs)
@@ -455,68 +417,12 @@ class SlurmGmxEngine(GmxEngine):
             logger.error(f"Overwriting exisiting submission file ({fname}).")
         with open(fname, 'w') as f:
             f.write(script)
-        sbatch_cmd = f"{self.sbatch_executable} --parsable {fname}"
-        sbatch_proc = await asyncio.subprocess.create_subprocess_exec(
-                                                *shlex.split(sbatch_cmd),
-                                                stdout=asyncio.subprocess.PIPE,
-                                                stderr=asyncio.subprocess.PIPE,
-                                                cwd=self.workdir,
-                                                                      )
-        stdout, stderr = await sbatch_proc.communicate()
-        sbatch_return = stdout.decode()
-        # only jobid (and possibly clustername) returned, semikolon to separate
-        jobid = sbatch_return.split(";")[0].strip()
-        self._proc = jobid
+        self._proc = SlurmProcess(sbatch_script=fname)
+        await self._proc.submit()
 
+    # TODO: do we even need/want that?
     @property
     def slurm_job_state(self):
         if self._proc is None:
             return None
-        sacct_cmd = f"{self.sacct_executable} --noheader"
-        sacct_cmd += f" -j {self._proc}"  # query only for the specific job we are running
-        sacct_cmd += " -o jobid,state,exitcode --parsable2"  # separate with |
-        sacct_out = subprocess.check_output(shlex.split(sacct_cmd), text=True)
-        # sacct returns one line per substep, we only care for the whole job
-        # which should be the first line but we check explictly for jobid
-        # (the substeps have .$NUM suffixes)
-        for line in sacct_out.split("\n"):
-            splits = line.split("|")
-            if len(splits) == 3:
-                jobid, state, exitcode = splits
-                if jobid.strip() == self._proc:
-                    # TODO: parse and return the exitcode too?
-                    return state
-        # if we get until here something probably went wrong checking for the job
-        # TODO/FIXME: is this what we want
-        return "PENDING"  # this will make us check again in a bit
-
-# NOTE: poll() is redundant to wait()
-#    def poll(self):
-#        # poll is used in running property
-#        if self._proc is None:
-#            return None
-#        state = self.slurm_job_state
-#        for key, val in self.slurm_state_to_exitcode:
-#            if key in state:
-#                # this also recognizes `CANCELLED by ...` as CANCELLED
-#                return val
-#        # we should never finish the loop, it means we miss a slurm job state
-#        raise RuntimeError(f"Could not find a matching exitcode for state {state}")
-
-    @property
-    def returncode(self):
-        slurm_state = self.slurm_job_state
-        if slurm_state is None:
-            return None
-        for key, val in self.slurm_state_to_exitcode.items():
-            if key in slurm_state:
-                # this also recognizes `CANCELLED by ...` as CANCELLED
-                return val
-        # we should never finish the loop, it means we miss a slurm job state
-        raise RuntimeError("Could not find a matching exitcode for slurm state"
-                           + f": {slurm_state}")
-
-    async def wait(self):
-        while self.returncode is None:
-            await asyncio.sleep(self.sleep_time)
-        return self.returncode
+        return self._proc.slurm_job_state

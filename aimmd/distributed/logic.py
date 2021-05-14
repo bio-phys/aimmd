@@ -320,8 +320,12 @@ class PathSamplingChain:
     mcstep_foldername_prefix = "mcstep_"  # name = prefix + str(stepnum)
     mcstate_name_prefix = "mcstate_"  # name for symlinks to folders with
                                       # accepted step at stepnum
-    max_tries_on_crash = 2  # maximum number of *tries* when MD engine crashes
-                            # i.e. setting to 2 means *retry* once on crash
+    max_retries_on_crash = 2  # maximum number of *retries* on MD engine crash
+                              # i.e. setting to 1 means *retry* once on crash
+    wait_time_on_crash = 60  # time to wait for cleanup of 'depending threads'
+                             # after a crash, 'depending threads' are e.g. the
+                             # conjugate trials in a two way simulation,
+                             # in seconds!
     # TODO: make this saveable!? together with its brain!
     # TODO: make it possible to run post-processing 'hooks'?!
     # TODO: initialize from directory structure?
@@ -377,8 +381,10 @@ class PathSamplingChain:
                                            wdir=step_dir, model=model)
             except EngineCrashedError as e:
                 # catch error raised when gromacs crashes
-                if n < self.max_tries_on_crash:
+                if n < self.max_retries_on_crash:
                     logger.warning("MD engine crashed. Retrying MC step.")
+                    # wait a bit for everything to finish the cleanup
+                    await asyncio.sleep(self.wait_time_on_crash)
                     # move stepdir and retry
                     os.rename(step_dir, step_dir + f"_crash{n+1}")
                 else:
@@ -781,8 +787,12 @@ class CommittorSimulation:
     fname_transition_traj = "transition_traj.trr"  # only in TwoWay
     deffnm_engine_out = "trial_fw"
     deffnm_engine_out_bw = "trial_bw"  # only in twoway (for runs with inverted v)
-    max_tries_on_crash = 2  # maximum number of *tries* when MD engine crashes
-                            # i.e. setting to 2 means *retry* once on crash
+    max_retries_on_crash = 2  # maximum number of *retries* on MD engine crash
+                              # i.e. setting to 1 means *retry* once on crash
+    wait_time_on_crash = 60  # time to wait for cleanup of 'depending threads'
+                             # after a crash, 'depending threads' are e.g. the
+                             # conjugate trials in a two way simulation,
+                             # in seconds!
 
     def __init__(self, workdir, starting_configurations, states, engine_cls,
                  engine_kwargs, engine_mdconfig, T, walltime_per_part,
@@ -1020,10 +1030,12 @@ class CommittorSimulation:
                                                                     )
             except EngineCrashedError as e:
                 # catch error raised when gromacs crashes
-                if n < self.max_tries_on_crash:
+                if n < self.max_retries_on_crash:
                     logger.warning("MD engine crashed. Retrying committor step"
                                    + f": Configuration {str(conf_num)}, "
                                    + f"shot {str(shot_num)}.")
+                    # wait a sec for the cleanup to finish
+                    await asyncio.sleep(self.wait_time_on_crash)
                     # move stepdir and retry
                     os.rename(step_dir, step_dir + f"_crash{n+1}")
                 else:
