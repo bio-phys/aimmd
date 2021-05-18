@@ -89,10 +89,19 @@ class Trajectory:
         #       tra and top should also work here as tra and top
         self.trajectory_file = os.path.abspath(trajectory_file)
         self.topology_file = os.path.abspath(topology_file)
+        self._len = None
         self._func_src_to_idx = {}
         self._func_values = []
         self._h5py_grp = None
         self._h5py_cache = None
+
+    def __len__(self):
+        if self._len is not None:
+            return self._len
+        # create/open a mdanalysis universe to get the number of frames
+        u = mda.Universe(self.topology_file, self.trajectory_file)
+        self._len = len(u.trajectory)
+        return self._len
 
     def __repr__(self):
         return (f"Trajectory(trajectory_file={self.trajectory_file},"

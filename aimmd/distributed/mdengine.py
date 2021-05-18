@@ -109,23 +109,10 @@ class GmxEngine(MDEngine):
 
     # TODO/FIXME: option to pass an index file!
     def __init__(self, gro_file, top_file, **kwargs):
-        # TODO: store a hash/the file contents for gro and top?
-        #       to check against when we load from storage/restart?
-        self.gro_file = os.path.abspath(gro_file)
-        self.top_file = os.path.abspath(top_file)
-        self._workdir = None
-        self._prepared = False
-        # Popen handle for gmx mdrun, used to check if we are running
-        self._proc = None
-        # these are set by prepare() and used by run_XX()
-        self._simulation_part = None
-        self._deffnm = None
-        self._run_config = None
-        self._tpr = None  # tpr for trajectory (part), will become the topology
-        if not os.path.isfile(self.gro_file):
-            raise FileNotFoundError(f"gro file not found: {self.gro_file}")
-        if not os.path.isfile(self.top_file):
-            raise FileNotFoundError(f"top file not found: {self.top_file}")
+        if not os.path.isfile(gro_file):
+            raise FileNotFoundError(f"gro file not found: {gro_file}")
+        if not os.path.isfile(top_file):
+            raise FileNotFoundError(f"top file not found: {top_file}")
         # make it possible to set any attribute via kwargs
         # check the type for attributes with default values
         dval = object()
@@ -140,6 +127,24 @@ class GmxEngine(MDEngine):
                                     + f"mismatching type ({type(value)}). "
                                     + f" Default type is {type(cval)}."
                                     )
+        # NOTE: after the kwargs setting to be sure they are what we set/expect
+        # TODO: store a hash/the file contents for gro and top?
+        #       to check against when we load from storage/restart?
+        self.gro_file = os.path.abspath(gro_file)
+        self.top_file = os.path.abspath(top_file)
+        self._workdir = None
+        self._prepared = False
+        # Popen handle for gmx mdrun, used to check if we are running
+        self._proc = None
+        # these are set by prepare() and used by run_XX()
+        self._simulation_part = None
+        self._deffnm = None
+        self._run_config = None
+        self._tpr = None  # tpr for trajectory (part), will become the topology
+        # TODO?!
+        # counter for frames already produced, needed to enable run(nsteps)
+        # to count steps per part
+        # since gromacs takes nsteps since the beginning of the simulation
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -158,10 +163,10 @@ class GmxEngine(MDEngine):
             # run, if it is 0 we can be sure that there is no traj started yet
             if self._simulation_part == 0:
                 return None
-            # TODO: check self._run_config if we write trr or xtc trajectory!
+            # TODO: check self._run_config if we write trr and/or xtc traj!
             traj = Trajectory(trajectory_file=os.path.join(
-                        self.workdir, self._deffnm + self._num_suffix() + ".trr"
-                                                            ),
+                        self.workdir, f"{self._deffnm}{self._num_suffix()}.trr"
+                                                           ),
                               topology_file=os.path.join(self.workdir, self._tpr)
                               )
             return traj
@@ -285,9 +290,6 @@ class GmxEngine(MDEngine):
                                             stderr=asyncio.subprocess.PIPE,
                                             cwd=self.workdir,
                                                     )
-        # this is only useful for local gmx,
-        # qeue submissions finish and return imidiately
-        # for slurm gmx we use it to store the jobid
         self._proc = proc
 
     async def run(self, nsteps=None, walltime=None):
@@ -296,8 +298,8 @@ class GmxEngine(MDEngine):
             raise RuntimeError("Engine not ready for run. Call self.prepare() "
                                + "and/or check if it is still running.")
         if nsteps is None and walltime is None:
-            logger.warning("Neither nsteps nor walltime given."
-                           + " mdrun will try to take nsteps from the .mdp file.")
+            raise ValueError("Neither nsteps nor walltime given.")
+
         self._simulation_part += 1
         cmd_str = self._mdrun_cmd(tpr=self._tpr, deffnm=self._deffnm,
                                   # TODO: use more/any other kwargs?
@@ -314,9 +316,9 @@ class GmxEngine(MDEngine):
             return self.current_trajectory
 
     async def run_nsteps(self, nsteps):
-        # TODO:
+        # TODO: should nsteps be the number of steps per part?
         """
-        FIXME: nsteps is the total number of steps in all traj-parts combined!
+        NOTE: nsteps is the total number of steps in all traj-parts combined!
         """
         #        i.e. steps is reset to zero only when calling prepare
         #        if our trajectories would know their len this would be

@@ -1205,15 +1205,19 @@ class PropagatorUntilAnyState:
     #       be inside of two states at the same time, it is the users
     #       responsibility to ensure that their states are sane
 
-    def __init__(self, states, engine, walltime_per_part):
+    def __init__(self, states, engine, walltime_per_part, max_frames):
         # states - list of wrapped trajectory funcs
         # engine - initialized mdengine
         # walltime_per_part - walltime (in h) per mdrun, i.e. traj part/segment
+        # TODO: do we want max_frames as argument to propagate?
+        # max_frames - maximum number of *frames* in all segments combined
+        #              note that frames = steps / nstxout
         self._states = None
         self._state_func_is_coroutine = None
         self.states = states
         self.engine = engine
         self.walltime_per_part = walltime_per_part
+        self.max_frames = max_frames
 
     @property
     def states(self):
@@ -1283,11 +1287,20 @@ class PropagatorUntilAnyState:
                                       )
             any_state_reached = False
             trajs = []
-            while not any_state_reached:
+            frame_counter = 0
+            while ((not any_state_reached)
+                   and (frame_counter <= self.max_frames)):
                 traj = await self.engine.run_walltime(self.walltime_per_part)
                 state_vals = await self._state_vals_for_traj(traj)
                 any_state_reached = np.any(state_vals)
+                frame_counter += len(traj)
                 trajs.append(traj)
+            if not any_state_reached:
+                # left while loop because of max_frames reached
+                # TODO!: what do we want to do? raise? return None?
+                #return trajs, None
+                #raise MaxFramesReachedError()
+                raise RuntimeError("maximum number of frames reached.")
         # state_vals are the ones for the last traj
         # here we get which states are True and at which frame
         states_reached, frame_nums = np.where(state_vals)

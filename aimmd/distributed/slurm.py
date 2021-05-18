@@ -123,8 +123,9 @@ class SlurmProcess:
                     # TODO: parse and return the exitcode too?
                     return state
         # if we get here something probably went wrong checking for the job
-        # TODO: is this actually what we want?
-        return "PENDING"  # this will make us check again in a bit
+        # the 'PENDING' will make us check again in a bit
+        # (TODO: is this actually what we want?)
+        return "PENDING"
 
     @property
     def returncode(self):
