@@ -1219,6 +1219,9 @@ class PropagatorUntilAnyState:
         self.walltime_per_part = walltime_per_part
         self.max_frames = max_frames
 
+    #TODO/FIXME: self._states is a list...that means users can change
+    #            single elements without using the setter!
+    #            we could use a list subclass as for the MDconfig?!
     @property
     def states(self):
         return self._states
@@ -1297,10 +1300,9 @@ class PropagatorUntilAnyState:
                 trajs.append(traj)
             if not any_state_reached:
                 # left while loop because of max_frames reached
-                # TODO!: what do we want to do? raise? return None?
-                #return trajs, None
-                #raise MaxFramesReachedError()
-                raise RuntimeError("maximum number of frames reached.")
+                logger.warning("Maximum number of frames reached "
+                               + "without visiting any state.")
+                return trajs, None
         # state_vals are the ones for the last traj
         # here we get which states are True and at which frame
         states_reached, frame_nums = np.where(state_vals)
