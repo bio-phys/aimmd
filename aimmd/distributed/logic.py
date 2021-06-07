@@ -1,18 +1,18 @@
 """
-This file is part of ARCD.
+This file is part of AIMMD.
 
-ARCD is free software: you can redistribute it and/or modify
+AIMMD is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-ARCD is distributed in the hope that it will be useful,
+AIMMD is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with ARCD. If not, see <https://www.gnu.org/licenses/>.
+along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import os
 import abc
@@ -35,6 +35,15 @@ from .mdengine import EngineCrashedError
 logger = logging.getLogger(__name__)
 
 
+class MaxFramesReachedError(Exception):
+    """
+    Error raised when the simulation terminated because the (user-defined)
+    maximum number of integration steps/trajectory frames has been reached.
+    """
+    pass
+
+
+## TPS stuff
 # TODO: DOCUMENT!
 class BrainTask(abc.ABC):
     """All BrainTasks should subclass this."""
@@ -760,6 +769,7 @@ class RCModelSPSelector:
         return idx
 
 
+## Committor stuff
 # TODO: DOCUMENT! (and clean up)
 class CommittorSimulation:
     # TODO: remove when done! also document!
@@ -1205,7 +1215,8 @@ class PropagatorUntilAnyState:
     #       be inside of two states at the same time, it is the users
     #       responsibility to ensure that their states are sane
 
-    def __init__(self, states, engine, walltime_per_part, max_frames):
+    def __init__(self, states, engine, walltime_per_part,
+                 max_steps=None, max_frames=None):
         # states - list of wrapped trajectory funcs
         # engine - initialized mdengine
         # walltime_per_part - walltime (in h) per mdrun, i.e. traj part/segment
@@ -1217,7 +1228,16 @@ class PropagatorUntilAnyState:
         self.states = states
         self.engine = engine
         self.walltime_per_part = walltime_per_part
-        self.max_frames = max_frames
+        # TODO/FIXME: do we want to take the engine cls, kwargs and config (as for committor sim)?!
+        #             this would make it easy to calculate all the stuff we need the MDP for?!
+        if max_frames is not None and max_steps is not None:
+            logger.warning("Both max_steps and max_frames given. Note that "
+                           + "max_steps will always take precedence.")
+        if max_steps is not None:
+            mf = max_steps / $NSTVOUT
+            self._max_frames = max_steps / 
+        elif max_frames is not None:
+            self._max_frames = max_frames
 
     #TODO/FIXME: self._states is a list...that means users can change
     #            single elements without using the setter!

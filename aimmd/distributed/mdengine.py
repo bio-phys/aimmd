@@ -1,18 +1,18 @@
 """
-This file is part of ARCD.
+This file is part of AIMMD.
 
-ARCD is free software: you can redistribute it and/or modify
+AIMMD is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-ARCD is distributed in the hope that it will be useful,
+AIMMD is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with ARCD. If not, see <https://www.gnu.org/licenses/>.
+along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import os
 import abc
@@ -28,13 +28,13 @@ from .mdconfig import MDP
 logger = logging.getLogger(__name__)
 
 
-class MDEngineError(RuntimeError):
-    """Exception raised when something goes wrong with the MDEngine."""
+class EngineError(Exception):
+    """Exception raised when something goes wrong with the (MD)-Engine."""
     pass
 
 
-class EngineCrashedError(MDEngineError):
-    """Exception raised when the MDEngine crashes during a run."""
+class EngineCrashedError(EngineError):
+    """Exception raised when the (MD)-Engine crashes during a run."""
     pass
 
 
