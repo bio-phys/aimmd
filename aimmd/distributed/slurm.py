@@ -91,7 +91,6 @@ class SlurmProcess:
                                                 *shlex.split(sbatch_cmd),
                                                 stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE,
-                                                cwd=self.workdir,
                                                                       )
         stdout, stderr = await sbatch_proc.communicate()
         sbatch_return = stdout.decode()
