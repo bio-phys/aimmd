@@ -1266,7 +1266,7 @@ class PropagatorUntilAnyState:
         #             then we need to check if we use nstxout or nstxout-compressed
         # NOTE: if nstxout is not in the MDP GMX will default to 0
         #       so I guess it is save to assume that it is in there?
-        nstxout = self.run_config["nstxout"]
+        nstxout = self.run_config["nstxout"][0]  # take the first, MDP entries are always a list
         # sort out if we use max-frames or max-steps
         if max_frames is not None and max_steps is not None:
             logger.warning("Both max_steps and max_frames given. Note that "
