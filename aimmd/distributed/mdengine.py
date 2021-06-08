@@ -419,7 +419,7 @@ class SlurmGmxEngine(GmxEngine):
             logger.error(f"Overwriting exisiting submission file ({fname}).")
         with open(fname, 'w') as f:
             f.write(script)
-        self._proc = SlurmProcess(sbatch_script=fname)
+        self._proc = SlurmProcess(sbatch_script=fname, workdir=self.workdir)
         await self._proc.submit()
 
     # TODO: do we even need/want that?

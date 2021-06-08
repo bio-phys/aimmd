@@ -66,7 +66,7 @@ class SlurmProcess:
         "TIMEOUT": 1,  # TODO: can this happen for jobs that finish properly?
     }
 
-    def __init__(self, sbatch_script, **kwargs):
+    def __init__(self, sbatch_script, workdir, **kwargs):
         # we expect sbatch_script to be a path to a file
         # make it possible to set any attribute via kwargs
         # check the type for attributes with default values
@@ -83,6 +83,7 @@ class SlurmProcess:
                                     + f" Default type is {type(cval)}."
                                     )
         self.sbatch_script = os.path.abspath(sbatch_script)
+        self.workdir = os.path.abspath(workdir)
         self._jobid = None
 
     async def submit(self):
@@ -91,6 +92,7 @@ class SlurmProcess:
                                                 *shlex.split(sbatch_cmd),
                                                 stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE,
+                                                cwd=self.workdir,
                                                                       )
         stdout, stderr = await sbatch_proc.communicate()
         sbatch_return = stdout.decode()
