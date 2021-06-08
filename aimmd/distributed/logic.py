@@ -526,7 +526,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
             engine_config["gen-vel"] = ["no"]
         else:
             if gen_vel[0] != "no":
-                logger.warning("Setting 'gen-vel = no' in mdp (was 'yes').")
+                logger.warning(f"Setting 'gen-vel = no' in mdp (was '{gen_vel[0]}').")
                 engine_config["gen-vel"] = ["no"]
         self.walltime_per_part = walltime_per_part
         self.T = T
@@ -776,7 +776,7 @@ class CommittorSimulation:
     # takes:
     # - a list of tuples (traj, idx) [starting structs]
     # - a list of state-funcs
-    # - an engine-class (uninitialized) and a dict with kwargs needed to initialize the engine
+    # - an engine-class (uninitialized) and a dict with kwargs needed to initialize the engine, also a run_config with MD options
     # - an int: shots per stucture [this should be a param to the .run() method!]
     # - an int: max concurrent shots (to limit e.g. number of slurm jobs)
     # - a float: the temperature to use for random velocity generation
@@ -805,8 +805,8 @@ class CommittorSimulation:
                              # in seconds!
 
     def __init__(self, workdir, starting_configurations, states, engine_cls,
-                 engine_kwargs, engine_mdconfig, T, walltime_per_part,
-                 n_max_concurrent=500, two_way=False, **kwargs):
+                 engine_kwargs, engine_run_config, T, walltime_per_part,
+                 n_max_concurrent=500, two_way=False, max_steps=None, **kwargs):
         # TODO: should some of these be properties?
         self.workdir = os.path.abspath(workdir)
         self.starting_configurations = starting_configurations
@@ -815,19 +815,20 @@ class CommittorSimulation:
         self.engine_kwargs = engine_kwargs
         try:
             # make sure we do not generate velocities with gromacs
-            gen_vel = engine_mdconfig["gen-vel"]
+            gen_vel = engine_run_config["gen-vel"]
         except KeyError:
             logger.info("Setting 'gen-vel = no' in mdp.")
-            engine_mdconfig["gen-vel"] = ["no"]
+            engine_run_config["gen-vel"] = ["no"]
         else:
             if gen_vel[0] != "no":
-                logger.warning("Setting 'gen-vel = no' in mdp (was 'yes').")
-                engine_mdconfig["gen-vel"] = ["no"]
-        self.engine_mdconfig = engine_mdconfig
+                logger.warning(f"Setting 'gen-vel = no' in mdp (was '{gen_vel[0]}').")
+                engine_run_config["gen-vel"] = ["no"]
+        self.engine_run_config = engine_run_config
         self.T = T
         self.walltime_per_part = walltime_per_part
         self.n_max_concurrent = n_max_concurrent
         self.two_way = two_way
+        self.max_steps = max_steps
         # make it possible to set all existing attributes via kwargs
         # check the type for attributes with default values
         dval = object()
@@ -890,13 +891,14 @@ class CommittorSimulation:
         return ret
 
     async def _run_single_trial_ow(self, conf_num, shot_num, step_dir):
-        # construct engine
-        engine = self.engine_cls(**self.engine_kwargs)
         # construct propagator
         propagator = PropagatorUntilAnyState(
                                     states=self.states,
-                                    engine=engine,
+                                    engine_cls=self.engine_cls,
+                                    engine_kwargs=self.engine_kwargs,
+                                    run_config=self.engine_run_config,
                                     walltime_per_part=self.walltime_per_part,
+                                    max_steps=self.max_steps,
                                              )
         # get starting configuration and write it out with random velocities
         extractor_fw = RandomVelocitiesFrameExtractor(T=self.T)
@@ -914,7 +916,6 @@ class CommittorSimulation:
                                 starting_configuration=starting_conf,
                                 workdir=step_dir,
                                 deffnm=self.deffnm_engine_out,
-                                run_config=self.engine_mdconfig,
                                 tra_out=os.path.join(step_dir,
                                                      self.fname_traj_to_state
                                                      ),
@@ -925,15 +926,16 @@ class CommittorSimulation:
     async def _run_single_trial_tw(self, conf_num, shot_num, step_dir):
         # NOTE: this is a potential misuse of a committor simulation,
         #       see the note further down for more on why it is/should be ok
-        # construct engines
-        engines = [self.engine_cls(**self.engine_kwargs) for _ in range(2)]
         # propagators
         propagators = [PropagatorUntilAnyState(
                                     states=self.states,
-                                    engine=eng,
+                                    engine_cls=self.engine_cls,
+                                    engine_kwargs=self.engine_kwargs,
+                                    run_config=self.engine_run_config,
                                     walltime_per_part=self.walltime_per_part,
+                                    max_steps=self.max_steps,
                                                )
-                       for eng in engines]
+                       for _ in range(2)]
         # forward starting configuration
         extractor_fw = RandomVelocitiesFrameExtractor(T=self.T)
         start_conf_name_fw = os.path.join(step_dir,
@@ -961,7 +963,7 @@ class CommittorSimulation:
                         p.propagate(starting_configuration=sconf,
                                     workdir=step_dir,
                                     deffnm=deffnm,
-                                    run_config=self.engine_mdconfig)
+                                    )
                         for p, sconf, deffnm in zip(propagators,
                                                     [starting_conf_fw,
                                                      starting_conf_bw],
@@ -1047,9 +1049,23 @@ class CommittorSimulation:
                     # wait a sec for the cleanup to finish
                     await asyncio.sleep(self.wait_time_on_crash)
                     # move stepdir and retry
-                    os.rename(step_dir, step_dir + f"_crash{n+1}")
+                    os.rename(step_dir, step_dir + f"_{n+1}crash")
                 else:
                     # reached maximum tries, raise the error and crash the sampling :)
+                    raise e from None
+            except MaxFramesReachedError as e:
+                # catch error raised when we reach max frames
+                if n < self.max_retries_on_crash:
+                    logger.warning("Reached maximum number of integration steps."
+                                   + "Retrying committor step"
+                                   + f": Configuration {str(conf_num)}, "
+                                   + f"shot {str(shot_num)}.")
+                    # wait a sec for the cleanup to finish
+                    await asyncio.sleep(self.wait_time_on_crash)
+                    # move stepdir and retry
+                    os.rename(step_dir, step_dir + f"_{n+1}max_len")
+                else:
+                    # reached maximum retries, so raise the error and crash the sampling :)
                     raise e from None
             else:
                 return state_reached
@@ -1207,7 +1223,7 @@ async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_stat
 # TODO: DOCUMENT
 # TODO: rename to TrajectoryPropagatorUntilAnyState?
 class PropagatorUntilAnyState:
-    # - takes an initialized engine
+    # - takes an engine + engine kwargs
     # - workdir etc in propagate method
     # NOTE: we assume that every state function returns a list/ a 1d array with
     #       True/False for each frame, i.e. if we are in state at a given frame
@@ -1215,29 +1231,57 @@ class PropagatorUntilAnyState:
     #       be inside of two states at the same time, it is the users
     #       responsibility to ensure that their states are sane
 
-    def __init__(self, states, engine, walltime_per_part,
-                 max_steps=None, max_frames=None):
+    def __init__(self, states, engine_cls, engine_kwargs, run_config,
+                 walltime_per_part, max_steps=None, max_frames=None):
         # states - list of wrapped trajectory funcs
-        # engine - initialized mdengine
+        # engine_cls - mdengine class
+        # engine_kwargs - dict of kwargs for instantiation of the engine
+        # run_config - mdconfig object, e.g. a wrapped MDP
         # walltime_per_part - walltime (in h) per mdrun, i.e. traj part/segment
-        # TODO: do we want max_frames as argument to propagate?
+        # NOTE: max_steps takes precedence over max_frames if both are given
+        # TODO: do we want max_frames as argument to propagate too? I.e. giving it there to overwrite?
         # max_frames - maximum number of *frames* in all segments combined
         #              note that frames = steps / nstxout
+        # max_steps - maximum number of integration steps, i.e. nsteps = frames * nstxout
         self._states = None
         self._state_func_is_coroutine = None
         self.states = states
-        self.engine = engine
+        self.engine_cls = engine_cls
+        self.engine_kwargs = engine_kwargs
+        self.run_config = run_config
         self.walltime_per_part = walltime_per_part
-        # TODO/FIXME: do we want to take the engine cls, kwargs and config (as for committor sim)?!
-        #             this would make it easy to calculate all the stuff we need the MDP for?!
+        # TODO: other/more sanity checks?
+        try:
+            # make sure we do not generate velocities with gromacs
+            gen_vel = self.run_config["gen-vel"]
+        except KeyError:
+            logger.info("Setting 'gen-vel = no' in mdp.")
+            self.run_config["gen-vel"] = ["no"]
+        else:
+            if gen_vel[0] != "no":
+                logger.warning(f"Setting 'gen-vel = no' in mdp (was '{gen_vel[0]}').")
+                self.run_config["gen-vel"] = ["no"]
+        # find out nstxout
+        # TODO/FIXME: we might want to be able to use this with xtc at some point?
+        #             then we need to check if we use nstxout or nstxout-compressed
+        # NOTE: if nstxout is not in the MDP GMX will default to 0
+        #       so I guess it is save to assume that it is in there?
+        nstxout = self.run_config["nstxout"]
+        # sort out if we use max-frames or max-steps
         if max_frames is not None and max_steps is not None:
             logger.warning("Both max_steps and max_frames given. Note that "
-                           + "max_steps will always take precedence.")
+                           + "max_steps will take precedence.")
         if max_steps is not None:
-            mf = max_steps / $NSTVOUT
-            self._max_frames = max_steps / 
+            if not (max_steps % nstxout == 0):
+                raise ValueError("max_steps must be a multiple of nstxout")
+            self.max_frames = max_steps // nstxout
         elif max_frames is not None:
-            self._max_frames = max_frames
+            self.max_frames = max_frames
+        else:
+            logger.warning("Neither max_frames nor max_steps given. "
+                           + "Setting max_frames to infinity.")
+            # this is a float but can be compared to ints
+            self.max_frames = np.inf
 
     #TODO/FIXME: self._states is a list...that means users can change
     #            single elements without using the setter!
@@ -1265,8 +1309,7 @@ class PropagatorUntilAnyState:
         self._states = states
 
     async def propagate_and_concatenate(self, starting_configuration, workdir,
-                                        deffnm, run_config, tra_out,
-                                        overwrite=False):
+                                        deffnm, tra_out, overwrite=False):
         # this just chains propagate and cut_and_concatenate
         # usefull for committor simulations, for e.g. TPS one should try to
         # directly concatenate both directions to a full TP if possible
@@ -1274,7 +1317,7 @@ class PropagatorUntilAnyState:
                                 starting_configuration=starting_configuration,
                                 workdir=workdir,
                                 deffnm=deffnm,
-                                run_config=run_config,
+                                run_config=self.run_config,
                                                           )
         # NOTE: it should not matter too much speedwise that we recalculate
         #       the state functions, they are expected to be wrapped traj-funcs
@@ -1286,14 +1329,13 @@ class PropagatorUntilAnyState:
                                                                         )
         return full_traj, first_state_reached
 
-    async def propagate(self, starting_configuration, workdir, deffnm, run_config):
+    async def propagate(self, starting_configuration, workdir, deffnm):
         # NOTE: curently this just returns a list of trajs + the state reached
         #       this feels a bit uncomfortable but avoids that we concatenate
         #       everything a quadrillion times when we use the results
         # starting_configuration - Trajectory with starting configuration (or None)
         # workdir - workdir for engine
         # deffnm - trajectory name(s) for engine (+ all other output file names)
-        # run_config - MDConfig instance, e.g. a MDP
         # check first if the starting configuration is in any state
         state_vals = await self._state_vals_for_traj(starting_configuration)
         if np.any(state_vals):
@@ -1306,7 +1348,7 @@ class PropagatorUntilAnyState:
                             starting_configuration=starting_configuration,
                             workdir=workdir,
                             deffnm=deffnm,
-                            run_config=run_config,
+                            run_config=self.run_config,
                                       )
             any_state_reached = False
             trajs = []
