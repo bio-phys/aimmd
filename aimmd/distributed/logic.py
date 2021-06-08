@@ -1344,18 +1344,19 @@ class PropagatorUntilAnyState:
             # state reached is calculated below (is the same for both branches)
             trajs = [starting_configuration]
         else:
-            await self.engine.prepare(
+            engine = self.engine_cls(**self.engine_kwargs)
+            await engine.prepare(
                             starting_configuration=starting_configuration,
                             workdir=workdir,
                             deffnm=deffnm,
                             run_config=self.run_config,
-                                      )
+                                 )
             any_state_reached = False
             trajs = []
             frame_counter = 0
             while ((not any_state_reached)
                    and (frame_counter <= self.max_frames)):
-                traj = await self.engine.run_walltime(self.walltime_per_part)
+                traj = await engine.run_walltime(self.walltime_per_part)
                 state_vals = await self._state_vals_for_traj(traj)
                 any_state_reached = np.any(state_vals)
                 frame_counter += len(traj)
