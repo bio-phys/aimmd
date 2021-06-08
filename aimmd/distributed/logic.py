@@ -1363,9 +1363,10 @@ class PropagatorUntilAnyState:
                 trajs.append(traj)
             if not any_state_reached:
                 # left while loop because of max_frames reached
-                logger.warning("Maximum number of frames reached "
-                               + "without visiting any state.")
-                return trajs, None
+                raise MaxFramesReachedError(
+                        f"Engine produced {frame_counter} "
+                        + f"frames (>= {self._max_frames})."
+                                            )
         # state_vals are the ones for the last traj
         # here we get which states are True and at which frame
         states_reached, frame_nums = np.where(state_vals)
