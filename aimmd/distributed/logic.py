@@ -1365,7 +1365,7 @@ class PropagatorUntilAnyState:
                 # left while loop because of max_frames reached
                 raise MaxFramesReachedError(
                         f"Engine produced {frame_counter} "
-                        + f"frames (>= {self._max_frames})."
+                        + f"frames (>= {self.max_frames})."
                                             )
         # state_vals are the ones for the last traj
         # here we get which states are True and at which frame
