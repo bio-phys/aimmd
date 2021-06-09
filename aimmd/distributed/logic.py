@@ -1164,11 +1164,11 @@ async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_stat
                              - sum(part_lens[:last_part_idx]))  # >= 0
     # now construct the slices and trajs list (backwards!)
     # the last/first part
-    slices = [(_first_frame_in_minus + 1, 0, -1)]  # negative stride!
+    slices = [(_first_frame_in_minus + 1, None, -1)]  # negative stride!
     trajs = [minus_trajs[last_part_idx]]
     # the ones we take fully (if any) [the range looks a bit strange
     # because we dont take last_part_index but include the zero as idx]
-    slices += [(-1, 0, -1) for _ in range(last_part_idx - 1, -1, -1)]
+    slices += [(-1, None, -1) for _ in range(last_part_idx - 1, -1, -1)]
     trajs += [minus_trajs[i] for i in range(last_part_idx - 1, -1, -1)]
 
     # now plus trajectories, i.e. the part we put in positive stride
