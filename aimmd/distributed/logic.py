@@ -1194,11 +1194,11 @@ async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_stat
     # NOTE: here we exclude the starting configuration, i.e. the SP,
     #       such that it is in the concatenated trajectory only once!
     #       (gromacs has the first frame in the trajectory)
-    slices += [(1, None, 1)]
+    slices += [(1, None, None)]
     trajs += [plus_trajs[0]]
     # these are the trajectory segments we take completely
     # [this excludes last_part_idx so far]
-    slices += [(0, None, 1) for _ in range(1, last_part_idx)]
+    slices += [(0, None, None) for _ in range(1, last_part_idx)]
     trajs += [plus_trajs[i] for i in range(1, last_part_idx)]
     # add last part (with the last frame as first frame in plus state)
     slices += [(0, _first_frame_in_plus + 1, 1)]
@@ -1411,7 +1411,7 @@ class PropagatorUntilAnyState:
                                  - sum(part_lens[:last_part_idx]))  # >= 0
         if last_part_idx > 0:
             # trajectory parts which we take fully
-            slices = [(0, None, 1) for _ in range(last_part_idx)]
+            slices = [(0, None, None) for _ in range(last_part_idx)]
         else:
             # only the first/last part
             slices = []
