@@ -16,5 +16,5 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 from .selector import RCModelSelector
 #from .traininghook import TrainingHook as TrainingHookLegacy
-from .hooks import TrainingHook, ArcdStorageHook, DensityCollectionHook
+from .hooks import TrainingHook, AimmdStorageHook, DensityCollectionHook
 from .utils import set_rcmodel_in_all_selectors

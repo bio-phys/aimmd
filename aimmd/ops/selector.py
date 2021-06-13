@@ -1,18 +1,18 @@
 """
-This file is part of ARCD.
+This file is part of AIMMD.
 
-ARCD is free software: you can redistribute it and/or modify
+AIMMD is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-ARCD is distributed in the hope that it will be useful,
+AIMMD is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with ARCD. If not, see <https://www.gnu.org/licenses/>.
+along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
 import numpy as np
@@ -31,7 +31,7 @@ class RCModelSelector(ShootingPointSelector):
 
     Parameters
     ----------
-    model - :class:`arcd.base.RCModel` a wrapped model predicting RC values
+    model - :class:`aimmd.base.RCModel` a wrapped model predicting RC values
     states - list of :class:`openpathsampling.Volume`, one for each state
     distribution - string specifying the SP selection distribution,
                    either 'gaussian' or 'lorentzian'
@@ -45,7 +45,7 @@ class RCModelSelector(ShootingPointSelector):
                          the density of points on TPs to achieve a more uniform
                          SP density along the reaction coordinate,
                          NOTE: updating the density estimate needs to be
-                         enabled by adding the arcd.ops.DensityCollectionHook
+                         enabled by adding the aimmd.ops.DensityCollectionHook
                          for this feature to have an effect
 
     Notes
@@ -72,7 +72,7 @@ class RCModelSelector(ShootingPointSelector):
         """Will be called by OPS when loading self from storage."""
         # atm we set model = None,
         # since we can not arbitrary models in OPS storages
-        # but if used with an arcd.TrainingHook it will (re)set the model
+        # but if used with an aimmd.TrainingHook it will (re)set the model
         # to the one saved besides the OPS storage
         obj = cls(None,
                   dct['states'],
