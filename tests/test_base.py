@@ -1,33 +1,33 @@
 """
-This file is part of ARCD.
+This file is part of AIMMD.
 
-ARCD is free software: you can redistribute it and/or modify
+AIMMD is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-ARCD is distributed in the hope that it will be useful,
+AIMMD is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with ARCD. If not, see <https://www.gnu.org/licenses/>.
+along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import pytest
 import numpy as np
 from openpathsampling.engines import BaseSnapshot
-import arcd
+import aimmd
 
 
 class Test_RCModel:
     # NOTE: we test something very similar in storage tests
     def test_store_model(self, oneout_rcmodel_notrans, tmp_path):
-        arcd_store = arcd.Storage(tmp_path / 'Test.h5')
+        aimmd_store = aimmd.Storage(tmp_path / 'Test.h5')
         model = oneout_rcmodel_notrans
         model.expected_p.append('test')
-        arcd_store.rcmodels['test'] = model
-        loaded_model = arcd_store.rcmodels['test']
+        aimmd_store.rcmodels['test'] = model
+        loaded_model = aimmd_store.rcmodels['test']
         for key, val in model.__dict__.items():
             if key == 'density_collector':
                 loaded_dc = loaded_model.__dict__['density_collector']
@@ -105,13 +105,13 @@ class Test_RCModel:
                np.array([[200.]]), np.array([[0.]])
                ]
         # contains 1 TP
-        ts1 = arcd.TrainSet(n_states=2,
+        ts1 = aimmd.TrainSet(n_states=2,
                             descriptors=np.concatenate(sps, axis=0),
                             shot_results=np.array([[0., 2.], [1., 1.],
                                                    [0., 2.], [2., 0.]])
                             )
         # contains 2 TPs
-        ts2 = arcd.TrainSet(n_states=2,
+        ts2 = aimmd.TrainSet(n_states=2,
                             descriptors=np.concatenate(sps, axis=0),
                             shot_results=np.array([[0., 2.], [1., 1.],
                                                    [1., 1.], [2., 0.]])

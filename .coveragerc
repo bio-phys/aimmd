@@ -1,4 +1,4 @@
-# .coveragerc to control coverage.py runs for arcd
+# .coveragerc to control coverage.py runs for aimmd
 # for use with pytest and pytest-cov
 
 [run]
@@ -7,7 +7,7 @@ branch = True
 # enable cython file coverage
 plugins = Cython.Coverage
 source =
-    arcd
+    aimmd
     tests
 
 [report]

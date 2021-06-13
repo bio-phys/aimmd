@@ -1,18 +1,18 @@
 """
-This file is part of ARCD.
+This file is part of AIMMD.
 
-ARCD is free software: you can redistribute it and/or modify
+AIMMD is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-ARCD is distributed in the hope that it will be useful,
+AIMMD is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with ARCD. If not, see <https://www.gnu.org/licenses/>.
+along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import pytest
 # TODO/BUG: weird stuff: if not importing mdtraj before RCModel
@@ -23,7 +23,7 @@ import openpathsampling as paths
 import openpathsampling.engines.toy as toys
 from openpathsampling.engines import Trajectory as OPSTrajectory
 from functools import reduce
-from arcd.base.rcmodel import RCModel
+from aimmd.base.rcmodel import RCModel
 
 
 def pytest_addoption(parser):

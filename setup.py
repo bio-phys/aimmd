@@ -19,20 +19,20 @@ or --linetrace option to setup.py
 This setup.py is a strongly modified version,
 originally adopted from https://github.com/pypa/sampleproject
 
-This file is part of ARCD.
+This file is part of AIMMD.
 
-ARCD is free software: you can redistribute it and/or modify
+AIMMD is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-ARCD is distributed in the hope that it will be useful,
+AIMMD is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with ARCD. If not, see <https://www.gnu.org/licenses/>.
+along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import os
 import sys
@@ -76,8 +76,8 @@ else:
     # all the subfolders of the project root
     include_dirs = ['.', numpy.get_include(), 'm']
 
-CY_EXTS = [Extension('arcd.coords._symmetry',
-                     ['arcd/coords/_symmetry.pyx'],
+CY_EXTS = [Extension('aimmd.coords._symmetry',
+                     ['aimmd/coords/_symmetry.pyx'],
                      include_dirs=include_dirs,
                      extra_compile_args=["-O3", "-march=native", "-fopenmp"],
                      extra_link_args=['-fopenmp'])
@@ -100,12 +100,12 @@ with open(os.path.join(HERE, 'README.md'), encoding='utf-8') as f:
 
 # Get version and other stuff from __about__.py
 about_dct = {'__file__': __file__}
-with open(os.path.join(HERE, "arcd/__about__.py"), 'r') as fp:
+with open(os.path.join(HERE, "aimmd/__about__.py"), 'r') as fp:
     exec(fp.read(), about_dct)
 
 
 setup(
-    name="arcd",
+    name="aimmd",
     packages=find_packages(),
     ext_modules=EXT_MODULES,
 
@@ -115,14 +115,14 @@ setup(
     version=about_dct['__version__'],
 
     description='''
-                Automatic Reaction Coordinate Discovery:
+                AI for Molecular Mechanism Discovery:
                 Machine learning the reaction coordinate from shooting results.
                 ''',
 
     long_description=LONG_DESCRIPTION,
 
     # The project's main homepage.
-    url='https://gitea.kotspeicher.de/hejung/arcd',
+    url='https://gitea.kotspeicher.de/hejung/aimmd',
 
     # Author details
     author=about_dct['__author__'],
@@ -169,7 +169,7 @@ setup(
         'cython',
     ],
 
-    # List run-time dependencies here.  These will be installed by pip when
+    # List run-time dependencies here. These will be installed by pip when
     # your project is installed. For an analysis of "install_requires" vs pip's
     # requirements files see:
     # https://packaging.python.org/en/latest/requirements.html

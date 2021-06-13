@@ -1,10 +1,10 @@
-# arcd
+# aimmd
 
-[![Build Status](https://drone.kotspeicher.de/api/badges/hejung/arcd/status.svg)](https://drone.kotspeicher.de/hejung/arcd)
+[![Build Status](https://drone.kotspeicher.de/api/badges/hejung/aimmd/status.svg)](https://drone.kotspeicher.de/hejung/aimmd)
 
 ## Synopsis
 
-arcd - Automatic Reaction Coordinate Discovery: Machine learning the reaction coordinate from shooting results.
+aimmd - AI for Molecular Mechanism Discovery: Machine learning the reaction coordinate from shooting results.
 
 ## Code Example
 
@@ -19,14 +19,14 @@ This project exists because finding reaction coordinates of molecular systems is
 ### Quick and dirty (use a venv or conda environment!):
 ```bash
 pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks
-git clone https://gitea.kotspeicher.de/hejung/arcd.git
-pip install -e arcd/
+git clone https://gitea.kotspeicher.de/hejung/aimmd.git
+pip install -e aimmd/
 ```
 Additionally you will need to install at least one of the machine learning backends, i.e. [pytorch], [tensorflow] and/or [dcgpy].
 Note also that you might want to install additional engines for openpathsampling, i.e. [openMM] and/or [GROMACS].
 
 ### Detailed and customizable (still best to use a venv or conda environment):
-arcd interacts with openpathsampling through hooks which are called at predefined points during the TPS simulation, e.g. after every MC step. Until merged into ops master this feature is only available on my ops fork on github.
+aimmd interacts with openpathsampling through hooks which are called at predefined points during the TPS simulation, e.g. after every MC step. Until merged into ops master this feature is only available on my ops fork on github.
 To make it available you can either directly install the PathSampling_Hooks branch using pip
 ```bash
 pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks
@@ -34,13 +34,13 @@ pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hook
 or clone the repo/add it as additional remote to your git local and then checkout the PathSampling_Hooks branch.
 You should also install any molecular dynamics engines you want to use with openpathsampling for TPS, i.e. [openMM] and/or [GROMACS].
 
-Now cd whereever you want to keep your local copy of arcd, clone the repository and install arcd using pip, e.g.
+Now cd whereever you want to keep your local copy of aimmd, clone the repository and install aimmd using pip, e.g.
 ```bash
-git clone https://gitea.kotspeicher.de/hejung/arcd.git
-pip install -e arcd/
+git clone https://gitea.kotspeicher.de/hejung/aimmd.git
+pip install -e aimmd/
 ```
 
-For arcd to be useful you need to install at least one machine learning backend. arcd supports multiple different backends and can easily be extended to more. The backend is used to define the underlying machine learning models architecture and is used to fit the model. It naturally also defines the type of the model, i.e. neural network, symbolic regresssion, etc.
+For aimmd to be useful you need to install at least one machine learning backend. aimmd supports multiple different backends and can easily be extended to more. The backend is used to define the underlying machine learning models architecture and is used to fit the model. It naturally also defines the type of the model, i.e. neural network, symbolic regresssion, etc.
 Currently supported backends are (model types in brackets):
 - [pytorch] (neural network)
 - [tensorflow]/keras (neural network)

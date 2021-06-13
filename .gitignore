@@ -1,7 +1,7 @@
 # cythons annotated coverage htmls
 # ATTENTION: this matches ALL .html files in
-# ALL SUBDIRECTORIES of arcd
-arcd/**/*.html
+# ALL SUBDIRECTORIES of aimmd
+aimmd/**/*.html
 
 # OPS storage files
 *.nc

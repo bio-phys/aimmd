@@ -1,18 +1,18 @@
 """
-This file is part of ARCD.
+This file is part of AIMMD.
 
-ARCD is free software: you can redistribute it and/or modify
+AIMMD is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-ARCD is distributed in the hope that it will be useful,
+AIMMD is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with ARCD. If not, see <https://www.gnu.org/licenses/>.
+along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import pytest
 
@@ -35,7 +35,7 @@ else:
     from tensorflow.keras import backend as K
     K.set_session(sess)
 
-import arcd
+import aimmd
 import numpy as np
 import openpathsampling as paths
 from tensorflow.keras import optimizers
@@ -44,7 +44,7 @@ from tensorflow.keras import optimizers
 class Test_RCModel:
     @pytest.mark.parametrize("n_states", ['binomial', 'multinomial'])
     def test_store_model(self, tmp_path, n_states):
-        arcd_store = arcd.Storage(tmp_path / 'Test_load_save_model.h5')
+        aimmd_store = aimmd.Storage(tmp_path / 'Test_load_save_model.h5')
 
         hidden_parms = [{'units_factor': 1,  # test units_fact key
                          'activation': 'elu',  # should be fixed to selu
@@ -74,21 +74,21 @@ class Test_RCModel:
         elif n_states == 'binomial':
             shot_results = np.array([[1, 1] for _ in range(20)])
         # a trainset for test_loss testing
-        trainset = arcd.TrainSet(n_states=len(states), descriptors=descriptors,
+        trainset = aimmd.TrainSet(n_states=len(states), descriptors=descriptors,
                                  shot_results=shot_results)
         # model creation
         optim = optimizers.Adam(lr=1e-3)
-        snn = arcd.keras.create_snn(cv_ndim, hidden_parms, optim, len(states),
-                                    multi_state=multi_state
-                                    )
-        model = arcd.keras.EEScaleKerasRCModel(snn, states=states,
-                                               descriptor_transform=None)
+        snn = aimmd.keras.create_snn(cv_ndim, hidden_parms, optim, len(states),
+                                     multi_state=multi_state
+                                     )
+        model = aimmd.keras.EEScaleKerasRCModel(snn, states=states,
+                                                descriptor_transform=None)
         # predict before
         predictions_before = model(descriptors, use_transform=False)
         test_loss_before = model.test_loss(trainset)
         # save the model and check that the loaded model predicts the same
-        arcd_store.rcmodels["test"] = model
-        model_loaded = arcd_store.rcmodels["test"]
+        aimmd_store.rcmodels["test"] = model
+        model_loaded = aimmd_store.rcmodels["test"]
         # predict after loading
         predictions_after = model_loaded(descriptors, use_transform=False)
         test_loss_after = model_loaded.test_loss(trainset)
@@ -120,11 +120,11 @@ class Test_RCModel:
                          for i in range(1, 4)]
 
         optim = optimizers.Adam(lr=1e-3)
-        snn = arcd.keras.create_snn(setup_dict['cv_ndim'], hidden_parms,
+        snn = aimmd.keras.create_snn(setup_dict['cv_ndim'], hidden_parms,
                                     optim, len(setup_dict['states']),
                                     multi_state=False  # do binomial predictions
                                     )
-        model = arcd.keras.EEScaleKerasRCModel(
+        model = aimmd.keras.EEScaleKerasRCModel(
                     snn,
                     states=setup_dict["states"],
                     descriptor_transform=setup_dict['descriptor_transform'],
@@ -134,11 +134,11 @@ class Test_RCModel:
                                'interval': 1,
                                'window': 100}
                                                 )
-        trainset = arcd.TrainSet(len(setup_dict['states']))
-        trainhook = arcd.ops.TrainingHook(model, trainset)
-        arcd_store = arcd.Storage(tmp_path / "test.h5")
-        storehook = arcd.ops.ArcdStorageHook(arcd_store, model, trainset)
-        selector = arcd.ops.RCModelSelector(model, setup_dict['states'])
+        trainset = aimmd.TrainSet(len(setup_dict['states']))
+        trainhook = aimmd.ops.TrainingHook(model, trainset)
+        aimmd_store = aimmd.Storage(tmp_path / "test.h5")
+        storehook = aimmd.ops.AimmdStorageHook(aimmd_store, model, trainset)
+        selector = aimmd.ops.RCModelSelector(model, setup_dict['states'])
         tps = paths.TPSNetwork.from_states_all_to_all(setup_dict['states'])
         move_scheme = paths.MoveScheme(network=tps)
         strategy = paths.strategies.TwoWayShootingStrategy(modifier=setup_dict['modifier'],
@@ -160,12 +160,12 @@ class Test_RCModel:
         # close the storage
         storage.sync_all()
         storage.close()
-        arcd_store.close()
+        aimmd_store.close()
         # now do the testing
         load_storage = paths.Storage(tmp_path / "test.nc", 'a')
-        arcd_store_load = arcd.Storage(tmp_path / "test.h5", "a")
-        load_ts = arcd_store_load.load_trainset()
-        load_model = arcd_store_load.rcmodels["most_recent"]
+        aimmd_store_load = aimmd.Storage(tmp_path / "test.h5", "a")
+        load_ts = aimmd_store_load.load_trainset()
+        load_model = aimmd_store_load.rcmodels["most_recent"]
         load_model = load_model.complete_from_ops_storage(load_storage)
         load_sampler = load_storage.pathsimulators[0]
         load_sampler.restart_at_step(load_storage.steps[-1])
@@ -175,7 +175,7 @@ class Test_RCModel:
         assert np.allclose(trainhook.trainset.shot_results,
                            load_ts.shot_results)
         # try restarting
-        arcd.ops.set_rcmodel_in_all_selectors(load_model, load_sampler)
+        aimmd.ops.set_rcmodel_in_all_selectors(load_model, load_sampler)
         # NOTE: we reattach the hooks from previous simulation instead of recreating
         sampler.attach_hook(trainhook)
         sampler.attach_hook(storehook)

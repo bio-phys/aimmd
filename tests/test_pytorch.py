@@ -1,21 +1,21 @@
 """
-This file is part of ARCD.
+This file is part of AIMMD.
 
-ARCD is free software: you can redistribute it and/or modify
+AIMMD is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-ARCD is distributed in the hope that it will be useful,
+AIMMD is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with ARCD. If not, see <https://www.gnu.org/licenses/>.
+along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import pytest
-import arcd
+import aimmd
 import numpy as np
 import openpathsampling as paths
 
@@ -30,7 +30,7 @@ class Test_RCModel:
                                                      ]
                              )
     def test_store_model(self, tmp_path, n_states, model_type):
-        arcd_store = arcd.Storage(tmp_path / 'Test_load_save_model.h5')
+        aimmd_store = aimmd.Storage(tmp_path / 'Test_load_save_model.h5')
 
         states = ["A", "B"]
         if n_states == 'multinomial':
@@ -45,15 +45,15 @@ class Test_RCModel:
             shot_results = np.array([[1, 1] for _ in range(20)])
             n_out = 1
         # a trainset for test_loss testing
-        trainset = arcd.TrainSet(len(states), descriptors=descriptors,
-                                 shot_results=shot_results)
+        trainset = aimmd.TrainSet(len(states), descriptors=descriptors,
+                                  shot_results=shot_results)
         # model creation
         def make_1hidden_net(n_in, n_out):
-            modules = [arcd.pytorch.networks.FFNet(n_in=n_in,
-                                                   n_hidden=[n_in, n_out])
+            modules = [aimmd.pytorch.networks.FFNet(n_in=n_in,
+                                                    n_hidden=[n_in, n_out])
                        ]
-            torch_model = arcd.pytorch.networks.ModuleStack(n_out=n_out,
-                                                            modules=modules)
+            torch_model = aimmd.pytorch.networks.ModuleStack(n_out=n_out,
+                                                             modules=modules)
             return torch_model
         if model_type == 'SingleNet':
             # move model to GPU if CUDA is available
@@ -61,9 +61,9 @@ class Test_RCModel:
             if torch.cuda.is_available():
                 torch_model = torch_model.to('cuda')
             optimizer = torch.optim.Adam(torch_model.parameters(), lr=1e-3)
-            model = arcd.pytorch.EEScalePytorchRCModel(torch_model, optimizer,
-                                                       descriptor_transform=None,
-                                                       states=states)
+            model = aimmd.pytorch.EEScalePytorchRCModel(torch_model, optimizer,
+                                                        descriptor_transform=None,
+                                                        states=states)
         elif model_type == 'MultiDomain':
             pnets = [make_1hidden_net(cv_ndim, n_out) for _ in range(3)]
             cnet = make_1hidden_net(cv_ndim, len(pnets))
@@ -75,21 +75,21 @@ class Test_RCModel:
                                            for pn in pnets],
                                           lr=1e-3)
             coptimizer = torch.optim.Adam(cnet.parameters(), lr=1e-3)
-            model = arcd.pytorch.EEMDPytorchRCModel(pnets=pnets,
-                                                    cnet=cnet,
-                                                    poptimizer=poptimizer,
-                                                    coptimizer=coptimizer,
-                                                    states=states,
-                                                    descriptor_transform=None)
+            model = aimmd.pytorch.EEMDPytorchRCModel(pnets=pnets,
+                                                     cnet=cnet,
+                                                     poptimizer=poptimizer,
+                                                     coptimizer=coptimizer,
+                                                     states=states,
+                                                     descriptor_transform=None)
         elif model_type == "EnsembleNet":
             nnets = [make_1hidden_net(cv_ndim, n_out) for _ in range(5)]
             if torch.cuda.is_available():
                 nnets = [n.to('cuda') for n in nnets]
-            optims = [arcd.pytorch.HMC(n.parameters()) for n in nnets]
-            model = arcd.pytorch.EERandEnsemblePytorchRCModel(nnets=nnets,
-                                                              optimizers=optims,
-                                                              states=states
-                                                              )
+            optims = [aimmd.pytorch.HMC(n.parameters()) for n in nnets]
+            model = aimmd.pytorch.EERandEnsemblePytorchRCModel(nnets=nnets,
+                                                               optimizers=optims,
+                                                               states=states
+                                                               )
 
         # predict before
         predictions_before = model(descriptors, use_transform=False)
@@ -101,8 +101,8 @@ class Test_RCModel:
         else:
             test_loss_before = model.test_loss(trainset)
         # save the model and check that the loaded model predicts the same
-        arcd_store.rcmodels["test"] = model
-        model_loaded = arcd_store.rcmodels["test"]
+        aimmd_store.rcmodels["test"] = model
+        model_loaded = aimmd_store.rcmodels["test"]
         # predict after loading
         predictions_after = model_loaded(descriptors, use_transform=False)
         if model_type == 'MultiDomain':
@@ -125,10 +125,10 @@ class Test_RCModel:
 
         # model creation
         def make_1hidden_net(n_in, n_out):
-            modules = [arcd.pytorch.networks.FFNet(n_in=n_in,
+            modules = [aimmd.pytorch.networks.FFNet(n_in=n_in,
                                                    n_hidden=[n_in, n_out])
                        ]
-            torch_model = arcd.pytorch.networks.ModuleStack(n_out=n_out,
+            torch_model = aimmd.pytorch.networks.ModuleStack(n_out=n_out,
                                                             modules=modules)
             return torch_model
         if model_type == 'EESingleDomain':
@@ -137,7 +137,7 @@ class Test_RCModel:
             if torch.cuda.is_available():
                 torch_model = torch_model.to('cuda')
             optimizer = torch.optim.Adam(torch_model.parameters(), lr=1e-3)
-            model = arcd.pytorch.EEScalePytorchRCModel(
+            model = aimmd.pytorch.EEScalePytorchRCModel(
                                         nnet=torch_model,
                                         optimizer=optimizer,
                                         states=setup_dict['states'],
@@ -155,19 +155,19 @@ class Test_RCModel:
                                            for pn in pnets],
                                           lr=1e-3)
             coptimizer = torch.optim.Adam(cnet.parameters(), lr=1e-3)
-            model = arcd.pytorch.EEMDPytorchRCModel(pnets=pnets,
-                                                    cnet=cnet,
-                                                    poptimizer=poptimizer,
-                                                    coptimizer=coptimizer,
-                                                    states=setup_dict["states"],
-                                                    descriptor_transform=setup_dict['descriptor_transform']
-                                                    )
+            model = aimmd.pytorch.EEMDPytorchRCModel(pnets=pnets,
+                                                     cnet=cnet,
+                                                     poptimizer=poptimizer,
+                                                     coptimizer=coptimizer,
+                                                     states=setup_dict["states"],
+                                                     descriptor_transform=setup_dict['descriptor_transform']
+                                                     )
         # create trainset and trainhook
-        trainset = arcd.TrainSet(len(setup_dict['states']))
-        trainhook = arcd.ops.TrainingHook(model, trainset)
-        arcd_storage = arcd.Storage(tmp_path / "test.h5")
-        storehook = arcd.ops.ArcdStorageHook(arcd_storage, model, trainset)
-        selector = arcd.ops.RCModelSelector(model, setup_dict['states'])
+        trainset = aimmd.TrainSet(len(setup_dict['states']))
+        trainhook = aimmd.ops.TrainingHook(model, trainset)
+        aimmd_storage = aimmd.Storage(tmp_path / "test.h5")
+        storehook = aimmd.ops.AimmdStorageHook(aimmd_storage, model, trainset)
+        selector = aimmd.ops.RCModelSelector(model, setup_dict['states'])
         tps = paths.TPSNetwork.from_states_all_to_all(setup_dict['states'])
         move_scheme = paths.MoveScheme(network=tps)
         strategy = paths.strategies.TwoWayShootingStrategy(modifier=setup_dict['modifier'],
@@ -188,14 +188,14 @@ class Test_RCModel:
         # close the storage(s)
         storage.sync_all()
         storage.close()
-        arcd_storage.close()
+        aimmd_storage.close()
         # now do the testing
         load_storage = paths.Storage(tmp_path / "test.nc", 'a')
         load_sampler = load_storage.pathsimulators[0]
         load_sampler.restart_at_step(load_storage.steps[-1])
-        arcd_store_load = arcd.Storage(tmp_path / "test.h5", "a")
-        load_ts = arcd_store_load.load_trainset()
-        load_model = arcd_store_load.rcmodels["most_recent"]
+        aimmd_store_load = aimmd.Storage(tmp_path / "test.h5", "a")
+        load_ts = aimmd_store_load.load_trainset()
+        load_model = aimmd_store_load.rcmodels["most_recent"]
         load_model = load_model.complete_from_ops_storage(load_storage)
         # check that the two trainsets are the same
         assert np.allclose(trainhook.trainset.descriptors,
@@ -203,7 +203,7 @@ class Test_RCModel:
         assert np.allclose(trainhook.trainset.shot_results,
                            load_ts.shot_results)
         # try restarting
-        arcd.ops.set_rcmodel_in_all_selectors(load_model, load_sampler)
+        aimmd.ops.set_rcmodel_in_all_selectors(load_model, load_sampler)
         # NOTE: we reattach the hooks from previous simulation instead of recreating
         sampler.attach_hook(trainhook)
         sampler.attach_hook(storehook)
