@@ -39,7 +39,7 @@ def get_involved(idx, ic_parms={}, sf_parms={}, solvent_atoms=None,
 
     if ic_parms:
         N_ic = [len(ic_parms['pairs']), len(ic_parms['triples']),
-                2*len(ic_parms['quadrouples'])]
+                2*len(ic_parms['quadruples'])]
         n_ic = sum(N_ic)
 
     if sf_parms:
@@ -56,7 +56,7 @@ def get_involved(idx, ic_parms={}, sf_parms={}, solvent_atoms=None,
     if idx < n_ic:
         return 'IC', internal.get_involved(idx, ic_parms['pairs'],
                                            ic_parms['triples'],
-                                           ic_parms['quadrouples'])
+                                           ic_parms['quadruples'])
     elif idx < n_ic + n_sf:
         return 'SF', symmetry.get_involved(idx - n_ic, sf_parms['g_parms'],
                                            sf_parms['mol_idxs'], solvent_atoms,
