@@ -109,9 +109,10 @@ class KerasRCModel(RCModel):
                                                          )
                                         for _ in range(epochs)])
 
-    def test_loss(self, trainset):
+    def test_loss(self, trainset, batch_size=None):
         loss = self.nnet.evaluate(x=trainset.descriptors,
                                   y=trainset.shot_results,
+                                  batch_size=batch_size,
                                   sample_weight=trainset.weights,
                                   verbose=0)
         # loss is the mean loss per training point

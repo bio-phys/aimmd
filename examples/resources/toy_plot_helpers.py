@@ -81,6 +81,8 @@ class ToyPlot(object):
 
     def plot_pes_initcond(self, trajectories):
         fig, ax = plt.subplots()
+        ax.set_xlabel("x", size=14)
+        ax.set_ylabel("y", size=14)
         if self._pes is not None:
             plt.contour(self.X, self.Y, self._pes,
                         levels=np.arange(0.0, 1.5, 0.1), colors='k')
@@ -95,6 +97,8 @@ class ToyPlot(object):
 
     def plot(self, trajectories=[], bold=[], rpa=None):
         fig, ax = plt.subplots()
+        ax.set_xlabel("x", size=14)
+        ax.set_ylabel("y", size=14)
         if self._states is not None:
             plt.imshow(self._states, extent=self.extent, cmap="Blues",
                        interpolation='nearest', vmin=0.0, vmax=2.0,

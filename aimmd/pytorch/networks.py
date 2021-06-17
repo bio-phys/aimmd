@@ -203,7 +203,7 @@ class PreActivationResidualUnit(nn.Module):
                                      for _ in range(n_skip)])
         if norm_layer is None:
             # TODO: is this really what we want?!
-            norm_layer = nn.BatchNorm1d
+            norm_layer = nn.Identity
         self.norm_layers = nn.ModuleList([norm_layer(n_units)
                                           for _ in range(n_skip)])
         # TODO: do we want to be able to use different activations?
