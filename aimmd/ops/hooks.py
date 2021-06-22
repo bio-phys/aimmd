@@ -16,7 +16,7 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
 from openpathsampling.beta.hooks import PathSimulatorHook
-from openpathsampling import CollectiveVariable
+from openpathsampling import CollectiveVariable, Volume
 from ..base.rcmodel import TrajectoryDensityCollector
 from .utils import analyze_ops_mcstep, accepted_trials_from_ops_storage
 
@@ -57,8 +57,12 @@ class AimmdStorageHook(PathSimulatorHook):
         # these should essentially be a no-ops if it is already in storage and
         # circumvents unhappy users that forgot to save the states/transform
         if sim.storage is not None:
-            # Note: the traisnet.states should all already be in ops storage,
+            # Note: the trainset.states should all already be in ops storage,
             #       since they are also used as ops states for the TPS/TIS
+            #       But as always: better be save than sorry!
+            for s in self.model.states:
+                if isinstance(s, Volume):
+                    sim.storage.save(s)
             # save the descriptor_transform
             if isinstance(self.model.descriptor_transform, CollectiveVariable):
                 sim.storage.save(self.model.descriptor_transform)

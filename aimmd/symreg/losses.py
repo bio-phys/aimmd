@@ -16,6 +16,7 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
 import pyaudi as ad
+import sympy as sp
 import numpy as np
 from pyaudi import gdual_vdouble as gdual
 
@@ -49,10 +50,21 @@ def multinom_loss(expression, x, shot_results):
 def operation_count(expression, fact=0.0005):
     n = expression.get_n()
     m = expression.get_m()
-    ex_sp = expression.simplify(['x' + str(i) for i in range(n)],
-                                subs_weights=True)
-    c = sum([ex_sp[i].count_ops() for i in range(m)])
-    return c * fact
+    try:
+        ex_sp = expression.simplify(['x' + str(i) for i in range(n)],
+                                    subs_weights=True)
+    except sp.PolynomialDivisionFailed:
+        # TODO/FIXME: this is a dirty fix for a sympy/dcgp-python error
+        #             sometimes the simplyfy method of dcgp-python fails
+        #             because the underlying sympy methods for the construction
+        #             and simplyfication of the expression sometimes fail
+        #             with this error
+        #             returning nan makes sure we can not accept these
+        #             expressions but still finish the optimization
+        return float('nan')
+    else:
+        c = sum([ex_sp[i].count_ops() for i in range(m)])
+        return c * fact
 
 
 def active_genes_count(expression, fact=0.0005):

@@ -447,8 +447,9 @@ class TrajectoryDensityCollector:
 
     def __del__(self):
         if self._cache is not None:
-            # delete cache h5py group
-            del self._cache.parent[self._cache.name]
+            if self.cache_file.file.mode != "r":
+                # delete cache h5py group (if file is not open in read-only)
+                del self._cache.parent[self._cache.name]
 
     def _extend_if_needed_cached(self, tra_len, descriptor_dim, add_entries=4000):
         """Extend cache if next trajectory would not fit."""
