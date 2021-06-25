@@ -624,7 +624,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                             minus_trajs=minus_trajs, minus_state=minus_state,
                             plus_trajs=plus_trajs, plus_state=plus_state,
                             state_funcs=self.states, tra_out=tra_out,
-                            top_out=None, overwrite=False,
+                            struct_out=None, overwrite=False,
                                                                              )
             # accept or reject?
             p_sel_old = await selector.probability(fw_startconf, instep.path)
@@ -992,7 +992,7 @@ class CommittorSimulation:
                             minus_trajs=minus_trajs, minus_state=minus_state,
                             plus_trajs=plus_trajs, plus_state=plus_state,
                             state_funcs=self.states, tra_out=tra_out,
-                            top_out=None, overwrite=False,
+                            struct_out=None, overwrite=False,
                                                                              )
         # TODO: do we want to concatenate the trials to states in any way?
         # i.e. independent of if we can form a TP? or only for no TP cases?
@@ -1115,7 +1115,7 @@ class CommittorSimulation:
 async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_state,
                                                          plus_trajs, plus_state,
                                                          state_funcs, tra_out,
-                                                         top_out=None,
+                                                         struct_out=None,
                                                          overwrite=False):
     """
     Construct a continous TP from plus and minus segments until states.
@@ -1133,8 +1133,8 @@ async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_stat
     state_funcs - list of state functions, the indices to the states must match
                   the minus and plus state indices!
     tra_out - path to the output trajectory file
-    top_out - None or path to a topology file, the topology to associate with
-              the concatenated TP, taken from input trajs if None (the default)
+    struct_out - None or path to a structure file, the structure to associate with
+                 the concatenated TP, taken from input trajs if None (the default)
     overwrite - bool (default False), wheter to overwrite an existing output
     """
     # first find the slices to concatenate
@@ -1208,7 +1208,7 @@ async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_stat
                                trajs=trajs,
                                slices=slices,
                                tra_out=tra_out,
-                               top_out=top_out,
+                               struct_out=struct_out,
                                overwrite=overwrite)
     loop = asyncio.get_running_loop()
     async with _SEM_MAX_PROCESS:
@@ -1421,9 +1421,9 @@ class PropagatorUntilAnyState:
         concat = functools.partial(TrajectoryConcatenator().concatenate,
                                    trajs=trajs[:last_part_idx + 1],
                                    slices=slices,
-                                   # take the topology of the traj, as it comes
-                                   # from the engine directly
-                                   tra_out=tra_out, top_out=None,
+                                   # take the structure file of the traj, as it
+                                   # comes from the engine directly
+                                   tra_out=tra_out, struct_out=None,
                                    overwrite=overwrite)
         loop = asyncio.get_running_loop()
         async with _SEM_MAX_PROCESS:

@@ -20,6 +20,8 @@ import collections
 import asyncio
 import inspect
 import logging
+import hashlib
+import functools
 import multiprocessing
 import numpy as np
 import MDAnalysis as mda
@@ -38,14 +40,50 @@ logger = logging.getLogger(__name__)
 #       we await the result anyways, so we could just submit the job and then
 #       await sleep loop until it is done
 class TrajectoryFunctionWrapper:
-    # wrap functions for use on arcd.distributed.Trajectory
+    # wrap functions for use on aimmd.distributed.Trajectory
     # makes sure that we check for cached values if we apply the wrapped func
-    # to an arcd.distributed.Trajectory
-    def __init__(self, function):
+    # to an aimmd.distributed.Trajectory
+    def __init__(self, function, call_kwargs={}):
+        self._func = None
+        self._func_src = None
+        self._call_kwargs = {}  # init to empty dict such that iteration works
+        self._id = None
+        # use the properties to directly calculate/get the id
         self.function = function
+        self.call_kwargs = call_kwargs
 
     def __repr__(self):
-        return f"TrajectoryFunctionWrapper(function={self._func})"
+        return (f"TrajectoryFunctionWrapper(function={self._func}, "
+                + f"call_kwargs={self.call_kwargs})"
+                )
+
+    def _get_id_str(self):
+        # clalculate a hash over function src and call_kwargs dict
+        # this should be unique and portable, i.e. it should enable us to make
+        # ensure that the cached values will only be used for the same function
+        # called with the same arguments
+        id = 0
+        # NOTE: addition is commutative, i.e. order does not matter here!
+        for k, v in self._call_kwargs.items():
+            # hash the value
+            id += int(hashlib.blake2b(str(v).encode('utf-8')).hexdigest(), 16)
+            # hash the key
+            id += int(hashlib.blake2b(str(k).encode('utf-8')).hexdigest(), 16)
+        # and add the func_src
+        id += int(hashlib.blake2b(str(self._func_src).encode('utf-8')).hexdigest(), 16)
+        return str(id)  # return a str because we want to use it as dict keys
+
+    @property
+    def call_kwargs(self):
+        # return a copy to avoid people modifying entries without us noticing
+        return self._call_kwargs.copy()
+
+    @call_kwargs.setter
+    def call_kwargs(self, value):
+        if not isinstance(value, dict):
+            raise ValueError("call_kwargs must be a dictionary.")
+        self._call_kwargs = value
+        self._id = self._get_id_str()  # get/set ID
 
     @property
     def function(self):
@@ -58,20 +96,24 @@ class TrajectoryFunctionWrapper:
         except OSError:
             # OSError is raised if source can not be retrieved
             self._func_src = None
+            self._id = None
             logger.warning(f"Could not retrieve source for {value}."
                            + " No caching can/will be performed.")
         else:
             self._func_src = src
-        self._func = value
+            self._id = self._get_id_str()  # get/set ID
+        finally:
+            self._func = value
 
     async def __call__(self, value):
-        if isinstance(value, Trajectory) and self._func_src is not None:
-            return await value._apply_cached_func(self._func_src, self._func)
+        if isinstance(value, Trajectory) and self._id is not None:
+            return await value._apply_cached_func(self._id, self._func,
+                                                  self._call_kwargs)
         else:
             # this will block until func is done, we could use a ProcessPool?!
             # Can we make sure that we are always able to pickle value for that?
             # (probably not since it could be Trajectory and we only have no func_src)
-            return self._func(value)
+            return self._func(value, **self._call_kwargs)
 
 
 # TODO: DOCUMENT
@@ -79,18 +121,18 @@ class Trajectory:
     """
     Represent a trajectory.
 
-    Keep track of the paths of the trajectory and the topolgy files.
-    Caching of values for (wrapped) functions acting on the trajectory.
+    Keep track of the paths of the trajectory and the structure file.
+    Caches values for (wrapped) functions acting on the trajectory.
     """
 
-    def __init__(self, trajectory_file, topology_file):
-        # NOTE: we assume tra = trr and top = tpr
+    def __init__(self, trajectory_file, structure_file):
+        # NOTE: we assume tra = trr and struct = tpr
         #       but we also expect that anything which works for mdanalysis as
-        #       tra and top should also work here as tra and top
+        #       tra and struct should also work here as tra and struct
         self.trajectory_file = os.path.abspath(trajectory_file)
-        self.topology_file = os.path.abspath(topology_file)
+        self.structure_file = os.path.abspath(structure_file)
         self._len = None
-        self._func_src_to_idx = {}
+        self._func_id_to_idx = {}
         self._func_values = []
         self._h5py_grp = None
         self._h5py_cache = None
@@ -99,24 +141,21 @@ class Trajectory:
         if self._len is not None:
             return self._len
         # create/open a mdanalysis universe to get the number of frames
-        u = mda.Universe(self.topology_file, self.trajectory_file)
+        u = mda.Universe(self.structure_file, self.trajectory_file)
         self._len = len(u.trajectory)
         return self._len
 
     def __repr__(self):
         return (f"Trajectory(trajectory_file={self.trajectory_file},"
-                + f" topology_file={self.topology_file})"
+                + f" structure_file={self.structure_file})"
                 )
 
-    async def _apply_cached_func(self, src, func):
-        # TODO: for now we assume it is the right value if it is found in cache
-        #       can we do anything to ensure/check that?
-        #       store a hash of the file when we apply the func and check that?
+    async def _apply_cached_func(self, func_id, func, func_kwargs):
         if self._h5py_grp is not None:
             # first check if we are loaded and possibly get it from there
             # trajectories are immutable once stored, so no need to check len
             try:
-                return self._h5py_cache[src]
+                return self._h5py_cache[func_id]
             except KeyError:
                 # not in there
                 # send function application to seperate process and wait for it
@@ -125,16 +164,19 @@ class Trajectory:
                     # NOTE: make sure we do not fork! (not save with multithreading)
                     # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
                     ctx = multiprocessing.get_context("forkserver")
+                    if len(func_kwargs) > 0:
+                        # fill in additional kwargs (if any)
+                        func = functools.partial(func, **func_kwargs)
                     # use one python subprocess: if func releases the GIL
                     # it does not matter anyway, if func is full py 1 is enough
                     with ProcessPoolExecutor(1, mp_context=ctx) as pool:
                         vals = await loop.run_in_executor(pool, func, self)
-                self._h5py_cache.append(src, vals)
+                self._h5py_cache.append(func_id, vals)
                 return vals
         # only 'local' cache, i.e. this trajectory has no file associated (yet)
         try:
             # see if it is in cache
-            idx = self._func_src_to_idx[src]
+            idx = self._func_id_to_idx[func_id]
             return self._func_values[idx]
         except KeyError:
             # if not calculate, store and return
@@ -144,11 +186,14 @@ class Trajectory:
                 # NOTE: make sure we do not fork! (not save with multithreading)
                 # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
                 ctx = multiprocessing.get_context("forkserver")
+                if len(func_kwargs) > 0:
+                    # fill in additional kwargs (if any)
+                    func = functools.partial(func, **func_kwargs)
                 # use one python subprocess: if func releases the GIL
                 # it does not matter anyway, if func is full py 1 is enough
                 with ProcessPoolExecutor(1, mp_context=ctx) as pool:
                     vals = await loop.run_in_executor(pool, func, self)
-            self._func_src_to_idx[src] = len(self._func_src_to_idx)
+            self._func_id_to_idx[func_id] = len(self._func_id_to_idx)
             self._func_values.append(vals)
             return vals
 
@@ -161,7 +206,7 @@ class Trajectory:
         state["_h5py_cache"] = None
         state["_h5py_grp"] = None
         state["_func_values"] = []
-        state["_func_src_to_idx"] = {}
+        state["_func_id_to_idx"] = {}
         return state
 
     def object_for_pickle(self, group, overwrite):
@@ -179,12 +224,12 @@ class Trajectory:
         # (re) set h5py group such that we use the cache from now on
         self._h5py_grp = group
         self._h5py_cache = TrajectoryFunctionValueCache(self._h5py_grp)
-        for src, idx in self._func_src_to_idx.items():
-            self._h5py_cache.append(src, self._func_values[idx])
+        for func_id, idx in self._func_id_to_idx.items():
+            self._h5py_cache.append(func_id, self._func_values[idx])
         # clear the 'local' cache and empty state, such that we initialize
         # to empty, next time we will get it all from file directly
         self._func_values = state["_func_values"] = []
-        self._func_src_to_idx = state["_func_src_to_idx"] = {}
+        self._func_id_to_idx = state["_func_id_to_idx"] = {}
         ret_obj = self.__class__.__new__(self.__class__)
         ret_obj.__dict__.update(state)
         return ret_obj
@@ -210,18 +255,18 @@ class TrajectoryFunctionValueCache(collections.abc.Mapping):
 
     def __init__(self, root_grp):
         self._root_grp = root_grp
-        self._h5py_paths = {"srcs": "FunctionSources",
+        self._h5py_paths = {"ids": "FunctionIDs",
                             "vals": "FunctionValues"
                             }
-        self._srcs_grp = self._root_grp.require_group(self._h5py_paths["srcs"])
+        self._ids_grp = self._root_grp.require_group(self._h5py_paths["ids"])
         self._vals_grp = self._root_grp.require_group(self._h5py_paths["vals"])
 
     def __len__(self):
-        return len(self._srcs_grp.keys())
+        return len(self._ids_grp.keys())
 
     def __iter__(self):
         for idx in range(len(self)):
-            yield self._srcs_grp[str(idx)].asstr()[()]
+            yield self._ids_grp[str(idx)].asstr()[()]
 
     def __getitem__(self, key):
         if not isinstance(key, str):
@@ -232,15 +277,15 @@ class TrajectoryFunctionValueCache(collections.abc.Mapping):
         # if we got until here the key is not in there
         raise KeyError("Key not found.")
 
-    def append(self, src, vals):
-        if not isinstance(src, str):
-            raise TypeError("Keys (src) must be of type str.")
-        if src in self:
-            raise ValueError("There are already values stored for src."
+    def append(self, func_id, vals):
+        if not isinstance(func_id, str):
+            raise TypeError("Keys (func_id) must be of type str.")
+        if func_id in self:
+            raise ValueError(f"There are already values stored for func_id {func_id}."
                              + " Changing the stored values is not supported.")
         # TODO: do we also want to check vals for type?
         name = str(len(self))
-        _ = self._srcs_grp.create_dataset(name, data=src)
+        _ = self._ids_grp.create_dataset(name, data=func_id)
         _ = self._vals_grp.create_dataset(name, data=vals)
 
 
@@ -253,14 +298,14 @@ class TrajectoryConcatenator:
     Velocities are automatically inverted if the step of a slice is negative,
     this can be controlled via the invert_v_for_negative_step attribute.
 
-    NOTE: We assume that all trajs have the same topolgy
-          and attach the the topolgy of the first traj if not told otherwise.
+    NOTE: We assume that all trajs have the same structure file
+          and attach the the structure of the first traj if not told otherwise.
     """
 
     def __init__(self, invert_v_for_negative_step=True):
         self.invert_v_for_negative_step = invert_v_for_negative_step
 
-    def concatenate(self, trajs, slices, tra_out, top_out=None,
+    def concatenate(self, trajs, slices, tra_out, struct_out=None,
                     overwrite=False):
         """
         Create concatenated trajectory from given trajectories and frames.
@@ -268,23 +313,23 @@ class TrajectoryConcatenator:
         trajs - list of `:class:`Trajectory
         slices - list of (start, stop, step)
         tra_out - output trajectory filepath, absolute or relativ to cwd
-        top_out - None or output topology filepath, if None we will take the
-                  topology file of the first trajectory in trajs
+        struct_out - None or output structure filepath, if None we will take the
+                     structure file of the first trajectory in trajs
         overwrite - bool (default=False), if True overwrite existing tra_out,
                     if False and the file exists raise an error
         """
         tra_out = os.path.abspath(tra_out)
         if os.path.exists(tra_out) and not overwrite:
             raise ValueError(f"overwrite=False and tra_out exists: {tra_out}")
-        top_out = (trajs[0].topology_file if top_out is None
-                   else os.path.abspath(top_out))
-        if not os.path.isfile(top_out):
+        struct_out = (trajs[0].structure_file if struct_out is None
+                      else os.path.abspath(struct_out))
+        if not os.path.isfile(struct_out):
             # although we would expect that it exists if it comes from an
             # existing traj, we still check to catch other unrelated issues :)
-            raise ValueError(f"Output topolgy file must exist ({top_out}).")
+            raise ValueError(f"Output structure file must exist ({struct_out}).")
 
         # special treatment for traj0 because we need n_atoms for the writer
-        u0 = mda.Universe(trajs[0].topology_file, trajs[0].trajectory_file)
+        u0 = mda.Universe(trajs[0].structure_file, trajs[0].trajectory_file)
         start0, stop0, step0 = slices[0]
         # if the file exists MDAnalysis will silently overwrite
         with mda.Writer(tra_out, n_atoms=u0.trajectory.n_atoms) as W:
@@ -294,7 +339,7 @@ class TrajectoryConcatenator:
                 W.write(u0.atoms)
             del u0  # should free up memory and does no harm?!
             for traj, sl in zip(trajs[1:], slices[1:]):
-                u = mda.Universe(traj.topology_file, traj.trajectory_file)
+                u = mda.Universe(traj.structure_file, traj.trajectory_file)
                 start, stop, step = sl
                 for ts in u.trajectory[start:stop:step]:
                     if self.invert_v_for_negative_step and step < 0:
@@ -302,7 +347,7 @@ class TrajectoryConcatenator:
                     W.write(u.atoms)
                 del u
         # return (file paths to) the finished trajectory
-        return Trajectory(tra_out, top_out)
+        return Trajectory(tra_out, struct_out)
 
 
 class FrameExtractor(abc.ABC):
@@ -320,7 +365,7 @@ class FrameExtractor(abc.ABC):
         # the modifications in the universe are nonlocal anyway
         raise NotImplementedError
 
-    def extract(self, outfile, traj_in, idx, top_out=None, overwrite=False):
+    def extract(self, outfile, traj_in, idx, struct_out=None, overwrite=False):
         # TODO: should we check that idx is an idx, i.e. an int?
         # TODO: make it possible to select a subset of atoms to write out
         #       and also for modification?
@@ -332,26 +377,26 @@ class FrameExtractor(abc.ABC):
         outfile - path to output file (relative or absolute)
         traj_in - `:class:Trajectory` from which the original frame is taken
         idx - index of the frame in the input trajectory
-        top_out - None or output topology filepath, if None we will take the
-                  topology file of the input trajectory
+        struct_out - None or output structure filepath, if None we will take the
+                     structure file of the input trajectory
         overwrite - bool (default=False), if True overwrite existing tra_out,
                     if False and the file exists raise an error
         """
         outfile = os.path.abspath(outfile)
         if os.path.exists(outfile) and not overwrite:
             raise ValueError(f"overwrite=False and outfile exists: {outfile}")
-        top_out = (traj_in.topology_file if top_out is None
-                   else os.path.abspath(top_out))
-        if not os.path.isfile(top_out):
+        struct_out = (traj_in.structure_file if struct_out is None
+                      else os.path.abspath(struct_out))
+        if not os.path.isfile(struct_out):
             # although we would expect that it exists if it comes from an
             # existing traj, we still check to catch other unrelated issues :)
-            raise ValueError(f"Output topolgy file must exist ({top_out}).")
-        u = mda.Universe(traj_in.topology_file, traj_in.trajectory_file)
+            raise ValueError(f"Output structure file must exist ({struct_out}).")
+        u = mda.Universe(traj_in.structure_file, traj_in.trajectory_file)
         with mda.Writer(outfile, n_atoms=u.trajectory.n_atoms) as W:
             ts = u.trajectory[idx]
             self.apply_modification(u, ts)
             W.write(u.atoms)
-        return Trajectory(trajectory_file=outfile, topology_file=top_out)
+        return Trajectory(trajectory_file=outfile, structure_file=struct_out)
 
 
 class NoModificationFrameExtractor(FrameExtractor):

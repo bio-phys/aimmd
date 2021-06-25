@@ -140,7 +140,8 @@ class GmxEngine(MDEngine):
         self._simulation_part = None
         self._deffnm = None
         self._run_config = None
-        self._tpr = None  # tpr for trajectory (part), will become the topology
+        # tpr for trajectory (part), will become the structure/topology file
+        self._tpr = None
         # TODO?!
         # counter for frames already produced, needed to enable run(nsteps)
         # to count steps per part
@@ -167,7 +168,7 @@ class GmxEngine(MDEngine):
             traj = Trajectory(trajectory_file=os.path.join(
                         self.workdir, f"{self._deffnm}{self._num_suffix()}.trr"
                                                            ),
-                              topology_file=os.path.join(self.workdir, self._tpr)
+                              structure_file=os.path.join(self.workdir, self._tpr)
                               )
             return traj
         else:
@@ -251,7 +252,7 @@ class GmxEngine(MDEngine):
         # write the mdp file
         self._run_config.write(mdp_in)
         tpr_out = os.path.join(self.workdir, deffnm + ".tpr")
-        self._tpr = tpr_out  # keep a ref to use as topology file for out trajs
+        self._tpr = tpr_out  # keep a ref to use as structure file for out trajs
         mdp_out = os.path.join(self.workdir, deffnm + "_mdout.mdp")
         cmd_str = self._grompp_cmd(mdp_in=mdp_in, tpr_out=tpr_out,
                                    trr_in=trr_in, mdp_out=mdp_out)

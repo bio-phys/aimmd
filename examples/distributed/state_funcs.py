@@ -8,8 +8,7 @@ import numpy as np
 import mdtraj as mdt
 
 
-def alpha_R(traj):
-    scratch_dir = "/home/think/scratch/arcd_distributed/"
+def alpha_R(traj, scratch_dir):
     traj = mdt.load(traj.trajectory_file,
                     # mdt can not work with tprs, so we use theinitial gro for now
                     top=os.path.join(scratch_dir, "gmx_infiles/conf.gro"),
@@ -25,8 +24,7 @@ def alpha_R(traj):
 
 
 
-def C7_eq(traj):
-    scratch_dir = "/home/think/scratch/arcd_distributed/"
+def C7_eq(traj, scratch_dir):
     traj = mdt.load(traj.trajectory_file,
                     # mdt can not work with tprs, so we use theinitial gro for now
                     top=os.path.join(scratch_dir, "gmx_infiles/conf.gro"),
