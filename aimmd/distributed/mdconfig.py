@@ -364,3 +364,21 @@ class MDP(LineBasedMDConfig):
         else:
             # no idea what happend here...best to let the user have a look :)
             raise ValueError(f"Could not parse the following mdp line: {line}")
+
+    def _key_char_replace(self, key):
+        # make it possible to use CHARMM-GUI generated mdp-files, because
+        # CHARMM-GUI uses "_" instead of "-" in the option names,
+        # which seems to be an undocumented gromacs feature,
+        # i.e. gromacs reads these mdp-files without complaints :)
+        # we will however stick with "-" all the time to make sure every option
+        # exists only once, i.e. we convert all keys to use "-"
+        return key.replace("_", "-")
+
+    def __getitem__(self, key):
+        return super().__getitem__(self._key_char_replace(key))
+
+    def __setitem__(self, key, value):
+        return super().__setitem__(self._key_char_replace(key), value)
+
+    def __delitem__(self, key):
+        return super().__delitem__(self._key_char_replace(key))
