@@ -73,7 +73,7 @@ class Test_AimmdStorageHook:
                                           )
         last_step = 420
         simulation = MagicMock(step=last_step)
-        hook.after_simulation(simulation)
+        hook.after_simulation(simulation, {})
         # make sure the model is in the storage (twice)
         loaded_model = aimmd_store.rcmodels[model_prefix
                                            + f"_after_step_{last_step:d}"]
