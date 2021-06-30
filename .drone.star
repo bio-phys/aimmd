@@ -33,17 +33,20 @@ def main(ctx):
       make_conda_pipeline(os="linux", arch="amd64", py_version="3.9", pytest_args="--runall"),
     ]
   else:
-    # all other branches (this should be fast because we dont run slow tests)
+    # all other branches
+    # Note that the test themselves should be fast because we dont run slow tests
+    # however the installation takes quite some time, so we do the 3 pip builds
+    # (3 is the runner limit on kotspeicher) such that we are done in one go
     ret_list += [
-      make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
+      #make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
       # this one fails with h5py >= 3 (which we want for the distributed storage)
       #make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
       make_pip_pipeline(os="linux", arch="amd64", py_version="3.7"),
-      make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
+      #make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
       make_pip_pipeline(os="linux", arch="amd64", py_version="3.8"),
-      make_conda_pipeline(os="linux", arch="amd64", py_version="3.8"),
+      #make_conda_pipeline(os="linux", arch="amd64", py_version="3.8"),
       make_pip_pipeline(os="linux", arch="amd64", py_version="3.9"),
-      make_conda_pipeline(os="linux", arch="amd64", py_version="3.9"),
+      #make_conda_pipeline(os="linux", arch="amd64", py_version="3.9"),
     ]
 
   return ret_list
