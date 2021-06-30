@@ -50,7 +50,7 @@ class AimmdStorageHook(PathSimulatorHook):
         self.interval = interval
         self.name_prefix = name_prefix
 
-    def before_simulation(self, sim):
+    def before_simulation(self, sim, **kwargs):
         # TODO: load old model?! Or should we let the user do that explicitly?
         #       would result in less assumptions and more flexibility... :)
         # save ops stuff to ops storage
@@ -79,7 +79,7 @@ class AimmdStorageHook(PathSimulatorHook):
             self.storage.save_trainset(self.trainset)
             logger.info("Saved RCModel and TrainSet to aimmd-Storage.")
 
-    def after_simulation(self, sim):
+    def after_simulation(self, sim, hook_state):
         # save model
         step_number = sim.step
         save_name = self.name_prefix + "_after_step_{:d}".format(step_number)
@@ -131,7 +131,7 @@ class DensityCollectionHook(PathSimulatorHook):
         self.recreate_interval = recreate_interval
         self.reinitialize = reinitialize
 
-    def before_simulation(self, sim):
+    def before_simulation(self, sim, **kwargs):
         if self.reinitialize:
             if sim.storage is None:
                 raise RuntimeError("Density collection/adaptation is currently"
