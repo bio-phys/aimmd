@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 class FlagChangeList(collections.abc.MutableSequence):
-    # a list that knows if it has been changed after initializing
+    """A list that knows if it has been changed after initializing."""
+
     def __init__(self, data):
         if not isinstance(data, list):
             raise TypeError("FlagChangeList must be initialized with a list.")
@@ -60,7 +61,8 @@ class FlagChangeList(collections.abc.MutableSequence):
 
 
 class TypedFlagChangeList(FlagChangeList):
-    # add a type that is ensured for the individual list items
+    """A `FlagChangeList` with an ensured type for individual list items."""
+
     def __init__(self, data, dtype):
         self._dtype = dtype  # set first to use in _convert_type method
         if getattr(data, '__len__', None) is None:
@@ -245,9 +247,9 @@ class LineBasedMDConfig(MDConfig):
                     pass
                 else:
                     # warn because we will only keep the last occurenc of key
-                    logger.warning(f"Parsed duplicate configuration option ({key}"
-                                   + "). Last values encountered take precedence."
-                                   )
+                    logger.warning("Parsed duplicate configuration option "
+                                   + f"({key}). Last values encountered take "
+                                   + "precedence.")
             parsed.update(line_parsed)
         # convert the known types
         self._config = {key: self._type_dispatch[key](value)
