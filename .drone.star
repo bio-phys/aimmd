@@ -17,22 +17,42 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 
 
 def main(ctx):
-  return [
-    make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
-    make_pip_pipeline(os="linux", arch="amd64", py_version="3.7"),
-    make_pip_pipeline(os="linux", arch="amd64", py_version="3.7", runall=True),
-    make_pip_pipeline(os="linux", arch="amd64", py_version="3.8"),
-    make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
-    make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
-    make_conda_pipeline(os="linux", arch="amd64", py_version="3.7", runall=True),
-    # no tensorflow conda package for py3.8 yet
-    #make_conda_pipeline(os="linux", arch="amd64", py_version="3.8"),
-  ]
+  ret_list = []
+  if ctx.build.branch == "master":
+    # PR against or push to master
+    # --runall runs slow tests ('--runslow') and tests for deprecated code (if existant)
+    ret_list += [
+      make_pip_pipeline(os="linux", arch="amd64", py_version="3.6", pytest_args="--runall"),
+      # this one fails with h5py >= 3 (which we want for the distributed storage)
+      #make_conda_pipeline(os="linux", arch="amd64", py_version="3.6", pytest_args="--runall"),
+      make_pip_pipeline(os="linux", arch="amd64", py_version="3.7", pytest_args="--runall"),
+      make_conda_pipeline(os="linux", arch="amd64", py_version="3.7", pytest_args="--runall"),
+      make_pip_pipeline(os="linux", arch="amd64", py_version="3.8", pytest_args="--runall"),
+      make_conda_pipeline(os="linux", arch="amd64", py_version="3.8", pytest_args="--runall"),
+      make_pip_pipeline(os="linux", arch="amd64", py_version="3.9", pytest_args="--runall"),
+      make_conda_pipeline(os="linux", arch="amd64", py_version="3.9", pytest_args="--runall"),
+    ]
+  else:
+    # all other branches (this should be fast because we dont run slow tests)
+    ret_list += [
+      make_pip_pipeline(os="linux", arch="amd64", py_version="3.6"),
+      # this one fails with h5py >= 3 (which we want for the distributed storage)
+      #make_conda_pipeline(os="linux", arch="amd64", py_version="3.6"),
+      make_pip_pipeline(os="linux", arch="amd64", py_version="3.7"),
+      make_conda_pipeline(os="linux", arch="amd64", py_version="3.7"),
+      make_pip_pipeline(os="linux", arch="amd64", py_version="3.8"),
+      make_conda_pipeline(os="linux", arch="amd64", py_version="3.8"),
+      make_pip_pipeline(os="linux", arch="amd64", py_version="3.9"),
+      make_conda_pipeline(os="linux", arch="amd64", py_version="3.9"),
+    ]
 
-def make_pip_pipeline(os, arch, py_version, runall=False):
+  return ret_list
+
+def make_pip_pipeline(os, arch, py_version, pytest_args=""):
   return {
     "kind": "pipeline",
-    "name": ("{0}-{1}-py{2}-full".format(os, arch, py_version) if runall
+    "name": ("{0}-{1}-py{2}:{3}".format(os, arch, py_version, pytest_args)
+             if pytest_args
              else "{0}-{1}-py{2}".format(os, arch, py_version)),
     "platform": {
       "os": os,
@@ -58,9 +78,7 @@ def make_pip_pipeline(os, arch, py_version, runall=False):
           "pip install numpy cython",  # install setup dependecies
           "pip install .[test]",
           "pip list",
-          # runall runs slow tests and tests for deprecated code
-          ("pytest -v -rs --runall ." if runall
-           else "pytest -v -rs --runslow ."),
+          "pytest -v -rs " + pytest_args + " .",
         ]
       },
     ]
@@ -70,10 +88,11 @@ def make_pip_pipeline(os, arch, py_version, runall=False):
 #         where /bin/sh is a symlink to /bin/bash, this gets conda to work
 # NOTE 2: Do **not** use conda activate, it does not propagate the exit code
 #       ...so we could have sliently failing tests!
-def make_conda_pipeline(os, arch, py_version, runall=False):
+def make_conda_pipeline(os, arch, py_version, pytest_args=""):
   return {
     "kind": "pipeline",
-    "name": ("{0}-{1}-conda-py{2}-full".format(os, arch, py_version) if runall
+    "name": ("{0}-{1}-conda-py{2}:{3}".format(os, arch, py_version, pytest_args)
+             if pytest_args
              else "{0}-{1}-conda-py{2}".format(os, arch, py_version)),
     "platform": {
       "os": os,
@@ -101,9 +120,7 @@ def make_conda_pipeline(os, arch, py_version, runall=False):
           "conda list",
           "python --version",
           "pip install .[test]",
-          # runall runs slow tests and tests for deprecated code
-          ("pytest -v -rs --runall ." if runall
-           else "pytest -v -rs --runslow ."),
+          "pytest -v -rs " + pytest_args + " .",
         ]
       },
     ]
