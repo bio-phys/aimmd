@@ -107,12 +107,7 @@ class GmxEngine(MDEngine):
     grompp_extra_args = ""
     mdrun_extra_args = ""
 
-    # TODO/FIXME: option to pass an index file!
-    def __init__(self, gro_file, top_file, **kwargs):
-        if not os.path.isfile(gro_file):
-            raise FileNotFoundError(f"gro file not found: {gro_file}")
-        if not os.path.isfile(top_file):
-            raise FileNotFoundError(f"top file not found: {top_file}")
+    def __init__(self, gro_file, top_file, ndx_file=None, **kwargs):
         # make it possible to set any attribute via kwargs
         # check the type for attributes with default values
         dval = object()
@@ -128,10 +123,13 @@ class GmxEngine(MDEngine):
                                     + f" Default type is {type(cval)}."
                                     )
         # NOTE: after the kwargs setting to be sure they are what we set/expect
-        # TODO: store a hash/the file contents for gro and top?
+        # TODO: store a hash/the file contents for gro, top, ndx?
         #       to check against when we load from storage/restart?
-        self.gro_file = os.path.abspath(gro_file)
-        self.top_file = os.path.abspath(top_file)
+        #       if we do this do it in the property!
+        #       (but still write one hashfunc for all!)
+        self.gro_file = gro_file  # sets self._gro_file
+        self.top_file = top_file  # sets self._top_file
+        self.ndx_file = ndx_file  # sets self._ndx_file
         self._workdir = None
         self._prepared = False
         # Popen handle for gmx mdrun, used to check if we are running
@@ -207,10 +205,46 @@ class GmxEngine(MDEngine):
 
     @workdir.setter
     def workdir(self, value):
-        value = os.path.abspath(value)
         if not os.path.isdir(value):
             raise ValueError(f"Not a directory ({value}).")
+        value = os.path.abspath(value)
         self._workdir = value
+
+    @property
+    def gro_file(self):
+        return self._gro_file
+
+    @gro_file.setter
+    def gro_file(self, val):
+        if not os.path.isfile(val):
+            raise FileNotFoundError(f"gro file not found: {val}")
+        val = os.path.abspath(val)
+        self._gro_file = val
+
+    @property
+    def top_file(self):
+        return self._top_file
+
+    @top_file.setter
+    def top_file(self, val):
+        if not os.path.isfile(val):
+            raise FileNotFoundError(f"top file not found: {val}")
+        val = os.path.abspath(val)
+        self._top_file = val
+
+    @property
+    def ndx_file(self):
+        return self._ndx_file
+
+    @ndx_file.setter
+    def ndx_file(self, val):
+        if val is not None:
+            # GMX does not require an ndx file, so we accept None
+            if not os.path.isfile(val):
+                raise FileNotFoundError(f"ndx file not found: {val}")
+            val = os.path.abspath(val)
+        # set it anyway (even if it is None)
+        self._ndx_file = val
 
     async def prepare(self, starting_configuration, workdir, deffnm, run_config):
         # we require run_config to be a MDP (class)!
