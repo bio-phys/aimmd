@@ -73,7 +73,7 @@ class TypedFlagChangeList(FlagChangeList):
         super().__init__(data=typed_data)
 
     def _convert_type(self, value, key=None):
-        # here we ignore key, but passig it should in principal make it
+        # here we ignore key, but passing it should in principal make it
         # possible to use different dtypes for different indices
         return self._dtype(value)
 
@@ -120,8 +120,10 @@ class LineBasedMDConfig(MDConfig):
     # use these to specify config parameters that are of type int or float
     # parsed lines with dict key matching will then be converted
     # any lines not matching will be left in their default str type
-    _FLOAT_PARAMS = []
+    _FLOAT_PARAMS = []  # can have multiple values per config option
+    _FLOAT_SINGLETON_PARAMS = []  # must have one value per config option
     _INT_PARAMS = []
+    _INT_SINGLETON_PARAMS = []
     # NOTE on SPECIAL_PARAM_DISPATCH
     # can be used to set custom type convert functions on a per parameter basis
     # the key must match the key in the dict for in the parsed line,
@@ -145,6 +147,15 @@ class LineBasedMDConfig(MDConfig):
         self.original_file = original_file
 
     def _construct_type_dispatch(self):
+        def convert_len1_list_or_singleton(val, dtype):
+            # helper func that accepts len1 lists (as expected from `_parse_line`)
+            # but that also accepts single values and converts them to given type
+            # (which is what we expects the users to do when they set singleton vals)
+            if getattr(val, '__len__', None) is None:
+                return dtype(val)
+            else:
+                return dtype(val[0])
+
         # construct type conversion dispatch
         type_dispatch = collections.defaultdict(
                                 # looks a bit strange, but the factory func
@@ -159,11 +170,21 @@ class LineBasedMDConfig(MDConfig):
                                                                    dtype=float
                                                                    )
                               for param in self._FLOAT_PARAMS})
+        type_dispatch.update({param: lambda v: convert_len1_list_or_singleton(
+                                                                    val=v,
+                                                                    dtype=float,
+                                                                              )
+                              for param in self._FLOAT_SINGLETON_PARAMS})
         type_dispatch.update({param: lambda l: TypedFlagChangeList(
                                                                    data=l,
                                                                    dtype=int,
                                                                    )
                               for param in self._INT_PARAMS})
+        type_dispatch.update({param: lambda v: convert_len1_list_or_singleton(
+                                                                    val=v,
+                                                                    dtype=int,
+                                                                              )
+                              for param in self._INT_SINGLETON_PARAMS})
         type_dispatch.update(self._SPECIAL_PARAM_DISPATCH)
         return type_dispatch
 
@@ -225,7 +246,12 @@ class LineBasedMDConfig(MDConfig):
     @property
     def changed(self):
         """Indicate if the current configuration differs from original_file."""
-        return self._changed or any(v.changed for v in self._config.values())
+        # NOTE: we default to False, i.e. we expect that anything that
+        #       does not have a self.changed attribute is not a container
+        #       and we (the dictionary) would know that it changed
+        single_vals_changed = [getattr(v, "changed", False)
+                               for v in self._config.values()]
+        return self._changed or any(single_vals_changed)
 
     def parse(self):
         """Parse the current original_file to update own state."""
@@ -302,50 +328,59 @@ class MDP(LineBasedMDConfig):
     # MDP param types, sorted into groups/by headings as in the gromacs manual
     # https://manual.gromacs.org/documentation/5.1/user-guide/mdp-options.html
     _FLOAT_PARAMS = []
+    _FLOAT_SINGLETON_PARAMS = []
     _INT_PARAMS = []
+    _INT_SINGLETON_PARAMS = []
     # Run control
-    _FLOAT_PARAMS += ["tinit", "dt", ]
-    _INT_PARAMS += ["nsteps", "init-step", "simulation-part", "nstcomm"]
+    _FLOAT_SINGLETON_PARAMS += ["tinit", "dt"]
+    _INT_SINGLETON_PARAMS += ["nsteps", "init-step", "simulation-part",
+                              "nstcomm"]
     # Langevin dynamics
-    _FLOAT_PARAMS += ["bd-fric"]
-    _INT_PARAMS += ["ld-seed"]
+    _FLOAT_SINGLETON_PARAMS += ["bd-fric"]
+    _INT_SINGLETON_PARAMS += ["ld-seed"]
     # Energy minimization
-    _FLOAT_PARAMS += ["emtol", "emstep"]
-    _INT_PARAMS += ["nstcgsteep", "nbfgscorr"]
+    _FLOAT_SINGLETON_PARAMS += ["emtol", "emstep"]
+    _INT_SINGLETON_PARAMS += ["nstcgsteep", "nbfgscorr"]
     # Shell Molecular Dynamics
-    _FLOAT_PARAMS += ["fcstep"]
-    _INT_PARAMS += ["niter"]
+    _FLOAT_SINGLETON_PARAMS += ["fcstep"]
+    _INT_SINGLETON_PARAMS += ["niter"]
     # Test particle insertion
-    _FLOAT_PARAMS += ["rtpi"]
+    _FLOAT_SINGLETON_PARAMS += ["rtpi"]
     # Output control
-    _FLOAT_PARAMS += ["compressed-x-precision"]
-    _INT_PARAMS += ["nstxout", "nstvout", "nstfout", "nstlog",
-                    "nstcalcenergy", "nstenergy", "nstxout-compressed"]
+    _FLOAT_SINGLETON_PARAMS += ["compressed-x-precision"]
+    _INT_SINGLETON_PARAMS += ["nstxout", "nstvout", "nstfout", "nstlog",
+                              "nstcalcenergy", "nstenergy", "nstxout-compressed"]
     # Neighbor searching
-    _FLOAT_PARAMS += ["verlet-buffer-tolerance", "rlist", "rlistlong"]
-    _INT_PARAMS += ["nstlist", "nstcalclr"]
+    # NOTE: 'rlistlong' and 'nstcalclr' are used with group cutoff scheme,
+    #       i.e. deprecated since GMX version 5.0
+    _FLOAT_SINGLETON_PARAMS += ["verlet-buffer-tolerance", "rlist", "rlistlong"]
+    _INT_SINGLETON_PARAMS += ["nstlist", "nstcalclr"]
     # Electrostatics
-    _FLOAT_PARAMS += ["rcoulomb-switch", "rcoulomb", "epsilon-r", "epsilon-rf"]
+    _FLOAT_SINGLETON_PARAMS += ["rcoulomb-switch", "rcoulomb", "epsilon-r",
+                                "epsilon-rf"]
     # Van der Waals
-    _FLOAT_PARAMS += ["rvdw-switch", "rvdw"]
+    _FLOAT_SINGLETON_PARAMS += ["rvdw-switch", "rvdw"]
     # Ewald
-    _FLOAT_PARAMS += ["fourierspacing", "ewald-rtol", "ewald-rtol-lj"]
-    _INT_PARAMS += ["fourier-nx", "fourier-ny", "fourier-nz", "pme-order"]
+    _FLOAT_SINGLETON_PARAMS += ["fourierspacing", "ewald-rtol",
+                                "ewald-rtol-lj"]
+    _INT_SINGLETON_PARAMS += ["fourier-nx", "fourier-ny", "fourier-nz",
+                              "pme-order"]
     # Temperature coupling
     _FLOAT_PARAMS += ["tau-t", "ref-t"]
-    _INT_PARAMS += ["nsttcouple", "nh-chain-length"]
+    _INT_SINGLETON_PARAMS += ["nsttcouple", "nh-chain-length"]
     # Pressure coupling
-    _FLOAT_PARAMS += ["tau-p", "compressibility", "ref-p"]
-    _INT_PARAMS += ["nstpcouple"]
+    _FLOAT_SINGLETON_PARAMS += ["tau-p"]
+    _FLOAT_PARAMS += ["compressibility", "ref-p"]
+    _INT_SINGLETON_PARAMS += ["nstpcouple"]
     # Simulated annealing
     _FLOAT_PARAMS += ["annealing-time", "annealing-temp"]
     _INT_PARAMS += ["annealing-npoints"]
     # Velocity generation
-    _FLOAT_PARAMS += ["gen-temp"]
-    _INT_PARAMS += ["gen-seed"]
+    _FLOAT_SINGLETON_PARAMS += ["gen-temp"]
+    _INT_SINGLETON_PARAMS += ["gen-seed"]
     # Bonds
-    _FLOAT_PARAMS += ["shake-tol", "lincs-warnangle"]
-    _INT_PARAMS += ["lincs-order", "lincs-iter"]
+    _FLOAT_SINGLETON_PARAMS += ["shake-tol", "lincs-warnangle"]
+    _INT_SINGLETON_PARAMS += ["lincs-order", "lincs-iter"]
 
     def _parse_line(self, line):
         parser = shlex.shlex(line, posix=True)
@@ -359,10 +394,11 @@ class MDP(LineBasedMDConfig):
             return {}
         elif len(tokens) >= 3 and tokens[1] == "=":
             # lines with content: make sure we correctly parsed the '='
-            return {tokens[0]: tokens[2:]}  # always return a list for values
+            # always return a list for values
+            return {self._key_char_replace(tokens[0]): tokens[2:]}
         elif len(tokens) == 2 and tokens[1] == "=":
             # lines with empty options, e.g. 'define = '
-            return {tokens[0]: []}
+            return {self._key_char_replace(tokens[0]): []}
         else:
             # no idea what happend here...best to let the user have a look :)
             raise ValueError(f"Could not parse the following mdp line: {line}")
@@ -373,7 +409,7 @@ class MDP(LineBasedMDConfig):
         # which seems to be an undocumented gromacs feature,
         # i.e. gromacs reads these mdp-files without complaints :)
         # we will however stick with "-" all the time to make sure every option
-        # exists only once, i.e. we convert all keys to use "-"
+        # exists only once, i.e. we convert all keys to use "-" instead of "_"
         return key.replace("_", "-")
 
     def __getitem__(self, key):

@@ -132,6 +132,9 @@ class GmxEngine(MDEngine):
         self.ndx_file = ndx_file  # sets self._ndx_file
         self._workdir = None
         self._prepared = False
+        # number of frames produced since last call to prepare, used for
+        # both properties: steps_done and frames_done
+        self._frames_done = 0
         # Popen handle for gmx mdrun, used to check if we are running
         self._proc = None
         # these are set by prepare() and used by run_XX()
@@ -246,6 +249,25 @@ class GmxEngine(MDEngine):
         # set it anyway (even if it is None)
         self._ndx_file = val
 
+    @property
+    def steps_done(self):
+        """
+        Number of integration steps done since last call to `self.prepare()`
+
+        Note: steps = frames * nstxout
+        """
+        # TODO: this will break as soon as we allow other output trajs than trr
+        return self._frames_done * self._run_config["nstxout"]
+
+    @property
+    def frames_done(self):
+        """
+        Number of frames produced since last call to `self.prepare()`
+
+        Note: frames = steps / nstxout
+        """
+        return self._frames_done
+
     async def prepare(self, starting_configuration, workdir, deffnm, run_config):
         # we require run_config to be a MDP (class)!
         # deffnm is the default name/prefix for all outfiles (as in gmx)
@@ -259,7 +281,7 @@ class GmxEngine(MDEngine):
             raise TypeError(f"starting_configuration must be a wrapped trr ({Trajectory}).")
         if not isinstance(run_config, MDP):
             raise TypeError(f"run_config must be of type {MDP}.")
-        if run_config["nsteps"][0] != -1:
+        if run_config["nsteps"] != -1:
             logger.info(f"Changing nsteps from {run_config['nsteps']} to -1 "
                         + "(infinte), run length is controlled via run args.")
             run_config["nsteps"] = -1
@@ -312,6 +334,7 @@ class GmxEngine(MDEngine):
                                + f"{self._tpr} does not seem to be a file.")
         # make sure we can not mistake a previous Popen for current mdrun
         self._proc = None
+        self._frames_done = 0  # (re-)set how many frames we did
         self._prepared = True
 
     async def _start_gmx_mdrun(self, cmd_str):
@@ -348,6 +371,7 @@ class GmxEngine(MDEngine):
         else:
             if exit_code != 0:
                 raise EngineCrashedError("Non-zero exit code from mdrun.")
+            self._frames_done += len(self.current_trajectory)
             return self.current_trajectory
 
     async def run_nsteps(self, nsteps):
@@ -377,8 +401,11 @@ class GmxEngine(MDEngine):
         # all args are expected to be file paths
         cmd = f"{self.grompp_executable} -f {mdp_in} -c {self.gro_file}"
         cmd += f" -p {self.top_file}"
+        if self.ndx_file is not None:
+            cmd += f" -n {self.ndx_file}"
         if trr_in is not None:
             # input trr is optional
+            # TODO/FIXME?!
             # TODO/NOTE: currently we do not pass '-time', i.e. we just use the
             #            gmx default frame selection: last frame from trr
             cmd += f" -t {trr_in}"
