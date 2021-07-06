@@ -301,8 +301,13 @@ class LineBasedMDConfig(MDConfig):
             lines = []
             for key, value in self._config.items():
                 line = f"{key}{self._KEY_VALUE_SEPARATOR}"
-                if len(value) > 0:
-                    line += self._INTER_VALUE_CHAR.join(str(v) for v in value)
+                try:
+                    if len(value) > 0:
+                        line += self._INTER_VALUE_CHAR.join(str(v) for v in value)
+                except TypeError:
+                    # (probably) not a Sequence/Iterable,
+                    # i.e. one of the singleton options
+                    line += f"{value}"
                 lines += [line]
             # concatenate lines and write out at once
             out_str = "\n".join(lines)
