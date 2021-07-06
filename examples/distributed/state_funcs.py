@@ -37,3 +37,14 @@ def C7_eq(traj, scratch_dir):
     deg = 180/np.pi
     state[(phi <= 0) & ((120/deg <= psi) | (-160/deg >= psi))] = True
     return state
+
+
+def descriptor_func(traj, scratch_dir):
+    traj = mdt.load(traj.trajectory_file,
+                    # mdt can not work with tprs, so we use theinitial gro for now
+                    top=os.path.join(scratch_dir, "gmx_infiles/conf.gro"),
+                    )
+    psi = mdt.compute_dihedrals(traj, indices=[[6,8,14,16]])
+    phi = mdt.compute_dihedrals(traj, indices=[[4,6,8,14]])
+    
+    return np.concatenate([psi, phi], axis=1)

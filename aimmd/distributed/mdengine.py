@@ -54,7 +54,7 @@ class MDEngine(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def run_nsteps(self, nsteps):
+    def run_steps(self, nsteps, steps_per_part=False):
         # run for specified number of steps
         # NOTE: not sure if we need it, but could be useful
         # NOTE: make sure we can run multiple times after preparing once!
@@ -252,7 +252,7 @@ class GmxEngine(MDEngine):
     @property
     def steps_done(self):
         """
-        Number of integration steps done since last call to `self.prepare()`
+        Number of integration steps done since last call to `self.prepare()`.
 
         Note: steps = frames * nstxout
         """
@@ -262,7 +262,7 @@ class GmxEngine(MDEngine):
     @property
     def frames_done(self):
         """
-        Number of frames produced since last call to `self.prepare()`
+        Number of frames produced since last call to `self.prepare()`.
 
         Note: frames = steps / nstxout
         """
@@ -350,13 +350,31 @@ class GmxEngine(MDEngine):
                                                     )
         self._proc = proc
 
-    async def run(self, nsteps=None, walltime=None):
+    async def run(self, nsteps=None, walltime=None, steps_per_part=False):
+        """
+        Run simulation for specified number of steps or/and a given walltime.
+
+        Note that you can pass both nsteps and walltime and the simulation will
+        stop on the condition that is reached first.
+
+        Parameters:
+        -----------
+        nsteps - int or None, integration steps to run for either in total
+                 [as measured since the last call to `self.prepare()`]
+                 or in the newly generated trajectory part,
+                 see also the steps_per_part argument
+        walltime - float or None, (maximum) walltime in hours
+        steps_per_part - bool (default False), if True nsteps are the steps to
+                         do in the new trajectory part
+        """
         # generic run method is actually easier to implement for gmx :D
         if not self.ready_for_run:
             raise RuntimeError("Engine not ready for run. Call self.prepare() "
                                + "and/or check if it is still running.")
-        if nsteps is None and walltime is None:
-            raise ValueError("Neither nsteps nor walltime given.")
+        if all(kwarg is None for kwarg in [nsteps, walltime]):
+            raise ValueError("Neither steps nor walltime given.")
+        if steps_per_part:
+            nsteps = nsteps + self.steps_done
 
         self._simulation_part += 1
         cmd_str = self._mdrun_cmd(tpr=self._tpr, deffnm=self._deffnm,
@@ -374,20 +392,29 @@ class GmxEngine(MDEngine):
             self._frames_done += len(self.current_trajectory)
             return self.current_trajectory
 
-    async def run_nsteps(self, nsteps):
-        # TODO: should nsteps be the number of steps per part?
+    async def run_steps(self, nsteps, steps_per_part=False):
         """
-        NOTE: nsteps is the total number of steps in all traj-parts combined!
+        Run simulation for specified number of steps.
+
+        Parameters:
+        -----------
+        nsteps - int, integration steps to run for either in total [as measured
+                 since the last call to `self.prepare()`]
+                 or in the newly generated trajectory part
+        steps_per_part - bool (default False), if True nsteps are the steps to
+                         do in the new trajectory part
         """
-        #        i.e. steps is reset to zero only when calling prepare
-        #        if our trajectories would know their len this would be
-        #        easy to fix by introducing a separate counter....
-        #        we could also parse gmx output to know the last framenum?
-        #        so we could do this together with untangeling/catching stdout!
-        return await self.run(nsteps=nsteps, walltime=None)
+        return await self.run(nsteps=nsteps, steps_per_part=steps_per_part)
 
     async def run_walltime(self, walltime):
-        return await self.run(nsteps=None, walltime=walltime)
+        """
+        Run simulation for a given walltime.
+
+        Parameters:
+        -----------
+        walltime - float or None, (maximum) walltime in hours
+        """
+        return await self.run(walltime=walltime)
 
     def _num_suffix(self):
         # construct gromacs num part suffix from simulation_part
