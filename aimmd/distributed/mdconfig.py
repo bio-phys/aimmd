@@ -352,12 +352,14 @@ class MDP(LineBasedMDConfig):
     # Test particle insertion
     _FLOAT_SINGLETON_PARAMS += ["rtpi"]
     # Output control
-    _FLOAT_SINGLETON_PARAMS += ["compressed-x-precision"]
+    # NOTE: 'nstxtcout' and 'xtc-precision' are deprecated since GMX v5.0
+    _FLOAT_SINGLETON_PARAMS += ["compressed-x-precision", "xtc-precision"]
     _INT_SINGLETON_PARAMS += ["nstxout", "nstvout", "nstfout", "nstlog",
-                              "nstcalcenergy", "nstenergy", "nstxout-compressed"]
+                              "nstcalcenergy", "nstenergy",
+                              "nstxout-compressed", "nstxtcout"]
     # Neighbor searching
     # NOTE: 'rlistlong' and 'nstcalclr' are used with group cutoff scheme,
-    #       i.e. deprecated since GMX version 5.0
+    #       i.e. deprecated since GMX v5.0
     _FLOAT_SINGLETON_PARAMS += ["verlet-buffer-tolerance", "rlist", "rlistlong"]
     _INT_SINGLETON_PARAMS += ["nstlist", "nstcalclr"]
     # Electrostatics
@@ -386,6 +388,7 @@ class MDP(LineBasedMDConfig):
     # Bonds
     _FLOAT_SINGLETON_PARAMS += ["shake-tol", "lincs-warnangle"]
     _INT_SINGLETON_PARAMS += ["lincs-order", "lincs-iter"]
+    # TODO: Walls and everything below in the GMX manual
 
     def _parse_line(self, line):
         parser = shlex.shlex(line, posix=True)
