@@ -161,9 +161,19 @@ class GmxEngine(MDEngine):
             # self._tpr and self._deffnm are set in prepare, i.e. having them
             # set makes sure that we have at least prepared running the traj
             # but it might not be done yet
-            # the simulation-part is set to s0 in prepare and incremented in
-            # run, if it is 0 we can be sure that there is no traj started yet
-            if self._simulation_part == 0:
+            # we check if self_proc is set (which prepare sets to None)
+            # this should make sure that calling current trajectory after
+            # calling prepare does not return a traj, as soon as we called
+            # run self._proc will be set, i.e. there is still no gurantee that
+            # the traj is done, but it will be started always
+            # (even when accessing simulataneous to the call to run),
+            # i.e. it is most likely done
+            # NOTE/FIXME we can also check for simulation part, since it seems
+            #  gmx ignores that if no checkpoint is passed, i.e. we will
+            #  **always** start with part0001 anyways!
+            # so checking for self._simulation_part == 0 makes sure we never ran
+            #if self._simulation_part == 0:
+            if self._proc is None:
                 return None
             # TODO: check self._run_config if we write trr and/or xtc traj!
             traj = Trajectory(trajectory_file=os.path.join(
@@ -294,15 +304,15 @@ class GmxEngine(MDEngine):
         try:
             sim_part = self._run_config["simulation-part"]
         except KeyError:
-            # the gmx mdp default is 0, it starts at part0001
+            # the gmx mdp default is 1, it starts at part0001
             # we add one at the start of each run, i.e. the numberings match up
             # and we will have tra=`...part0001.trr` from gmx
             # and confout=`...part0001.gro` from our naming
             self._simulation_part = 0
         else:
-            if sim_part > 0:
-                logger.warning("Read non-zero starting value for 'simulation-part'.")
-                self._simulation_part = sim_part
+            if sim_part > 1:
+                logger.warning("Starting value for 'simulation-part' > 1.")
+                self._simulation_part = sim_part - 1
         # NOTE: file paths from workdir and deffnm
         mdp_in = os.path.join(self.workdir, deffnm + ".mdp")
         # write the mdp file

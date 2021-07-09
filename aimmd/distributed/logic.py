@@ -537,10 +537,10 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                                  # will be used on the extracted randomized fw SP
                                  "bw": InvertedVelocitiesFrameExtractor(),
                                  }
-        self.propagators = [PropagatorUntilAnyState(
+        self.propagators = [TrajectoryPropagatorUntilAnyState(
                                     states=self.states, engine=e,
                                     walltime_per_part=self.walltime_per_part
-                                                    )
+                                                              )
                             for e in self.engines
                             ]
 
@@ -892,14 +892,14 @@ class CommittorSimulation:
 
     async def _run_single_trial_ow(self, conf_num, shot_num, step_dir):
         # construct propagator
-        propagator = PropagatorUntilAnyState(
+        propagator = TrajectoryPropagatorUntilAnyState(
                                     states=self.states,
                                     engine_cls=self.engine_cls,
                                     engine_kwargs=self.engine_kwargs,
                                     run_config=self.engine_run_config,
                                     walltime_per_part=self.walltime_per_part,
                                     max_steps=self.max_steps,
-                                             )
+                                                       )
         # get starting configuration and write it out with random velocities
         extractor_fw = RandomVelocitiesFrameExtractor(T=self.T)
         start_conf_name = os.path.join(step_dir,
@@ -927,14 +927,14 @@ class CommittorSimulation:
         # NOTE: this is a potential misuse of a committor simulation,
         #       see the note further down for more on why it is/should be ok
         # propagators
-        propagators = [PropagatorUntilAnyState(
+        propagators = [TrajectoryPropagatorUntilAnyState(
                                     states=self.states,
                                     engine_cls=self.engine_cls,
                                     engine_kwargs=self.engine_kwargs,
                                     run_config=self.engine_run_config,
                                     walltime_per_part=self.walltime_per_part,
                                     max_steps=self.max_steps,
-                                               )
+                                                         )
                        for _ in range(2)]
         # forward starting configuration
         extractor_fw = RandomVelocitiesFrameExtractor(T=self.T)
@@ -1221,10 +1221,25 @@ async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_stat
 
 
 # TODO: DOCUMENT
-# TODO: rename to TrajectoryPropagatorUntilAnyState?
-class PropagatorUntilAnyState:
-    # - takes an engine + engine kwargs
-    # - workdir etc in propagate method
+class TrajectoryPropagatorUntilAnyState:
+    """
+    Propagate a trajectory until any of the states is reached.
+
+    This class propagates the trajectory using a given MD engine (class) in
+    small chunks (chunksize is dtermined by walltime_per_part) and checks after
+    every chunk is done if any state has been reached.
+    I then returns either a list of trajectory parts and the state first
+    reached and can also concatenate the parts into one trajectory, which then
+    starts with the starting configuration and ends with one frame in the state.
+
+    Notable methods:
+    ----------------
+    propagate - propagate the trajectory until any state is reached,
+                return a list of trajecory segments and the state reached
+    cut_and_concatenate - take a list of trajectory segments and form one
+                          continous trajectory until the first frame in state
+    propagate_and_concatenate - propagate and cut_and_concatenate in sequence
+    """
     # NOTE: we assume that every state function returns a list/ a 1d array with
     #       True/False for each frame, i.e. if we are in state at a given frame
     # NOTE: we assume non-overlapping states, i.e. a configuration can not
@@ -1233,6 +1248,28 @@ class PropagatorUntilAnyState:
 
     def __init__(self, states, engine_cls, engine_kwargs, run_config,
                  walltime_per_part, max_steps=None, max_frames=None):
+        """
+        Initialize a TrajectoryPropagatorUntilAnyState.
+
+        Parameters:
+        -----------
+        states - list of state functions, e.g. `aimmd.TrajectoryFunctionWrapper`
+                 but can be any callable that takes a trajecory and returns an
+                 array of True and False values (one value per frame)
+        engine_cls - class of the MD engine to use (uninitialized!)
+        engine_kwargs - dictionary of key word arguments needed to initialize
+                        the MD engine
+        run_config - `aimmd.distributed.MDConfig` containing the options for
+                     the MD engine, must match the engine, i.e. `MDP` for gromacs
+        walltime_per_part - float, walltime per trajectory segment in hours
+        max_steps - None or int, maximum number of integration steps to try
+                    before stopping the simulation because it did not commit
+        max_frames - None or int, maximum number of frames to produce before
+                     stopping the simulation because it did not commit
+        NOTE: max_steps and max_frames are redundant since:
+                   max_steps = max_frames * output_frequency
+              if both are given max_steps takes precedence
+        """
         # states - list of wrapped trajectory funcs
         # engine_cls - mdengine class
         # engine_kwargs - dict of kwargs for instantiation of the engine

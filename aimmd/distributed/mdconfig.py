@@ -239,7 +239,7 @@ class LineBasedMDConfig(MDConfig):
         #       what we parse from that file
         value = os.path.abspath(value)
         if not os.path.isfile(value):
-            raise ValueError(f"Can not acces the file {value}")
+            raise ValueError(f"Can not access the file {value}")
         self._original_file = value
         self.parse()
 
@@ -254,7 +254,7 @@ class LineBasedMDConfig(MDConfig):
         return self._changed or any(single_vals_changed)
 
     def parse(self):
-        """Parse the current original_file to update own state."""
+        """Parse the current `self.original_file` to update own state."""
         with open(self.original_file, "r") as f:
             file_content = f.read()
         parsed = {}
@@ -321,9 +321,11 @@ class MDP(LineBasedMDConfig):
 
     Make all options set in a given mdp file available via a dictionary of
     option, list of values pairs. Includes automatic types for known options
-    and keeps track if any options have been changed from the original.
+    and keeps track if any options have been changed compared to the original
+    file.
 
     Notable methods:
+    ----------------
     write - write the current (modified) configuration state to a given file
     parse - read the current original_file and update own state with it
     """
