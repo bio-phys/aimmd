@@ -69,6 +69,10 @@ class TypedFlagChangeList(FlagChangeList):
             # convienience for singular options,
             # if it has no len attribute we assume it is the only item
             data = [data]
+        elif isinstance(data, str):
+            # strings have a length but we still do not want to split them into
+            # single letters, so just put a list around
+            data = [data]
         typed_data = [self._convert_type(v, key=i) for i, v in enumerate(data)]
         super().__init__(data=typed_data)
 
