@@ -464,9 +464,19 @@ class GmxEngine(MDEngine):
             # find out the name of the tpr and use that as deffnm
             head, tail = os.path.split(tpr)
             deffnm = tail.split(".")[0]
+        #cmd = f"{self.mdrun_executable} -noappend -deffnm {deffnm} -cpi"
+        # NOTE: the line above does the same as the four below before the if-clauses
+        #       however gromacs -deffnm is deprecated (and buggy),
+        #       so we just make our own 'deffnm', i.e. we name all files the same
+        #       except for the ending but do so explicitly
+        cmd = f"{self.mdrun_executable} -noappend -s {tpr}"
         # always add the -cpi option, this lets gmx figure out if it wants
         # to start from a checkpoint (if there is one with deffnm)
-        cmd = f"{self.mdrun_executable} -noappend -deffnm {deffnm} -cpi"
+        # cpi (CheckPointIn) is ignored if not present,
+        # cpo (CheckPointOut) is the name to use for the (final) checkpoint
+        cmd += f" -cpi {deffnm}.cpt -cpo {deffnm}.cpt"
+        cmd += f" -o {deffnm}.trr -x {deffnm}.xtc -c {deffnm}_confout.gro"
+        cmd += f" -e {deffnm}.edr -g {deffnm}.log"
         if maxh is not None:
             cmd += f" -maxh {maxh}"
         if nsteps is not None:
