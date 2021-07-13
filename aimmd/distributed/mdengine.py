@@ -298,9 +298,12 @@ class GmxEngine(MDEngine):
         self._run_config = run_config
         self._deffnm = deffnm
         # check 'simulation-part' option in mdp file / MDP options
-        # it decides at which .partXXXX the gmx numbering starts
-        # TODO: we warn if not zero and also adjust ourself accordingly,
-        #       but should we instead set it to zero in the MDP?
+        # it decides at which .partXXXX the gmx numbering starts,
+        # however gromacs ignores it if there is no -cpi [CheckPointIn]
+        # so we do the same, i.e. we warn if we detect it is set
+        # and check if there is a checkpoint with the right name [deffnm.cpt]
+        # if yes we set our internal simulation_part counter to the value from
+        # the mdp - 1 (we increase *before* each simulation part)
         try:
             sim_part = self._run_config["simulation-part"]
         except KeyError:
@@ -311,8 +314,14 @@ class GmxEngine(MDEngine):
             self._simulation_part = 0
         else:
             if sim_part > 1:
-                logger.warning("Starting value for 'simulation-part' > 1.")
-                self._simulation_part = sim_part - 1
+                cpt_file = os.path.join(self.workdir, f"{deffnm}.cpt")
+                if not os.path.isfile(cpt_file):
+                    raise ValueError("'simulation-part' > 1 is only possible "
+                                     + "if starting from a checkpoint, but "
+                                     + f"{cpt_file} does not exists."
+                                     )
+                logger.warning(f"Starting value for 'simulation-part' > 1 (={sim_part}).")
+            self._simulation_part = sim_part - 1
         # NOTE: file paths from workdir and deffnm
         mdp_in = os.path.join(self.workdir, deffnm + ".mdp")
         # write the mdp file
