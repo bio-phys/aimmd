@@ -123,15 +123,36 @@ class Trajectory:
 
     Keep track of the paths of the trajectory and the structure file.
     Caches values for (wrapped) functions acting on the trajectory.
+    Also makes vailable (and caches) a number of useful attributes, namely:
+        - first_step (integration step of first frame in this trajectory [part])
+        - last_step (integration step of the last frame in this trajectory [part])
+        - length (number of frames in this trajectory)
+        - nstout (number of integration steps between subsequent frames)
     """
 
-    def __init__(self, trajectory_file, structure_file):
+    def __init__(self, trajectory_file, structure_file, nstout=None, **kwargs):
         # NOTE: we assume tra = trr and struct = tpr
         #       but we also expect that anything which works for mdanalysis as
         #       tra and struct should also work here as tra and struct
         self.trajectory_file = os.path.abspath(trajectory_file)
         self.structure_file = os.path.abspath(structure_file)
         self._len = None
+        self._first_step = None
+        self._last_step = None
+        self.nstout = nstout
+        # TODO: currently we do not use kwargs?!
+        #dval = object()
+        #for kwarg, value in kwargs.items():
+        #    cval = getattr(self, kwarg, dval)
+        #    if cval is not dval:
+        #        if isinstance(value, type(cval)):
+        #            # value is of same type as default so set it
+        #            setattr(self, kwarg, value)
+        #        else:
+        #            logger.warn(f"Setting attribute {kwarg} with "
+        #                        + f"mismatching type ({type(value)}). "
+        #                        + f" Default type is {type(cval)}."
+        #                        )
         self._func_id_to_idx = {}
         self._func_values = []
         self._h5py_grp = None
@@ -149,6 +170,26 @@ class Trajectory:
         return (f"Trajectory(trajectory_file={self.trajectory_file},"
                 + f" structure_file={self.structure_file})"
                 )
+
+    @property
+    def first_step(self):
+        raise NotImplemented
+
+    @property
+    def last_step(self):
+        raise NotImplemented
+
+    @property
+    def nstout(self):
+        return self._nstout
+
+    @nstout.setter
+    def nstout(self, val):
+        if val is not None:
+            # ensure that it is an int
+            val = int(val)
+        # enable setting to None
+        self._nstout = val
 
     async def _apply_cached_func(self, func_id, func, func_kwargs):
         if self._h5py_grp is not None:
