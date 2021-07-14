@@ -171,15 +171,19 @@ class GmxEngine(MDEngine):
             # NOTE/FIXME we can also check for simulation part, since it seems
             #  gmx ignores that if no checkpoint is passed, i.e. we will
             #  **always** start with part0001 anyways!
-            # so checking for self._simulation_part == 0 makes sure we never ran
+            # but checking for self._simulation_part == 0 also just makes sure
+            # we did not start a run (i.e. same as checking self._proc)
             #if self._simulation_part == 0:
             if self._proc is None:
                 return None
+            # TODO: check that nstxout == nstvout?!
             # TODO: check self._run_config if we write trr and/or xtc traj!
-            traj = Trajectory(trajectory_file=os.path.join(
+            traj = Trajectory(
+                    trajectory_file=os.path.join(
                         self.workdir, f"{self._deffnm}{self._num_suffix()}.trr"
-                                                           ),
-                              structure_file=os.path.join(self.workdir, self._tpr)
+                                                 ),
+                    structure_file=os.path.join(self.workdir, self._tpr),
+                    nstout=self._run_config["nstxout"],
                               )
             return traj
         else:

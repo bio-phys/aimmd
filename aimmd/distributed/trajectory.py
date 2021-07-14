@@ -16,6 +16,7 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import os
 import abc
+import shutil
 import collections
 import asyncio
 import inspect
@@ -28,6 +29,8 @@ import MDAnalysis as mda
 from concurrent.futures import ProcessPoolExecutor
 from scipy import constants
 
+
+from .slurm import SlurmProcess
 from . import _SEM_MAX_PROCESS
 
 
@@ -35,30 +38,61 @@ logger = logging.getLogger(__name__)
 
 
 # TODO: DOCUMENT!
-# NOTE: it should be 'easy' to write and use a SlurmTrajectoryFunctionWrapper
-#       that submits the function calculation as job to the qeue sys
-#       we await the result anyways, so we could just submit the job and then
-#       await sleep loop until it is done
 class TrajectoryFunctionWrapper:
+    """ABC to define the API and some common methods."""
+    def __init__(self) -> None:
+        self._id = None
+        self._call_kwargs = {}  # init to empty dict such that iteration works
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    @property
+    def call_kwargs(self):
+        # return a copy to avoid people modifying entries without us noticing
+        return self._call_kwargs.copy()
+
+    @call_kwargs.setter
+    def call_kwargs(self, value):
+        if not isinstance(value, dict):
+            raise ValueError("call_kwargs must be a dictionary.")
+        self._call_kwargs = value
+        self._id = self._get_id_str()  # get/set ID
+
+    @abc.abstractmethod
+    def _get_id_str(self):
+        pass
+
+    @abc.abstractmethod
+    async def get_values_for_trajectory(self, traj):
+        pass
+
+    @abc.abstractmethod
+    async def __call__(self, val):
+        pass
+
+
+class PyTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
+    """Wrap python functions for use on `aimmd.distributed.Trajectory."""
     # wrap functions for use on aimmd.distributed.Trajectory
     # makes sure that we check for cached values if we apply the wrapped func
     # to an aimmd.distributed.Trajectory
     def __init__(self, function, call_kwargs={}):
+        super().__init__()
         self._func = None
         self._func_src = None
-        self._call_kwargs = {}  # init to empty dict such that iteration works
-        self._id = None
         # use the properties to directly calculate/get the id
         self.function = function
         self.call_kwargs = call_kwargs
 
-    def __repr__(self):
-        return (f"TrajectoryFunctionWrapper(function={self._func}, "
+    def __repr__(self) -> str:
+        return (f"PyTrajectoryFunctionWrapper(function={self._func}, "
                 + f"call_kwargs={self.call_kwargs})"
                 )
 
     def _get_id_str(self):
-        # clalculate a hash over function src and call_kwargs dict
+        # calculate a hash over function src and call_kwargs dict
         # this should be unique and portable, i.e. it should enable us to make
         # ensure that the cached values will only be used for the same function
         # called with the same arguments
@@ -72,18 +106,6 @@ class TrajectoryFunctionWrapper:
         # and add the func_src
         id += int(hashlib.blake2b(str(self._func_src).encode('utf-8')).hexdigest(), 16)
         return str(id)  # return a str because we want to use it as dict keys
-
-    @property
-    def call_kwargs(self):
-        # return a copy to avoid people modifying entries without us noticing
-        return self._call_kwargs.copy()
-
-    @call_kwargs.setter
-    def call_kwargs(self, value):
-        if not isinstance(value, dict):
-            raise ValueError("call_kwargs must be a dictionary.")
-        self._call_kwargs = value
-        self._id = self._get_id_str()  # get/set ID
 
     @property
     def function(self):
@@ -105,18 +127,157 @@ class TrajectoryFunctionWrapper:
         finally:
             self._func = value
 
+    async def get_values_for_trajectory(self, traj):
+        loop = asyncio.get_running_loop()
+        async with _SEM_MAX_PROCESS:
+            # NOTE: make sure we do not fork! (not save with multithreading)
+            # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
+            ctx = multiprocessing.get_context("forkserver")
+            if len(self.call_kwargs) > 0:
+                # fill in additional kwargs (if any)
+                func = functools.partial(self._func, **self._call_kwargs)
+            # use one python subprocess: if func releases the GIL
+            # it does not matter anyway, if func is full py 1 is enough
+            with ProcessPoolExecutor(1, mp_context=ctx) as pool:
+                vals = await loop.run_in_executor(pool, func, traj)
+        return vals
+
     async def __call__(self, value):
-        if isinstance(value, Trajectory) and self._id is not None:
-            return await value._apply_cached_func(self._id, self._func,
-                                                  self._call_kwargs)
+        if isinstance(value, Trajectory) and self.id is not None:
+            return await value._apply_wrapped_func(self.id, self)
         else:
+            # NOTE: i think this should never happen?
             # this will block until func is done, we could use a ProcessPool?!
             # Can we make sure that we are always able to pickle value for that?
             # (probably not since it could be Trajectory and we only have no func_src)
             return self._func(value, **self._call_kwargs)
 
 
-# TODO: DOCUMENT
+# TODO: document what we fill/replace in the master sbatch script!
+# TODO: document what we expect from the executable!
+#       -> accept struct, traj, outfile
+#       -> write numpy npy files! (or pass custom load func!)
+class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
+    """Wrap functions for use on `aimmd.distributed.Trajectory`"""
+
+    def __init__(self, executable, sbatch_script, call_kwargs={},
+                 load_results_func=None):
+        super().__init__()
+        self._executable = None
+        # we expect sbatch_script to be a str,
+        # but it could be either the path to a submit script or the content of
+        # the submission script directly
+        # we decide what it is by checking for the shebang
+        if not sbatch_script.startswith("#!"):
+            # probably path to a file, lets try to read it
+            with open(sbatch_script, 'r') as f:
+                sbatch_script = f.read()
+        # (possibly) use properties to calc the id directly
+        self.sbatch_script = sbatch_script
+        self.executable = executable
+        self.call_kwargs = call_kwargs
+        self.load_results_func = load_results_func
+
+    def __repr__(self) -> str:
+        return (f"SlurmTrajectoryFunctionWrapper(executable={self._executable}, "
+                + f"call_kwargs={self.call_kwargs})"
+                )
+
+    def _get_id_str(self):
+        # calculate a hash over executable and call_kwargs dict
+        # this should be unique and portable, i.e. it should enable us to make
+        # ensure that the cached values will only be used for the same function
+        # called with the same arguments
+        id = 0
+        # NOTE: addition is commutative, i.e. order does not matter here!
+        for k, v in self._call_kwargs.items():
+            # hash the value
+            id += int(hashlib.blake2b(str(v).encode('utf-8')).hexdigest(), 16)
+            # hash the key
+            id += int(hashlib.blake2b(str(k).encode('utf-8')).hexdigest(), 16)
+        # and add the executable hash
+        with open(self.executable, "rb") as exe_file:
+            # NOTE: we assume that executable is small enough to read at once
+            #       if this crashes becasue of OOM we should use chunks...
+            data = exe_file.read()
+        id += int(hashlib.blake2b(data).hexdigest(), 16)
+        return str(id)  # return a str because we want to use it as dict keys
+
+    @property
+    def executable(self):
+        return self._executable
+
+    @executable.setter
+    def executable(self, val):
+        if os.path.isfile(os.path.abspath(val)):
+            # see if it is a relative path starting from cwd
+            # (or a full path starting with /)
+            exe = os.path.abspath(val)
+            if not os.access(exe, os.X_OK):
+                raise ValueError(f"{exe} must be executable.")
+        elif shutil.which(val) is not None:
+            # see if we find it in $PATH
+            exe = shutil.which(val)
+        else:
+            raise ValueError(f"{val} must be an existing path or accesible via"
+                             + " the $PATH environment variable.")
+        # if we get here it should be save to set, i.e. exists + executable
+        self._executable = exe
+        self._id = self._get_id_str()  # get the new hash/id
+
+    async def get_values_for_trajectory(self, traj):
+        # first construct the path/name for the numpy npy file in which we expect
+        # the results to be written
+        tra_dir, tra_name = os.path.split(traj.trajectory_file)
+        result_file = os.path.join(tra_dir,
+                                   f"{tra_name}_cvs_funcid_{self.id}")
+        cmd_str = f"{self.executable} --traj {traj.trajectory_file}"
+        cmd_str += f" --struct {traj.structure_file} --outfile {result_file}"
+        if len(self.call_kwargs) > 0:
+            for key, val in self.call_kwargs.items():
+                cmd_str += f" {key} {val}"
+        # construct jobname
+        # TODO: do we want the traj name in the jobname here?!
+        jobname = f"cvs_funcid_{self.id}"  # + f"_{traj.trajectory_file}"
+        # now prepare the sbatch script
+        script = self.sbatch_script.format(cmd_str=cmd_str, jobname=jobname)
+        # and submit it
+        slurm_proc = SlurmProcess(sbatch_script=script, workdir=tra_dir)
+        await slurm_proc.submit()
+        # wait for the slurm job to finish
+        # also cancel the job when this future is canceled
+        try:
+            exit_code = await slurm_proc.wait()
+        except asyncio.CancelledError:
+            slurm_proc.kill()
+        else:
+            if exit_code != 0:
+                raise RuntimeError("Non-zero exit code from CV batch job for "
+                                   + f"executable {self.executable} on "
+                                   + f"trajectory {traj.trajectory_file} "
+                                   + f"(slurm jobid {slurm_proc.slurm_jobid})."
+                                   )
+            # TODO/(FIXME?): do we want to keep the results file?
+            if self.load_results_func is None:
+                # we do not have '.npy' ending in results_file,
+                # numpy.save() adds it if it is not there, so we need it here
+                vals = np.load(result_file + ".npy")
+                os.remove(result_file + ".npy")
+            else:
+                # use custom loading function from user
+                vals = self.load_results_func(result_file)
+                os.remove(result_file)
+            return vals
+
+    async def __call__(self, value):
+        if isinstance(value, Trajectory) and self.id is not None:
+            return await value._apply_wrapped_func(self.id, self)
+        else:
+            raise ValueError("SlurmTrajectoryFunctionWrapper must be called"
+                             + " with an `aimmd.distributed.Trajectory` "
+                             + f"but was called with {type(value)}.")
+
+
 class Trajectory:
     """
     Represent a trajectory.
@@ -173,14 +334,27 @@ class Trajectory:
 
     @property
     def first_step(self):
-        raise NotImplemented
+        """The integration step of the first frame."""
+        if self._first_step is None:
+            u = mda.Universe(self.structure_file, self.trajectory_file)
+            ts = u.trajectory[0]
+            # NOTE: works only(?) for trr and xtc
+            self._first_step = ts.data["step"]
+        return self._first_step
 
     @property
     def last_step(self):
-        raise NotImplemented
+        """The integration step of the last frame."""
+        if self._last_step is None:
+            u = mda.Universe(self.structure_file, self.trajectory_file)
+            ts = u.trajectory[-1]
+            # NOTE: works only(?) for trr and xtc
+            self._last_step = ts.data["step"]
+        return self._last_step
 
     @property
     def nstout(self):
+        """Output frequency between subsequent frames in integration steps."""
         return self._nstout
 
     @nstout.setter
@@ -191,7 +365,7 @@ class Trajectory:
         # enable setting to None
         self._nstout = val
 
-    async def _apply_cached_func(self, func_id, func, func_kwargs):
+    async def _apply_wrapped_func(self, func_id, wrapped_func):
         if self._h5py_grp is not None:
             # first check if we are loaded and possibly get it from there
             # trajectories are immutable once stored, so no need to check len
@@ -200,18 +374,7 @@ class Trajectory:
             except KeyError:
                 # not in there
                 # send function application to seperate process and wait for it
-                loop = asyncio.get_running_loop()
-                async with _SEM_MAX_PROCESS:
-                    # NOTE: make sure we do not fork! (not save with multithreading)
-                    # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
-                    ctx = multiprocessing.get_context("forkserver")
-                    if len(func_kwargs) > 0:
-                        # fill in additional kwargs (if any)
-                        func = functools.partial(func, **func_kwargs)
-                    # use one python subprocess: if func releases the GIL
-                    # it does not matter anyway, if func is full py 1 is enough
-                    with ProcessPoolExecutor(1, mp_context=ctx) as pool:
-                        vals = await loop.run_in_executor(pool, func, self)
+                vals = await wrapped_func.get_values_for_trajectory(self)
                 self._h5py_cache.append(func_id, vals)
                 return vals
         # only 'local' cache, i.e. this trajectory has no file associated (yet)
@@ -222,18 +385,7 @@ class Trajectory:
         except KeyError:
             # if not calculate, store and return
             # send function application to seperate process and wait for it
-            loop = asyncio.get_running_loop()
-            async with _SEM_MAX_PROCESS:
-                # NOTE: make sure we do not fork! (not save with multithreading)
-                # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
-                ctx = multiprocessing.get_context("forkserver")
-                if len(func_kwargs) > 0:
-                    # fill in additional kwargs (if any)
-                    func = functools.partial(func, **func_kwargs)
-                # use one python subprocess: if func releases the GIL
-                # it does not matter anyway, if func is full py 1 is enough
-                with ProcessPoolExecutor(1, mp_context=ctx) as pool:
-                    vals = await loop.run_in_executor(pool, func, self)
+            vals = await wrapped_func.get_values_for_trajectory(self)
             self._func_id_to_idx[func_id] = len(self._func_id_to_idx)
             self._func_values.append(vals)
             return vals
@@ -251,8 +403,8 @@ class Trajectory:
         return state
 
     def object_for_pickle(self, group, overwrite):
-        # NOTE: we ignore overwrite and assume the group is always empty
-        #       (or at least matches this tra and we can add values?)
+        # TODO/NOTE: we ignore overwrite and assume the group is always empty
+        #            (or at least matches this tra and we can add values?)
         # currently overwrite will always be false and we can just ignore it?!
         # and then we can/do also expect group to be empty...?
         state = self.__dict__.copy()

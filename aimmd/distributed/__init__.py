@@ -56,7 +56,8 @@ _SEM_BRAIN_MODEL = asyncio.Semaphore(1)
 
 
 # make stuff from submodules available (after defining the semaphores)
-from .trajectory import Trajectory, TrajectoryFunctionWrapper
+from .trajectory import (Trajectory, PyTrajectoryFunctionWrapper,
+                         SlurmTrajectoryFunctionWrapper)
 from .mdconfig import MDP
 from .mdengine import GmxEngine, SlurmGmxEngine
 from .logic import MCstep, Brain, TwoWayShootingPathMover, CommittorSimulation
