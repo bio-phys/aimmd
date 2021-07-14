@@ -51,6 +51,8 @@ class TrajectoryFunctionWrapper:
     @property
     def call_kwargs(self):
         # return a copy to avoid people modifying entries without us noticing
+        # TODO/FIXME: this will make unhappy users if they try to set single
+        #             items in the dict!
         return self._call_kwargs.copy()
 
     @call_kwargs.setter
@@ -231,8 +233,10 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
         tra_dir, tra_name = os.path.split(traj.trajectory_file)
         result_file = os.path.join(tra_dir,
                                    f"{tra_name}_cvs_funcid_{self.id}")
-        cmd_str = f"{self.executable} --traj {traj.trajectory_file}"
-        cmd_str += f" --struct {traj.structure_file} --outfile {result_file}"
+        # we expect executable to take 3 postional args:
+        # struct traj outfile
+        cmd_str = f"{self.executable} {traj.structure_file}"
+        cmd_str += f" {traj.trajectory_file} {result_file}"
         if len(self.call_kwargs) > 0:
             for key, val in self.call_kwargs.items():
                 cmd_str += f" {key} {val}"
