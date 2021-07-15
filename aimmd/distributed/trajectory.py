@@ -245,8 +245,15 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
         jobname = f"cvs_funcid_{self.id}"  # + f"_{traj.trajectory_file}"
         # now prepare the sbatch script
         script = self.sbatch_script.format(cmd_str=cmd_str, jobname=jobname)
+        # write it out
+        sbatch_fname = os.path.join(tra_dir, jobname + ".slurm")
+        if os.path.exists(sbatch_fname):
+            # TODO: should we raise an error?
+            logger.error(f"Overwriting exisiting submission file ({sbatch_fname}).")
+        with open(sbatch_fname, 'w') as f:
+            f.write(script)
         # and submit it
-        slurm_proc = SlurmProcess(sbatch_script=script, workdir=tra_dir)
+        slurm_proc = SlurmProcess(sbatch_script=sbatch_fname, workdir=tra_dir)
         await slurm_proc.submit()
         # wait for the slurm job to finish
         # also cancel the job when this future is canceled
@@ -262,6 +269,8 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                                    + f"(slurm jobid {slurm_proc.slurm_jobid})."
                                    )
             # TODO/(FIXME?): do we want to keep the results file?
+            # TODO/(FIXME?): do we want to keep the submit script?
+            os.remove(sbatch_fname)
             if self.load_results_func is None:
                 # we do not have '.npy' ending in results_file,
                 # numpy.save() adds it if it is not there, so we need it here
