@@ -20,8 +20,8 @@ def alpha_R(traj):
     phi = np.empty((len(u.trajectory),), dtype=np.float64)
     psi = np.empty((len(u.trajectory),), dtype=np.float64)
     for f, ts in enumerate(u.trajectory):
-        phi[f] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimension)
-        psi[f] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimension)
+        phi[f] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimensions)
+        psi[f] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimensions)
     # phi: -pi -> 0
     # psi: > -50 but smaller 30 degree
     deg = 180/np.pi
@@ -29,7 +29,7 @@ def alpha_R(traj):
     return state
 
 
-def C7_eq(traj, scratch_dir):
+def C7_eq(traj):
     u = mda.Universe(traj.structure_file, traj.trajectory_file)
     psi_ag = u.select_atoms("index 6 or index 8 or index 14 or index 16")
     phi_ag = u.select_atoms("index 4 or index 6 or index 8 or index 14")
@@ -38,8 +38,8 @@ def C7_eq(traj, scratch_dir):
     phi = np.empty((len(u.trajectory),), dtype=np.float64)
     psi = np.empty((len(u.trajectory),), dtype=np.float64)
     for f, ts in enumerate(u.trajectory):
-        phi[f] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimension)
-        psi[f] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimension)
+        phi[f] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimensions)
+        psi[f] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimensions)
     # phi: -pi -> 0
     # psi: 120 -> 200 degree
     deg = 180/np.pi
@@ -47,17 +47,17 @@ def C7_eq(traj, scratch_dir):
     return state
 
 
-def descriptor_func(traj, scratch_dir):
+def descriptor_func(traj):
     # TODO: make this a real descriptor func!!
     u = mda.Universe(traj.structure_file, traj.trajectory_file)
     psi_ag = u.select_atoms("index 6 or index 8 or index 14 or index 16")
     phi_ag = u.select_atoms("index 4 or index 6 or index 8 or index 14")
     # empty arrays to fill
-    phi = np.empty((len(u.trajectory),), dtype=np.float64)
-    psi = np.empty((len(u.trajectory),), dtype=np.float64)
+    phi = np.empty((len(u.trajectory), 1), dtype=np.float64)
+    psi = np.empty((len(u.trajectory), 1), dtype=np.float64)
     for f, ts in enumerate(u.trajectory):
-        phi[f] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimension)
-        psi[f] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimension)
+        phi[f, 0] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimensions)
+        psi[f, 0] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimensions)
     
     return np.concatenate([psi, phi], axis=1)
 
