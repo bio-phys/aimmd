@@ -1,3 +1,36 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:65cca8da359e99c9d44e520ceac6630015b5449b81dfd0e76508607b68d02229
-size 1141
+title                    = test
+cpp                      = /lib/cpp
+include                  = -I../top
+define                   = 
+integrator               = md-vv
+dt                       = 0.002
+nsteps                   = -1  ;  unlimited steps
+nstxout                  = 10
+nstvout                  = 10
+nstlog                   = 10
+nstenergy                = 10
+nstxout-compressed       = 10
+;simulation-part		 = 2
+compressed-x-grps        = Protein  SOL
+energygrps               = Protein  SOL
+nstlist                  = 10
+ns-type                  = grid
+cutoff-scheme            = Verlet
+rlist                    = 1.1
+coulombtype              = PME
+rcoulomb                 = 1.1
+rvdw                     = 1.1
+tcoupl                   = Berendsen
+tc-grps                  = Protein      SOL
+tau-t                    = 0.1  0.1
+ref-t                    = 300  300
+Pcoupl                   = Berendsen
+tau-p                    = 1.0
+compressibility          = 4.5e-5
+ref-p                    = 1.0
+gen-vel                  = no
+gen-temp                 = 300
+gen-seed                 = 173529
+constraints              = all-bonds
+
+
