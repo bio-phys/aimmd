@@ -135,9 +135,11 @@ class PyTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
             # NOTE: make sure we do not fork! (not save with multithreading)
             # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
             ctx = multiprocessing.get_context("forkserver")
+            # fill in additional kwargs (if any)
             if len(self.call_kwargs) > 0:
-                # fill in additional kwargs (if any)
-                func = functools.partial(self._func, **self._call_kwargs)
+                func = functools.partial(self.function, **self._call_kwargs)
+            else:
+                func = self.function
             # use one python subprocess: if func releases the GIL
             # it does not matter anyway, if func is full py 1 is enough
             with ProcessPoolExecutor(1, mp_context=ctx) as pool:
@@ -254,6 +256,7 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
             f.write(script)
         # and submit it
         slurm_proc = SlurmProcess(sbatch_script=sbatch_fname, workdir=tra_dir)
+        slurm_proc.sleep_time = 10  # sleep 5 s between checking if done
         await slurm_proc.submit()
         # wait for the slurm job to finish
         # also cancel the job when this future is canceled
@@ -268,8 +271,6 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                                    + f"trajectory {traj.trajectory_file} "
                                    + f"(slurm jobid {slurm_proc.slurm_jobid})."
                                    )
-            # TODO/(FIXME?): do we want to keep the results file?
-            # TODO/(FIXME?): do we want to keep the submit script?
             os.remove(sbatch_fname)
             if self.load_results_func is None:
                 # we do not have '.npy' ending in results_file,
@@ -280,6 +281,24 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                 # use custom loading function from user
                 vals = self.load_results_func(result_file)
                 os.remove(result_file)
+            try:
+                # (try to) remove slurm output files
+                os.remove(
+                    os.path.join(tra_dir,
+                                 f"{jobname}.out.{slurm_proc.slurm_jobid}")
+                          )
+                os.remove(
+                    os.path.join(tra_dir,
+                                 f"{jobname}.err.{slurm_proc.slurm_jobid}")
+                          )
+            except FileNotFoundError:
+                # probably just a naming issue, so lets warn our users
+                logger.warning("Could not remove SLURM output files. Maybe "
+                               + "they were not named as expected? Consider "
+                               + "adding '#SBATCH -o ./{jobname}.out.%j'"
+                               + " and '#SBATCH -e ./{jobname}.err.%j' to the "
+                               + "submission script.")
+
             return vals
 
     async def __call__(self, value):
