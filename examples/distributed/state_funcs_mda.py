@@ -47,8 +47,13 @@ def C7_eq(traj):
     return state
 
 
-def descriptor_func(traj):
-    # TODO: make this a real descriptor func!!
+def descriptor_func_ic(traj):
+    # TODO: write this!
+    raise NotImplementedError
+
+
+def descriptor_func_psi_phi(traj):
+    """Only psi and phi angle as internal coords. Actually cos and sin for both of them."""
     u = mda.Universe(traj.structure_file, traj.trajectory_file)
     psi_ag = u.select_atoms("index 6 or index 8 or index 14 or index 16")
     phi_ag = u.select_atoms("index 4 or index 6 or index 8 or index 14")
@@ -59,7 +64,7 @@ def descriptor_func(traj):
         phi[f, 0] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimensions)
         psi[f, 0] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimensions)
     
-    return np.concatenate([psi, phi], axis=1)
+    return 1 + 0.5*np.concatenate([np.sin(psi), np.cos(psi), np.sin(phi), np.cos(phi)], axis=1)
 
 
 if __name__ == "__main__":
@@ -71,13 +76,15 @@ if __name__ == "__main__":
     parser.add_argument("output_file", type=str)
     parser.add_argument("-f", "--function", type=str,
                         default="descriptors",
-                        choices=["alphaR", "C7eq", "descriptors"])
+                        choices=["alphaR", "C7eq", "descriptors_ic", "descriptors_psi_phi"])
     args = parser.parse_args()
     # NOTE: since args is a namespace args.trajectory_file will be the path to
     #       the trajectory file, i.e. we can pass args instead of an
     #       aimmd.Trajectory to the functions above
-    if args.function == "descriptors":
-        vals = descriptor_func(args)
+    if args.function == "descriptors_ic":
+        vals = descriptor_func_ic(args)
+    elif args.function == "descriptors_psi_phi":
+        vals = descriptor_func_psi_phi(args)
     elif args.function == "alphaR":
         vals = alpha_R(args)
     elif args.function == "C7eq":

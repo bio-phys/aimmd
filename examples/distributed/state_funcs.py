@@ -6,6 +6,7 @@ Needs to be separate module/import to be able to use multiprocessing from the no
 """
 import os
 import argparse
+import aimmd
 import numpy as np
 import mdtraj as mdt
 
@@ -40,16 +41,28 @@ def C7_eq(traj, scratch_dir):
     return state
 
 
-def descriptor_func(traj, scratch_dir):
-    # TODO: make this a real descriptor func!!
+def descriptor_func_ic(traj, scratch_dir):
+    """All internal coordinates (bond-length, angles, dihedrals) as descriptors."""
+    traj = mdt.load(traj.trajectory_file,
+                    # mdt can not work with tprs, so we use theinitial gro for now
+                    top=os.path.join(scratch_dir, "gmx_infiles/conf.gro"),
+                    )
+    pairs, triples, quadruples = aimmd.coords.internal.generate_indices(traj.topology, source_idx=0)
+    descriptors = aimmd.coords.internal.transform(traj, pairs=pairs, triples=triples, quadruples=quadruples)
+
+    return descriptors
+
+
+def descriptor_func_psi_phi(traj, scratch_dir):
+    """Only psi and phi angle as internal coords. Actually cos and sin for both of them."""
     traj = mdt.load(traj.trajectory_file,
                     # mdt can not work with tprs, so we use theinitial gro for now
                     top=os.path.join(scratch_dir, "gmx_infiles/conf.gro"),
                     )
     psi = mdt.compute_dihedrals(traj, indices=[[6, 8, 14, 16]])
     phi = mdt.compute_dihedrals(traj, indices=[[4, 6, 8, 14]])
-
-    return np.concatenate([psi, phi], axis=1)
+    # make sure the return value lies \in [0,1]
+    return 1 + 0.5*np.concatenate([np.sin(psi), np.cos(psi), np.sin(phi), np.cos(phi)], axis=1)
 
 
 if __name__ == "__main__":
@@ -61,15 +74,17 @@ if __name__ == "__main__":
     parser.add_argument("output_file", type=str)
     parser.add_argument("-f", "--function", type=str,
                         default="descriptors",
-                        choices=["alphaR", "C7eq", "descriptors"])
+                        choices=["alphaR", "C7eq", "descriptors_ic", "descriptors_psi_phi"])
     parser.add_argument("-sd", "--scratch_dir", type=str,
                         default="/home/think/scratch/aimmd_distributed")
     args = parser.parse_args()
     # NOTE: since args is a namespace args.trajectory_file will be the path to
     #       the trajectory file, i.e. we can pass args instead of an
     #       aimmd.Trajectory to the functions above
-    if args.function == "descriptors":
-        vals = descriptor_func(args, args.scratch_dir)
+    if args.function == "descriptors_ic":
+        vals = descriptor_func_ic(args, args.scratch_dir)
+    elif args.function == "descriptors_psi_phi":
+        vals = descriptor_func_psi_phi(args, args.scratch_dir)
     elif args.function == "alphaR":
         vals = alpha_R(args, args.scratch_dir)
     elif args.function == "C7eq":
