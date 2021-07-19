@@ -244,11 +244,14 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                 cmd_str += f" {key} {val}"
         # construct jobname
         # TODO: do we want the traj name in the jobname here?!
+        #       I think rather not, becasue then we can cancel all jobs for one
+        #       trajfunc in one `scancel` (i.e. independant of the traj)
         jobname = f"cvs_funcid_{self.id}"  # + f"_{traj.trajectory_file}"
         # now prepare the sbatch script
         script = self.sbatch_script.format(cmd_str=cmd_str, jobname=jobname)
         # write it out
-        sbatch_fname = os.path.join(tra_dir, jobname + ".slurm")
+        sbatch_fname = os.path.join(tra_dir,
+                                    tra_name + "_" + jobname + ".slurm")
         if os.path.exists(sbatch_fname):
             # TODO: should we raise an error?
             logger.error(f"Overwriting exisiting submission file ({sbatch_fname}).")
