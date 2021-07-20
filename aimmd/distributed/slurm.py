@@ -51,7 +51,9 @@ class SlurmProcess:
         "NODE_FAIL": 1,
         "OUT_OF_MEMORY": 1,  # Job experienced out of memory error.
         "PENDING": None,  # Job is awaiting resource allocation.
-        "PREEMPTED": 1,  # Job terminated due to preemption.
+        # NOTE: preemption means interupting a process to later restart it,
+        #       i.e. None is probably the right thing to return
+        "PREEMPTED": None,  # Job terminated due to preemption.
         "RUNNING": None,  # Job currently has an allocation.
         "REQUEUED": None,  # Job was requeued.
         # Job is about to change size.
