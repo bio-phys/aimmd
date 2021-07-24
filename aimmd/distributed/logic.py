@@ -14,6 +14,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
+import collections
 import os
 import abc
 import asyncio
@@ -778,11 +779,17 @@ class CommittorSimulation:
     # - a list of tuples (traj, idx) [starting structs]
     # - a list of state-funcs
     # - an engine-class (uninitialized) and a dict with kwargs needed to initialize the engine, also a run_config with MD options
-    # - an int: shots per stucture [this should be a param to the .run() method!]
     # - an int: max concurrent shots (to limit e.g. number of slurm jobs)
     # - a float: the temperature to use for random velocity generation
     # - a float: walltime per part
     # - a bool: if we should do TwoWay shots (i.e. also propagate with inverted velocites in the hope of producing a TP)
+    # NOTE: some of these can be lists and are then per configuration!
+    #      namely:
+    #           - engine-class, engine_kwargs and engine_run_config
+    #           - the temperature T
+    #           - the bool indicating if we should do two way shots
+    #      This enables the use of one CommittorSimulation for a range of different
+    #      physical ensembles (differing in number of molecules, temperature or pressure)
 
     # NOTE: the defaults here will results in the layout:
     # $WORKDIR/configuration_$CONF_NUM/shot_$SHOT_NUM,
@@ -808,27 +815,47 @@ class CommittorSimulation:
     def __init__(self, workdir, starting_configurations, states, engine_cls,
                  engine_kwargs, engine_run_config, T, walltime_per_part,
                  n_max_concurrent=10, two_way=False, max_steps=None, **kwargs):
+        def ensure_list(val, length: int, name: str) -> list:
+            if isinstance(val, list):
+                if not len(val) == length:
+                    raise ValueError("Must supply either one or exactly as many"
+                                     + f"{name} as starting_configurations.")
+            else:
+                val = [val] * length
+            return val
+
         # TODO: should some of these be properties?
         self.workdir = os.path.abspath(workdir)
         self.starting_configurations = starting_configurations
         self.states = states
-        self.engine_cls = engine_cls
-        self.engine_kwargs = engine_kwargs
-        try:
-            # make sure we do not generate velocities with gromacs
-            gen_vel = engine_run_config["gen-vel"]
-        except KeyError:
-            logger.info("Setting 'gen-vel = no' in mdp.")
-            engine_run_config["gen-vel"] = ["no"]
-        else:
-            if gen_vel[0] != "no":
-                logger.warning(f"Setting 'gen-vel = no' in mdp (was '{gen_vel[0]}').")
-                engine_run_config["gen-vel"] = ["no"]
-        self.engine_run_config = engine_run_config
-        self.T = T
+        self.engine_cls = ensure_list(val=engine_cls,
+                                      length=len(starting_configurations),
+                                      name="engine_cls")
+        self.engine_kwargs = ensure_list(val=engine_kwargs,
+                                         length=len(starting_configurations),
+                                         name="engine_kwargs")
+        self.T = ensure_list(val=T, length=len(starting_configurations),
+                             name="T")
+        self.two_way = ensure_list(val=two_way,
+                                   length=len(starting_configurations),
+                                   name="two_way")
+        self.engine_run_config = ensure_list(val=engine_run_config,
+                                             length=len(starting_configurations),
+                                             name="engine_run_config")
+        # TODO: check mdp before making them a list? (at least if it is only one?)
+        for rc in self.engine_run_config:
+            try:
+                # make sure we do not generate velocities with gromacs
+                gen_vel = rc["gen-vel"]
+            except KeyError:
+                logger.info("Setting 'gen-vel = no' in mdp.")
+                rc["gen-vel"] = ["no"]
+            else:
+                if gen_vel[0] != "no":
+                    logger.warning(f"Setting 'gen-vel = no' in mdp (was '{gen_vel[0]}').")
+                    rc["gen-vel"] = ["no"]
         self.walltime_per_part = walltime_per_part
         self.n_max_concurrent = n_max_concurrent
-        self.two_way = two_way
         self.max_steps = max_steps
         # make it possible to set all existing attributes via kwargs
         # check the type for attributes with default values
@@ -895,14 +922,14 @@ class CommittorSimulation:
         # construct propagator
         propagator = TrajectoryPropagatorUntilAnyState(
                                     states=self.states,
-                                    engine_cls=self.engine_cls,
-                                    engine_kwargs=self.engine_kwargs,
-                                    run_config=self.engine_run_config,
+                                    engine_cls=self.engine_cls[conf_num],
+                                    engine_kwargs=self.engine_kwargs[conf_num],
+                                    run_config=self.engine_run_config[conf_num],
                                     walltime_per_part=self.walltime_per_part,
                                     max_steps=self.max_steps,
                                                        )
         # get starting configuration and write it out with random velocities
-        extractor_fw = RandomVelocitiesFrameExtractor(T=self.T)
+        extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
         start_conf_name = os.path.join(step_dir,
                                        (f"{self.start_conf_name_prefix}_"
                                         + f"{self.deffnm_engine_out}.trr"),
@@ -930,15 +957,15 @@ class CommittorSimulation:
         # propagators
         propagators = [TrajectoryPropagatorUntilAnyState(
                                     states=self.states,
-                                    engine_cls=self.engine_cls,
-                                    engine_kwargs=self.engine_kwargs,
-                                    run_config=self.engine_run_config,
+                                    engine_cls=self.engine_cls[conf_num],
+                                    engine_kwargs=self.engine_kwargs[conf_num],
+                                    run_config=self.engine_run_config[conf_num],
                                     walltime_per_part=self.walltime_per_part,
                                     max_steps=self.max_steps,
                                                          )
                        for _ in range(2)]
         # forward starting configuration
-        extractor_fw = RandomVelocitiesFrameExtractor(T=self.T)
+        extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
         start_conf_name_fw = os.path.join(step_dir,
                                           (f"{self.start_conf_name_prefix}_"
                                            + f"{self.deffnm_engine_out}.trr"),
@@ -1094,7 +1121,7 @@ class CommittorSimulation:
         for cnum in range(len(self.starting_configurations)):
             tasks += [self._run_single_trial(conf_num=cnum,
                                              shot_num=snum,
-                                             two_way=self.two_way,
+                                             two_way=self.two_way[cnum],
                                              )
                       for snum in range(self._shot_counter,
                                         self._shot_counter + n_per_struct
