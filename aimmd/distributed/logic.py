@@ -26,7 +26,7 @@ import numpy as np
 from concurrent.futures import ProcessPoolExecutor
 
 from . import _SEM_MAX_PROCESS, _SEM_BRAIN_MODEL
-from .trajectory import (TrajectoryConcatenator,
+from .trajectory import (Trajectory, TrajectoryConcatenator,
                          InvertedVelocitiesFrameExtractor,
                          RandomVelocitiesFrameExtractor,
                          )
@@ -776,7 +776,8 @@ class RCModelSPSelector:
 class CommittorSimulation:
     # TODO: remove when done! also document!
     # takes:
-    # - a list of tuples (traj, idx) [starting structs]
+    # - a list of tuples (traj, idx, [name]), these are the starting structs
+    #    Note that name is an optional string, the name to use for the configuration folder
     # - a list of state-funcs
     # - an engine-class (uninitialized) and a dict with kwargs needed to initialize the engine, also a run_config with MD options
     # - an int: max concurrent shots (to limit e.g. number of slurm jobs)
@@ -875,21 +876,42 @@ class CommittorSimulation:
         self._shot_counter = 0
         self._states_reached = [[] for _ in range(len(self.starting_configurations))]
         # create directories for the configurations if they dont exist
-        for i in range(len(self.starting_configurations)):
-            conf_dir = os.path.join(self.workdir,
-                                    f"{self.configuration_dir_prefix}_{str(i)}")
+        # also keep the configuration dirs in a list
+        # this way users can choose their favourite name for each configuration
+        self._conf_dirs = []
+        for i, vals in enumerate(self.starting_configurations):
+            if len(vals) >= 3:
+                # starting_configurations are tuples/list containing at least
+                # the traj(==conf), the index in the traj (==idx)
+                # and optionaly a name to use
+                conf, idx, name = vals
+                conf_dir = os.path.join(self.workdir, f"{name}")
+            else:
+                conf_dir = os.path.join(self.workdir,
+                                        f"{self.configuration_dir_prefix}_{str(i)}")
+            self._conf_dirs.append(conf_dir)
             if not os.path.isdir(conf_dir):
                 # if its not a directory it either exists (then we will err)
                 # or we just create it
                 os.mkdir(conf_dir)
 
-    # TODO!:
-    # should be possible to restart from working directory
-    # possibly we will have to save some variables in init (e.g. T)
-    # we will need to repopulate self._states_reached !
-    @classmethod
-    def from_workdir(cls):
-        raise NotImplementedError
+    async def reinitialize_from_workdir(self):
+        """
+        Reassess all trials in workdir and populate states_reached counter.
+
+        Possibly extend trials if no state has been reached yet.
+        Add missing backwards shots from scratch if the previous run has been
+        with two_way=False and this one has two_way=True.
+        """
+        # make sure we set everything to zero before we start!
+        self._shot_counter = 0
+        self._states_reached = [[] for _ in range(len(self.starting_configurations))]
+        # find out how many shots we did per configuration, for now we assume
+        # that everything went well and we have an equal number of shots per configuration
+        dir_list = os.listdir(os.path.join(self.workdir, self._conf_dirs[0]))
+        filtered = [d for d in dir_list if d.startswith(self.shot_dir_prefix)]
+        n_shots = len(filtered)
+        return await self._run(n_per_struct=n_shots, continuation=True)
 
     @property
     def states_reached(self):
@@ -918,7 +940,7 @@ class CommittorSimulation:
                 ret[i][j][state_reached] += 1
         return ret
 
-    async def _run_single_trial_ow(self, conf_num, shot_num, step_dir):
+    async def _run_single_trial_ow(self, conf_num, shot_num, step_dir, continuation):
         # construct propagator
         propagator = TrajectoryPropagatorUntilAnyState(
                                     states=self.states,
@@ -928,17 +950,23 @@ class CommittorSimulation:
                                     walltime_per_part=self.walltime_per_part,
                                     max_steps=self.max_steps,
                                                        )
-        # get starting configuration and write it out with random velocities
-        extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
         start_conf_name = os.path.join(step_dir,
                                        (f"{self.start_conf_name_prefix}_"
                                         + f"{self.deffnm_engine_out}.trr"),
                                        )
-        starting_conf = extractor_fw.extract(
-                            outfile=start_conf_name,
-                            traj_in=self.starting_configurations[conf_num][0],
-                            idx=self.starting_configurations[conf_num][1],
-                                             )
+        if not continuation:
+            # get starting configuration and write it out with random velocities
+            extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
+            starting_conf = extractor_fw.extract(
+                                outfile=start_conf_name,
+                                traj_in=self.starting_configurations[conf_num][0],
+                                idx=self.starting_configurations[conf_num][1],
+                                                 )
+        else:
+            starting_conf = Trajectory(
+                trajectory_file=start_conf_name,
+                structure_file=self.starting_configurations[conf_num][0].structure_file
+                                       )
         # and propagate
         out = await propagator.propagate_and_concatenate(
                                 starting_configuration=starting_conf,
@@ -947,11 +975,13 @@ class CommittorSimulation:
                                 tra_out=os.path.join(step_dir,
                                                      self.fname_traj_to_state
                                                      ),
+                                continuation=continuation,
+                                overwrite=(not continuation),
                                                          )
         tra_out, state_reached = out
         return state_reached
 
-    async def _run_single_trial_tw(self, conf_num, shot_num, step_dir):
+    async def _run_single_trial_tw(self, conf_num, shot_num, step_dir, continuation):
         # NOTE: this is a potential misuse of a committor simulation,
         #       see the note further down for more on why it is/should be ok
         # propagators
@@ -965,39 +995,63 @@ class CommittorSimulation:
                                                          )
                        for _ in range(2)]
         # forward starting configuration
-        extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
         start_conf_name_fw = os.path.join(step_dir,
                                           (f"{self.start_conf_name_prefix}_"
                                            + f"{self.deffnm_engine_out}.trr"),
                                           )
-        starting_conf_fw = extractor_fw.extract(
-                              outfile=start_conf_name_fw,
-                              traj_in=self.starting_configurations[conf_num][0],
-                              idx=self.starting_configurations[conf_num][1],
-                                               )
+        continuation_fw = continuation
+        if not continuation_fw:
+            extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
+            starting_conf_fw = extractor_fw.extract(
+                                  outfile=start_conf_name_fw,
+                                  traj_in=self.starting_configurations[conf_num][0],
+                                  idx=self.starting_configurations[conf_num][1],
+                                                   )
+        else:
+            starting_conf_fw = Trajectory(
+                trajectory_file=start_conf_name_fw,
+                structure_file=self.starting_configurations[conf_num][0].structure_file
+                                       )
         # backwards starting configuration (forward with inverted velocities)
-        extractor_bw = InvertedVelocitiesFrameExtractor()
         start_conf_name_bw = os.path.join(step_dir,
                                           (f"{self.start_conf_name_prefix}_"
                                            + f"{self.deffnm_engine_out_bw}.trr"),
                                           )
-        starting_conf_bw = extractor_bw.extract(
-                              outfile=start_conf_name_bw,
-                              traj_in=starting_conf_fw,
-                              idx=0,
-                                               )
+        if continuation:
+            # check if we ever started the backwards trial
+            if os.path.isfile(start_conf_name_bw):
+                starting_conf_bw = Trajectory(
+                    trajectory_file=start_conf_name_bw,
+                    structure_file=self.starting_configurations[conf_num][0].structure_file
+                                       )
+                continuation_bw = True
+            else:
+                # if not start backwards trial from scratch
+                continuation_bw = False
+        if not continuation_bw:
+            # write out the starting configuration if it is no continuation
+            extractor_bw = InvertedVelocitiesFrameExtractor()
+            starting_conf_bw = extractor_bw.extract(
+                                  outfile=start_conf_name_bw,
+                                  traj_in=starting_conf_fw,
+                                  idx=0,
+                                                   )
         # and propagate
         trials = await asyncio.gather(*(
                         p.propagate(starting_configuration=sconf,
                                     workdir=step_dir,
                                     deffnm=deffnm,
+                                    continuation=cont,
                                     )
-                        for p, sconf, deffnm in zip(propagators,
+                        for p, sconf, deffnm, cont in zip(
+                                                    propagators,
                                                     [starting_conf_fw,
                                                      starting_conf_bw],
                                                     [self.deffnm_engine_out,
-                                                     self.deffnm_engine_out_bw]
-                                                    )
+                                                     self.deffnm_engine_out_bw],
+                                                    [continuation_fw,
+                                                     continuation_bw]
+                                                          )
                                         )
                                       )
         # check where they went: construct TP if possible, else concatenate
@@ -1020,7 +1074,7 @@ class CommittorSimulation:
                             minus_trajs=minus_trajs, minus_state=minus_state,
                             plus_trajs=plus_trajs, plus_state=plus_state,
                             state_funcs=self.states, tra_out=tra_out,
-                            struct_out=None, overwrite=False,
+                            struct_out=None, overwrite=(not continuation),
                                                                              )
         # TODO: do we want to concatenate the trials to states in any way?
         # i.e. independent of if we can form a TP? or only for no TP cases?
@@ -1035,7 +1089,8 @@ class CommittorSimulation:
                          ]
         # TODO: we currently dont use the return, should call as _ = ... ?
         concats = await asyncio.gather(*(
-                        p.cut_and_concatenate(trajs=trajs, tra_out=tra_out)
+                        p.cut_and_concatenate(trajs=trajs, tra_out=tra_out,
+                                              overwrite=(not continuation))
                         for p, trajs, tra_out in zip(propagators,
                                                      [fw_trajs, bw_trajs],
                                                      out_tra_names
@@ -1045,28 +1100,35 @@ class CommittorSimulation:
         # (tra_out_fw, fw_state), (tra_out_bw, bw_state) = concats
         return fw_state
 
-    async def _run_single_trial(self, conf_num, shot_num, two_way):
+    async def _run_single_trial(self, conf_num, shot_num, two_way, continuation):
         n = 0
         step_dir = os.path.join(
                         self.workdir,
-                        f"{self.configuration_dir_prefix}_{str(conf_num)}",
+                        self._conf_dirs[conf_num],
                         f"{self.shot_dir_prefix}_{str(shot_num)}",
                                 )
         while True:  # what could possibly go wrong? ;)
             # retry max_tries_on_crash times before giving up
-            os.mkdir(step_dir)
+            if continuation and n == 0:
+                # dont try to make the directory if we continue a trial
+                pass
+            else:
+                # make it if we dont continue or after we crashed (also when continuing)
+                os.mkdir(step_dir)
             try:
                 if two_way:
                     state_reached = await self._run_single_trial_tw(
                                                             conf_num=conf_num,
                                                             shot_num=shot_num,
                                                             step_dir=step_dir,
+                                                            continuation=continuation,
                                                                     )
                 else:
                     state_reached = await self._run_single_trial_ow(
                                                             conf_num=conf_num,
                                                             shot_num=shot_num,
                                                             step_dir=step_dir,
+                                                            continuation=continuation,
                                                                     )
             except EngineCrashedError as e:
                 # catch error raised when gromacs crashes
@@ -1100,7 +1162,10 @@ class CommittorSimulation:
             finally:
                 n += 1
 
-    async def run(self, n_per_struct):
+    async def _run(self, n_per_struct, continuation):
+        # NOTE: make this private so we can use it from reassess with continuation
+        #       but avoid unhappy users who dont understand when/how continuation
+        #       can/should be used
         # first construct the list of all coroutines
         # Note that calling them will not (yet) schedule them for execution
         # we do this later while respecting self.n_max_concurrent
@@ -1122,6 +1187,7 @@ class CommittorSimulation:
             tasks += [self._run_single_trial(conf_num=cnum,
                                              shot_num=snum,
                                              two_way=self.two_way[cnum],
+                                             continuation=continuation,
                                              )
                       for snum in range(self._shot_counter,
                                         self._shot_counter + n_per_struct
@@ -1138,6 +1204,9 @@ class CommittorSimulation:
         # TODO: we return the total states reached per shot?!
         #       or should we return only for this run?
         return self.states_reached_per_shot
+
+    async def run(self, n_per_struct):
+        return await self._run(n_per_struct=n_per_struct, continuation=False)
 
 
 async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_state,
