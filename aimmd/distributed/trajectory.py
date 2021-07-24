@@ -273,6 +273,7 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                                    + f"executable {self.executable} on "
                                    + f"trajectory {traj.trajectory_file} "
                                    + f"(slurm jobid {slurm_proc.slurm_jobid})."
+                                   + f" Exit code was: {exit_code}."
                                    )
             os.remove(sbatch_fname)
             if self.load_results_func is None:

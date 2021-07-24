@@ -23,6 +23,7 @@ import logging
 from .trajectory import Trajectory
 from .slurm import SlurmProcess
 from .mdconfig import MDP
+from .gmx_utils import nstout_from_mdp
 
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,12 @@ class GmxEngine(MDEngine):
     # i.e. cmd = base_cmd + " " + extra_args
     grompp_extra_args = ""
     mdrun_extra_args = ""
+    output_traj_type = "trr"  # file ending of the returned output trajectories
+                              # NOTE: this will be the traj we count frames for
+                              #       and check the mdp, etc.
+                              #       However this does not mean that no other
+                              #       trajs will/can be written, we simply
+                              #       ignore them
 
     def __init__(self, gro_file, top_file, ndx_file=None, **kwargs):
         # make it possible to set any attribute via kwargs
@@ -135,6 +142,7 @@ class GmxEngine(MDEngine):
         # number of frames produced since last call to prepare, used for
         # both properties: steps_done and frames_done
         self._frames_done = 0
+        self._nstout = None
         # Popen handle for gmx mdrun, used to check if we are running
         self._proc = None
         # these are set by prepare() and used by run_XX()
@@ -180,10 +188,12 @@ class GmxEngine(MDEngine):
             # TODO: check self._run_config if we write trr and/or xtc traj!
             traj = Trajectory(
                     trajectory_file=os.path.join(
-                        self.workdir, f"{self._deffnm}{self._num_suffix()}.trr"
+                                        self.workdir,
+                                        (f"{self._deffnm}{self._num_suffix()}"
+                                         + f".{self.output_traj_type}")
                                                  ),
                     structure_file=os.path.join(self.workdir, self._tpr),
-                    nstout=self._run_config["nstxout"],
+                    nstout=self.nstout,
                               )
             return traj
         else:
@@ -263,22 +273,37 @@ class GmxEngine(MDEngine):
         # set it anyway (even if it is None)
         self._ndx_file = val
 
+    # TODO/FIXME: we assume that all output frequencies are multiples of the
+    #             smallest when determing the number of frames etc
+    @property
+    def nstout(self):
+        """
+        Smallest output frequency for current output_traj_type.
+        """
+        if self._nstout is None:
+            if self._run_config is None:
+                raise RuntimeError("Can determine nstout only after calling"
+                                   + " prepare, i.e. when the mdp is know.")
+            nstout = nstout_from_mdp(self._run_config,
+                                     traj_type=self.output_traj_type)
+            self._nstout = nstout
+        return self._nstout
+
     @property
     def steps_done(self):
         """
         Number of integration steps done since last call to `self.prepare()`.
 
-        Note: steps = frames * nstxout
+        Note: steps = frames * nstout
         """
-        # TODO: this will break as soon as we allow other output trajs than trr
-        return self._frames_done * self._run_config["nstxout"]
+        return self._frames_done * self.nstout
 
     @property
     def frames_done(self):
         """
         Number of frames produced since last call to `self.prepare()`.
 
-        Note: frames = steps / nstxout
+        Note: frames = steps / nstout
         """
         return self._frames_done
 
@@ -300,6 +325,11 @@ class GmxEngine(MDEngine):
                         + "(infinte), run length is controlled via run args.")
             run_config["nsteps"] = -1
         self._run_config = run_config
+        self._nstout = None
+        # NOTE: the line above makes sure we read the possibly changed nstout
+        #       from the new mdp!
+        # TODO: maybe make run_config a property and take care of (re)setting
+        #       everything that we derive from it when it is set/accessed?
         self._deffnm = deffnm
         # check 'simulation-part' option in mdp file / MDP options
         # it decides at which .partXXXX the gmx numbering starts,
@@ -396,8 +426,16 @@ class GmxEngine(MDEngine):
                                + "and/or check if it is still running.")
         if all(kwarg is None for kwarg in [nsteps, walltime]):
             raise ValueError("Neither steps nor walltime given.")
-        if steps_per_part:
-            nsteps = nsteps + self.steps_done
+        if nsteps is not None:
+            if nsteps % self.nstout != 0:
+                raise ValueError(f"nsteps ({nsteps}) must be a multiple of "
+                                 + f"nstout ({self.nstout}).")
+            if not steps_per_part:
+                nsteps = nsteps - self.steps_done
+            if nsteps < 0:
+                raise ValueError(f"nsteps is too small ({nsteps} steps for "
+                                 + "this part). Can not travel backwards in "
+                                 + "time...")
 
         self._simulation_part += 1
         cmd_str = self._mdrun_cmd(tpr=self._tpr, deffnm=self._deffnm,
@@ -411,8 +449,9 @@ class GmxEngine(MDEngine):
             self._proc.kill()
         else:
             if exit_code != 0:
-                raise EngineCrashedError("Non-zero exit code from mdrun.")
-            self._frames_done += len(self.current_trajectory)
+                raise EngineCrashedError("Non-zero exit code from mdrun."
+                                         + f" Exit code was: {exit_code}.")
+            self._frames_done += len(self.current_trajectory) - 1
             return self.current_trajectory
 
     async def run_steps(self, nsteps, steps_per_part=False):
