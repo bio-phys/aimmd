@@ -23,7 +23,7 @@ import logging
 from .trajectory import Trajectory
 from .slurm import SlurmProcess
 from .mdconfig import MDP
-from .gmx_utils import nstout_from_mdp
+from .gmx_utils import nstout_from_mdp, get_all_traj_parts
 
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,12 @@ class MDEngine(abc.ABC):
     # NOTE: We assume that we do not change the system for/in one engine,
     #       i.e. .top, .ndx, ...?! should go into __init__
     def prepare(self, starting_configuration, workdir, deffnm, run_config):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def prepare_from_files(self, workdir, deffnm):
+        # this should prepare the engine to continue a previously stopped simulation
+        # starting with the last trajectory part in workdir that is compatible with deffnm
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -113,6 +119,7 @@ class GmxEngine(MDEngine):
                               #       However this does not mean that no other
                               #       trajs will/can be written, we simply
                               #       ignore them
+    first_frame_in_traj = True  # GmxEngines always output the initial frame
 
     def __init__(self, gro_file, top_file, ndx_file=None, **kwargs):
         # make it possible to set any attribute via kwargs
@@ -308,6 +315,9 @@ class GmxEngine(MDEngine):
         return self._frames_done
 
     async def prepare(self, starting_configuration, workdir, deffnm, run_config):
+        """
+        Prepare a fresh simulation (starting with part0001).
+        """
         # we require run_config to be a MDP (class)!
         # deffnm is the default name/prefix for all outfiles (as in gmx)
         self.workdir = workdir  # sets to abspath and check if it is a dir
@@ -388,6 +398,24 @@ class GmxEngine(MDEngine):
         # make sure we can not mistake a previous Popen for current mdrun
         self._proc = None
         self._frames_done = 0  # (re-)set how many frames we did
+        self._prepared = True
+
+    async def prepare_from_files(self, workdir, deffnm):
+        """Prepare continuation run starting from the last part found in workdir."""
+        self.workdir = workdir
+        previous_trajs = get_all_traj_parts(self.workdir, deffnm=deffnm,
+                                            traj_type=self.output_traj_type)
+        # not the 'original' original mdp, but as close as we can get
+        self._run_config = MDP(os.path.join(self.workdir, f"{deffnm}.mdp"))
+        self._nstout = None  # as in prepare: make sure we (re)parse nstout
+        self._deffnm = deffnm
+        # Note the we dont need to explicitly check for the tpr existing,
+        # if it does not exist we will err when getting the traj lengths
+        self._tpr = os.path.join(self.workdir, deffnm + ".tpr")
+        self._simulation_part = len(previous_trajs)
+        # len(t) - 1 because first frame is always in traj
+        self._frames_done = sum(len(t) - 1 for t in previous_trajs)
+        self._proc = None
         self._prepared = True
 
     async def _start_gmx_mdrun(self, cmd_str):

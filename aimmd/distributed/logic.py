@@ -30,6 +30,7 @@ from .trajectory import (TrajectoryConcatenator,
                          RandomVelocitiesFrameExtractor,
                          )
 from .mdengine import EngineCrashedError
+from .gmx_utils import get_all_traj_parts, nstout_from_mdp
 
 
 logger = logging.getLogger(__name__)
@@ -1228,7 +1229,7 @@ class TrajectoryPropagatorUntilAnyState:
     This class propagates the trajectory using a given MD engine (class) in
     small chunks (chunksize is dtermined by walltime_per_part) and checks after
     every chunk is done if any state has been reached.
-    I then returns either a list of trajectory parts and the state first
+    It then returns either a list of trajectory parts and the state first
     reached and can also concatenate the parts into one trajectory, which then
     starts with the starting configuration and ends with one frame in the state.
 
@@ -1298,20 +1299,25 @@ class TrajectoryPropagatorUntilAnyState:
             if gen_vel[0] != "no":
                 logger.warning(f"Setting 'gen-vel = no' in mdp (was '{gen_vel[0]}').")
                 self.run_config["gen-vel"] = ["no"]
-        # find out nstxout
-        # TODO/FIXME: we might want to be able to use this with xtc at some point?
-        #             then we need to check if we use nstxout or nstxout-compressed
-        # NOTE: if nstxout is not in the MDP GMX will default to 0
-        #       so I guess it is save to assume that it is in there?
-        nstxout = self.run_config["nstxout"]  # take the first, MDP entries are always a list
+        # find out nstout
+        # TODO: we are assuming GMX engines here...at some point we will write
+        #       a generic nstout_from_mdconfig method that sorts out which
+        #       sorts out which type of mdconfig was passed and then calls the
+        #       mdconfig specific helper function, e.g. nstout_from_mdp for mdp
+        try:
+            traj_type = engine_kwargs["output_traj_type"]
+        except KeyError:
+            # not in there so it will be the engine default
+            traj_type = engine_cls.output_traj_type
+        nstout = nstout_from_mdp(self.run_config, traj_type=traj_type)
         # sort out if we use max-frames or max-steps
         if max_frames is not None and max_steps is not None:
             logger.warning("Both max_steps and max_frames given. Note that "
                            + "max_steps will take precedence.")
         if max_steps is not None:
-            if not (max_steps % nstxout == 0):
-                raise ValueError("max_steps must be a multiple of nstxout")
-            self.max_frames = max_steps // nstxout
+            if not (max_steps % nstout == 0):
+                raise ValueError("max_steps must be a multiple of nstout")
+            self.max_frames = max_steps // nstout
         elif max_frames is not None:
             self.max_frames = max_frames
         else:
@@ -1346,7 +1352,8 @@ class TrajectoryPropagatorUntilAnyState:
         self._states = states
 
     async def propagate_and_concatenate(self, starting_configuration, workdir,
-                                        deffnm, tra_out, overwrite=False):
+                                        deffnm, tra_out, overwrite=False,
+                                        continuation=False):
         # this just chains propagate and cut_and_concatenate
         # usefull for committor simulations, for e.g. TPS one should try to
         # directly concatenate both directions to a full TP if possible
@@ -1355,6 +1362,7 @@ class TrajectoryPropagatorUntilAnyState:
                                 workdir=workdir,
                                 deffnm=deffnm,
                                 run_config=self.run_config,
+                                continuation=continuation
                                                           )
         # NOTE: it should not matter too much speedwise that we recalculate
         #       the state functions, they are expected to be wrapped traj-funcs
@@ -1366,13 +1374,16 @@ class TrajectoryPropagatorUntilAnyState:
                                                                         )
         return full_traj, first_state_reached
 
-    async def propagate(self, starting_configuration, workdir, deffnm):
+    async def propagate(self, starting_configuration, workdir, deffnm,
+                        continuation=False):
         # NOTE: curently this just returns a list of trajs + the state reached
         #       this feels a bit uncomfortable but avoids that we concatenate
         #       everything a quadrillion times when we use the results
         # starting_configuration - Trajectory with starting configuration (or None)
         # workdir - workdir for engine
         # deffnm - trajectory name(s) for engine (+ all other output file names)
+        # continuation - bool, if True we will try to continue a previous MD run
+        #                from files but possibly with new/differetn states
         # check first if the starting configuration is in any state
         state_vals = await self._state_vals_for_traj(starting_configuration)
         if np.any(state_vals):
@@ -1382,21 +1393,49 @@ class TrajectoryPropagatorUntilAnyState:
             trajs = [starting_configuration]
         else:
             engine = self.engine_cls(**self.engine_kwargs)
-            await engine.prepare(
+            if not continuation:
+                await engine.prepare(
                             starting_configuration=starting_configuration,
                             workdir=workdir,
                             deffnm=deffnm,
                             run_config=self.run_config,
-                                 )
-            any_state_reached = False
-            trajs = []
-            frame_counter = 0
+                                    )
+                any_state_reached = False
+                trajs = []
+                frame_counter = 0
+            else:
+                # NOTE: we assume that the state function could be different
+                # so get all traj parts and calculate the state functions on them
+                trajs = get_all_traj_parts(workdir, deffnm=deffnm,
+                                           traj_type=engine.output_traj_type)
+                state_vals = await asyncio.gather(
+                                *(self._state_vals_for_traj(t) for t in trajs)
+                                              )
+                states_vals = np.concatenate([np.asarray(s) for s in state_vals],
+                                             axis=1)
+                # see if we already reached a state on the existing traj parts
+                states_reached, frame_nums = np.where(states_vals)
+                # gets the frame with the lowest idx where any state is True
+                min_idx = np.argmin(frame_nums)
+                first_state_reached = states_reached[min_idx]
+                any_state_reached = np.any(state_vals)
+                if any_state_reached:
+                    # already reached a state, get out of here!
+                    return trajs, first_state_reached
+                # prepare the engine to continue the simulation until we reach
+                # any of the (new) states
+                await engine.prepare_from_files(workdir=workdir, deffnm=deffnm)
+                frame_counter = engine.frames_done
+
             while ((not any_state_reached)
                    and (frame_counter <= self.max_frames)):
                 traj = await engine.run_walltime(self.walltime_per_part)
                 state_vals = await self._state_vals_for_traj(traj)
                 any_state_reached = np.any(state_vals)
                 frame_counter += len(traj)
+                if self.engine_cls.first_frame_in_traj:
+                    # makes sure we do not double count frames
+                    frame_counter -= 1
                 trajs.append(traj)
             if not any_state_reached:
                 # left while loop because of max_frames reached
@@ -1436,8 +1475,6 @@ class TrajectoryPropagatorUntilAnyState:
         first_state_reached = states_reached[min_idx]
         first_frame_in_state = frame_nums[min_idx]
         # find out in which part it is
-        # TODO: is this overkill? can we assume first state occurence is in the
-        #       last traj part?!
         last_part_idx = 0
         frame_sum = part_lens[last_part_idx]
         while first_frame_in_state >= frame_sum:
