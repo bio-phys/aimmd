@@ -432,7 +432,7 @@ class GmxEngine(MDEngine):
                                  + f"nstout ({self.nstout}).")
             if not steps_per_part:
                 nsteps = nsteps - self.steps_done
-            if nsteps < 0:
+            if nsteps <= 0:
                 raise ValueError(f"nsteps is too small ({nsteps} steps for "
                                  + "this part). Can not travel backwards in "
                                  + "time...")

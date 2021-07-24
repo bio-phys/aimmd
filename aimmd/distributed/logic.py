@@ -806,7 +806,7 @@ class CommittorSimulation:
 
     def __init__(self, workdir, starting_configurations, states, engine_cls,
                  engine_kwargs, engine_run_config, T, walltime_per_part,
-                 n_max_concurrent=500, two_way=False, max_steps=None, **kwargs):
+                 n_max_concurrent=10, two_way=False, max_steps=None, **kwargs):
         # TODO: should some of these be properties?
         self.workdir = os.path.abspath(workdir)
         self.starting_configurations = starting_configurations
