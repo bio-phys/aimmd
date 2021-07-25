@@ -1531,6 +1531,14 @@ class TrajectoryPropagatorUntilAnyState:
                 frame_counter += len(traj)
                 if self.engine_cls.first_frame_in_traj:
                     # makes sure we do not double count frames
+                    # TODO/FIXME: this potentially undercounts!
+                    # some (all gmx) engines with first_frame_in_traj will not
+                    # write the initial conf when running for a specific walltime
+                    # this way we will undercount by always taking - 1, but
+                    # it should not matter much (?) because we do not call with
+                    # a specific number of steps anyway, i.e. max_frames is just
+                    # to avoid getting stuck forever and we do not care if we
+                    # potentially run a little longer
                     frame_counter -= 1
                 trajs.append(traj)
             if not any_state_reached:

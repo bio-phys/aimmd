@@ -105,6 +105,37 @@ class MDEngine(abc.ABC):
 # TODO: capture mdrun stdout+ stderr? for local gmx? for slurm it goes to file
 # NOTE: with tra we mean trr, i.e. a full precision trajectory with velocities
 class GmxEngine(MDEngine):
+    """
+    Steer gromacs molecular dynamics simulation from python.
+
+    An async/await enabled wrapper around gromacs grompp and gromacs mdrun.
+    Please use the power of concurrent execution of computationally bound
+    subprocesses responsibly... ;)
+
+    Notable functions:
+    ------------------
+        - `prepare()` provides grompp functionality
+        - `run()`, `run_walltime`, `run_steps()` start/run MD simulations
+        - `prepare_from_files()` can be used to continue a previous MD run
+
+    Notable properties:
+    -------------------
+        - `nstout`, `frames_done` and `steps_done` provide read-only access to
+           the trajectory output frequency and frames/steps done in total for
+           the current deffnm and workdir
+
+    Notable attributes:
+    -------------------
+        - `grompp_executable`/`mdrun_executable` can be used to customize the
+          name or path to the respective executables
+        - `grompp_extra_args`/`mdrun_extra_args` can be used to pass extra
+          command line arguments to the respective executables
+        - `output_traj_type` sets the trajectory type (ending) this engine
+          returns/looks for; Note that we simply ignore all other trajectories,
+          i.e. depending on the MDP settings we will still write xtc and trr,
+          but return only one of them
+    """
+
     # local prepare and option to run a local gmx (mainly for testing)
     grompp_executable = "gmx grompp"
     mdrun_executable = "gmx mdrun"
@@ -122,6 +153,19 @@ class GmxEngine(MDEngine):
     first_frame_in_traj = True  # GmxEngines always output the initial frame
 
     def __init__(self, gro_file, top_file, ndx_file=None, **kwargs):
+        """
+        Initialize a `GmxEngine`.
+
+        Parameters:
+        -----------
+        gro_file - absolute or relative path to a gromacs structure file
+        top_file - absolute or relative path to a gromacs topolgy (.top) file
+        ndx_file - (optional) absolute or relative path to a gromacs index file
+
+        Note that all attributes can be set at intialization by passing keyword
+        arguments with their name, e.g. mdrun_extra_args="-ntomp 2" to instruct
+        gromacs to use 2 openMP threads.
+        """
         # make it possible to set any attribute via kwargs
         # check the type for attributes with default values
         dval = object()
@@ -146,9 +190,12 @@ class GmxEngine(MDEngine):
         self.ndx_file = ndx_file  # sets self._ndx_file
         self._workdir = None
         self._prepared = False
-        # number of frames produced since last call to prepare, used for
-        # both properties: steps_done and frames_done
+        # NOTE: frames_done and steps_done do not have an easy relation!
+        #       See the steps_done property docstring for more!
+        # number of frames produced since last call to prepare
         self._frames_done = 0
+        # number of integration steps done since last call to prepare
+        self._steps_done = 0
         self._nstout = None
         # Popen handle for gmx mdrun, used to check if we are running
         self._proc = None
@@ -301,22 +348,46 @@ class GmxEngine(MDEngine):
         """
         Number of integration steps done since last call to `self.prepare()`.
 
-        Note: steps = frames * nstout
+        NOTE: steps != frames * nstout
+        Some remarks on the relation between frames_done and steps_done:
+        Usually (when passing `nsteps` to `run()`) frames_done will be equal to
+        steps_done/nstout + 1 because the initial/final configuration will be
+        written twice (since then the first/last step is always an output step)
+        However as soon as we run for a specific walltime (without specifying
+        `nsteps`) stuff gets complicated, then gromacs can potentially stop at
+        every neighbor search step (where it also can/will write a checkpoint).
+        If that step is not a trajectory output step, no output will be written
+        to the traj and then the plus 1 rule for the double written
+        initial/final configuration is off (since it will then be a 'normal'
+        configuration written just once).
+        If however the neighbor search and trajectory output fall togehter on
+        the same step the configuration will be written twice (as with `nsteps`
+        specified).
         """
-        return self._frames_done * self.nstout
+        return self._steps_done
 
     @property
     def frames_done(self):
         """
         Number of frames produced since last call to `self.prepare()`.
 
-        Note: frames = steps / nstout
+        NOTE: frames != steps / nstout
+        See the steps_done docstring for more.
         """
         return self._frames_done
 
     async def prepare(self, starting_configuration, workdir, deffnm, run_config):
         """
         Prepare a fresh simulation (starting with part0001).
+
+        Parameters:
+        -----------
+        starting_configuration - `aimmd.distributed.Trajectory` with a trr traj
+                                 or None, then the initial configuration is the
+                                 gro-file
+        workdir - absolute or relative path to an exisiting directory
+        deffnm - the name (prefix) to use for all files
+        run_config - `aimmd.distributed.MDP`, the molecular dynamics parameters
         """
         # we require run_config to be a MDP (class)!
         # deffnm is the default name/prefix for all outfiles (as in gmx)
@@ -327,7 +398,8 @@ class GmxEngine(MDEngine):
         elif isinstance(starting_configuration, Trajectory):
             trr_in = starting_configuration.trajectory_file
         else:
-            raise TypeError(f"starting_configuration must be a wrapped trr ({Trajectory}).")
+            raise TypeError("starting_configuration must be None or a wrapped "
+                            + f"trr ({Trajectory}).")
         if not isinstance(run_config, MDP):
             raise TypeError(f"run_config must be of type {MDP}.")
         if run_config["nsteps"] != -1:
@@ -398,14 +470,25 @@ class GmxEngine(MDEngine):
         # make sure we can not mistake a previous Popen for current mdrun
         self._proc = None
         self._frames_done = 0  # (re-)set how many frames we did
+        self._steps_done = 0
         self._prepared = True
 
     async def prepare_from_files(self, workdir, deffnm):
-        """Prepare continuation run starting from the last part found in workdir."""
+        """
+        Prepare continuation run starting from the last part found in workdir.
+
+        Expects all files to exists, will (probably) fail otherwise.
+
+        Parameters:
+        -----------
+        workdir - absolute or relative path to an exisiting directory
+        deffnm - the name (prefix) to use for all files, must be the same as
+                 for the previous run
+        """
         self.workdir = workdir
         previous_trajs = get_all_traj_parts(self.workdir, deffnm=deffnm,
                                             traj_type=self.output_traj_type)
-        # not the 'original' original mdp, but as close as we can get
+        # load the 'old' mdp_in
         self._run_config = MDP(os.path.join(self.workdir, f"{deffnm}.mdp"))
         self._nstout = None  # as in prepare: make sure we (re)parse nstout
         self._deffnm = deffnm
@@ -413,8 +496,11 @@ class GmxEngine(MDEngine):
         # if it does not exist we will err when getting the traj lengths
         self._tpr = os.path.join(self.workdir, deffnm + ".tpr")
         self._simulation_part = len(previous_trajs)
-        # len(t) - 1 because first frame is always in traj
-        self._frames_done = sum(len(t) - 1 for t in previous_trajs)
+        # len(t), because for frames we do not care if first frame is in traj
+        self._frames_done = sum(len(t) for t in previous_trajs)
+        # steps done is the more reliable info if we want to know how many
+        # integration steps we did
+        self._steps_done = previous_trajs[-1].last_step
         self._proc = None
         self._prepared = True
 
@@ -460,7 +546,15 @@ class GmxEngine(MDEngine):
                                  + f"nstout ({self.nstout}).")
             if not steps_per_part:
                 nsteps = nsteps - self.steps_done
-            if nsteps <= 0:
+            if nsteps == 0:
+                # Return None instead of raising an error, this makes it nicer
+                # to use the run method with walltime and total nsteps inside
+                # while loops, i.e. we can just call traj = e.run(...) and then
+                # while traj is not None: traj = e.run()
+                # TODO: this will make it complicated to ever use the GmxEngine
+                #       for zero-step simulations to only apply constraints
+                return None
+            elif nsteps < 0:
                 raise ValueError(f"nsteps is too small ({nsteps} steps for "
                                  + "this part). Can not travel backwards in "
                                  + "time...")
@@ -479,7 +573,10 @@ class GmxEngine(MDEngine):
             if exit_code != 0:
                 raise EngineCrashedError("Non-zero exit code from mdrun."
                                          + f" Exit code was: {exit_code}.")
-            self._frames_done += len(self.current_trajectory) - 1
+            self._frames_done += len(self.current_trajectory)
+            # dont care if we did a littel more and only the checkpoint knows
+            # we will only find out with the next trajectory part anyways
+            self._steps_done = self.current_trajectory.last_step
             return self.current_trajectory
 
     async def run_steps(self, nsteps, steps_per_part=False):
@@ -584,8 +681,24 @@ class SlurmGmxEngine(GmxEngine):
 
     mdrun_executable = "gmx_mpi mdrun"  # MPI as default for clusters
 
-    def __init__(self, gro_file, top_file, sbatch_script, **kwargs):
-        super().__init__(gro_file=gro_file, top_file=top_file, **kwargs)
+    def __init__(self, gro_file, top_file, sbatch_script, ndx_file=None, **kwargs):
+        """
+        Initialize a `SlurmGmxEngine`.
+
+        Parameters:
+        -----------
+        gro_file - absolute or relative path to a gromacs structure file
+        top_file - absolute or relative path to a gromacs topolgy (.top) file
+        sbatch_script - absolute or relative path to a slurm sbatch script
+                        or a string with the content of the sbatch script
+        ndx_file - (optional) absolute or relative path to a gromacs index file
+
+        Note that all attributes can be set at intialization by passing keyword
+        arguments with their name, e.g. mdrun_extra_args="-ntomp 2" to instruct
+        gromacs to use 2 openMP threads.
+        """
+        super().__init__(gro_file=gro_file, top_file=top_file, ndx_file=ndx_file,
+                         **kwargs)
         # we expect sbatch_script to be a str,
         # but it could be either the path to a submit script or the content of
         # the submission script directly
