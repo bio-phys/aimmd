@@ -1537,16 +1537,16 @@ class TrajectoryPropagatorUntilAnyState:
                 states_vals = np.concatenate([np.asarray(s) for s in state_vals],
                                              axis=1)
                 # see if we already reached a state on the existing traj parts
-                states_reached, frame_nums = np.where(states_vals)
-                # gets the frame with the lowest idx where any state is True
-                min_idx = np.argmin(frame_nums)
-                first_state_reached = states_reached[min_idx]
                 any_state_reached = np.any(state_vals)
                 if any_state_reached:
+                    states_reached, frame_nums = np.where(states_vals)
+                    # gets the frame with the lowest idx where any state is True
+                    min_idx = np.argmin(frame_nums)
+                    first_state_reached = states_reached[min_idx]
                     # already reached a state, get out of here!
                     return trajs, first_state_reached
-                # prepare the engine to continue the simulation until we reach
-                # any of the (new) states
+                # Did not reach a state yet, so prepare the engine to continue
+                # the simulation until we reach any of the (new) states
                 await engine.prepare_from_files(workdir=workdir, deffnm=deffnm)
                 frame_counter = engine.frames_done
 
