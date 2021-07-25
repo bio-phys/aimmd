@@ -11,15 +11,19 @@ import MDAnalysis as mda
 from MDAnalysis.lib.distances import calc_dihedrals
 
 
-def alpha_R(traj):
-    u = mda.Universe(traj.structure_file, traj.trajectory_file)
+def alpha_R(traj, skip=1):
+    # NOTE: use refresh_offsets=True such that we do not run into any trouble when
+    #       opening the same traj at the same time from two different processes/universes
+    #       to avoid reading a possibly corrupted/in the process of beeing created offsets
+    #       file we just rebuild all offsets
+    u = mda.Universe(traj.structure_file, traj.trajectory_file, refresh_offsets=True)
     psi_ag = u.select_atoms("index 6 or index 8 or index 14 or index 16")
     phi_ag = u.select_atoms("index 4 or index 6 or index 8 or index 14")
     # empty arrays to fill
-    state = np.full((len(u.trajectory),), False, dtype=bool)
-    phi = np.empty((len(u.trajectory),), dtype=np.float64)
-    psi = np.empty((len(u.trajectory),), dtype=np.float64)
-    for f, ts in enumerate(u.trajectory):
+    state = np.full((len(u.trajectory[::skip]),), False, dtype=bool)
+    phi = np.empty((len(u.trajectory[::skip]),), dtype=np.float64)
+    psi = np.empty((len(u.trajectory[::skip]),), dtype=np.float64)
+    for f, ts in enumerate(u.trajectory[::skip]):
         phi[f] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimensions)
         psi[f] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimensions)
     # phi: -pi -> 0
@@ -29,15 +33,15 @@ def alpha_R(traj):
     return state
 
 
-def C7_eq(traj):
-    u = mda.Universe(traj.structure_file, traj.trajectory_file)
+def C7_eq(traj, skip=1):
+    u = mda.Universe(traj.structure_file, traj.trajectory_file, refresh_offsets=True)
     psi_ag = u.select_atoms("index 6 or index 8 or index 14 or index 16")
     phi_ag = u.select_atoms("index 4 or index 6 or index 8 or index 14")
     # empty arrays to fill
-    state = np.full((len(u.trajectory),), False, dtype=bool)
-    phi = np.empty((len(u.trajectory),), dtype=np.float64)
-    psi = np.empty((len(u.trajectory),), dtype=np.float64)
-    for f, ts in enumerate(u.trajectory):
+    state = np.full((len(u.trajectory[::skip]),), False, dtype=bool)
+    phi = np.empty((len(u.trajectory[::skip]),), dtype=np.float64)
+    psi = np.empty((len(u.trajectory[::skip]),), dtype=np.float64)
+    for f, ts in enumerate(u.trajectory[::skip]):
         phi[f] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimensions)
         psi[f] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimensions)
     # phi: -pi -> 0
@@ -47,20 +51,20 @@ def C7_eq(traj):
     return state
 
 
-def descriptor_func_ic(traj):
+def descriptor_func_ic(traj, skip=1):
     # TODO: write this!
     raise NotImplementedError
 
 
-def descriptor_func_psi_phi(traj):
+def descriptor_func_psi_phi(traj, skip=1):
     """Only psi and phi angle as internal coords. Actually cos and sin for both of them."""
-    u = mda.Universe(traj.structure_file, traj.trajectory_file)
+    u = mda.Universe(traj.structure_file, traj.trajectory_file, refresh_offsets=True)
     psi_ag = u.select_atoms("index 6 or index 8 or index 14 or index 16")
     phi_ag = u.select_atoms("index 4 or index 6 or index 8 or index 14")
     # empty arrays to fill
-    phi = np.empty((len(u.trajectory), 1), dtype=np.float64)
-    psi = np.empty((len(u.trajectory), 1), dtype=np.float64)
-    for f, ts in enumerate(u.trajectory):
+    phi = np.empty((len(u.trajectory[::skip]), 1), dtype=np.float64)
+    psi = np.empty((len(u.trajectory[::skip]), 1), dtype=np.float64)
+    for f, ts in enumerate(u.trajectory[::skip]):
         phi[f, 0] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimensions)
         psi[f, 0] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimensions)
     
@@ -77,17 +81,18 @@ if __name__ == "__main__":
     parser.add_argument("-f", "--function", type=str,
                         default="descriptors",
                         choices=["alphaR", "C7eq", "descriptors_ic", "descriptors_psi_phi"])
+    parser.add_argument("-s", "--skip", type=int, default=1)
     args = parser.parse_args()
     # NOTE: since args is a namespace args.trajectory_file will be the path to
     #       the trajectory file, i.e. we can pass args instead of an
     #       aimmd.Trajectory to the functions above
     if args.function == "descriptors_ic":
-        vals = descriptor_func_ic(args)
+        vals = descriptor_func_ic(args, skip=args.skip)
     elif args.function == "descriptors_psi_phi":
-        vals = descriptor_func_psi_phi(args)
+        vals = descriptor_func_psi_phi(args, skip=args.skip)
     elif args.function == "alphaR":
-        vals = alpha_R(args)
+        vals = alpha_R(args, skip=args.skip)
     elif args.function == "C7eq":
-        vals = C7_eq(args)
+        vals = C7_eq(args, skip=args.skip)
 
     np.save(args.output_file, vals)
