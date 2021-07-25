@@ -205,10 +205,6 @@ class GmxEngine(MDEngine):
         self._run_config = None
         # tpr for trajectory (part), will become the structure/topology file
         self._tpr = None
-        # TODO?!
-        # counter for frames already produced, needed to enable run(nsteps)
-        # to count steps per part
-        # since gromacs takes nsteps since the beginning of the simulation
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -238,8 +234,6 @@ class GmxEngine(MDEngine):
             #if self._simulation_part == 0:
             if self._proc is None:
                 return None
-            # TODO: check that nstxout == nstvout?!
-            # TODO: check self._run_config if we write trr and/or xtc traj!
             traj = Trajectory(
                     trajectory_file=os.path.join(
                                         self.workdir,
@@ -329,6 +323,7 @@ class GmxEngine(MDEngine):
 
     # TODO/FIXME: we assume that all output frequencies are multiples of the
     #             smallest when determing the number of frames etc
+    # TODO: check that nstxout == nstvout?!
     @property
     def nstout(self):
         """
@@ -663,6 +658,7 @@ class GmxEngine(MDEngine):
         return cmd
 
 
+# TODO: DOCUMENT!
 class SlurmGmxEngine(GmxEngine):
     # use local prepare (i.e. grompp) of GmxEngine then submit run to slurm
     # we reuse the `GmxEngine._proc` to keep the jobid

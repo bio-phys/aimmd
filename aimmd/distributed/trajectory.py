@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 # TODO: DOCUMENT!
+# TODO: DaskTrajectoryFunctionWrapper?!
 class TrajectoryFunctionWrapper:
     """ABC to define the API and some common methods."""
     def __init__(self) -> None:
@@ -585,7 +586,7 @@ class FrameExtractor(abc.ABC):
     # with inverted velocities, with random Maxwell-Boltzmann velocities, etc.
 
     @abc.abstractmethod
-    def apply_modification(self, universe):
+    def apply_modification(self, universe, ts):
         # this func will is called when the current timestep is at the choosen
         # frame and applies the subclass specific frame modifications to the
         # mdanalysis universe, after this function finishes the frames is
@@ -631,7 +632,7 @@ class FrameExtractor(abc.ABC):
 class NoModificationFrameExtractor(FrameExtractor):
     """Extract a frame from a trajectory, write it out without modification."""
 
-    def apply_modification(self, universe):
+    def apply_modification(self, universe, ts):
         pass
 
 

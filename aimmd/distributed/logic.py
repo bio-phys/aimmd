@@ -1323,8 +1323,8 @@ class TrajectoryPropagatorUntilAnyState:
     Propagate a trajectory until any of the states is reached.
 
     This class propagates the trajectory using a given MD engine (class) in
-    small chunks (chunksize is dtermined by walltime_per_part) and checks after
-    every chunk is done if any state has been reached.
+    small chunks (chunksize is determined by walltime_per_part) and checks
+    after every chunk is done if any state has been reached.
     It then returns either a list of trajectory parts and the state first
     reached and can also concatenate the parts into one trajectory, which then
     starts with the starting configuration and ends with one frame in the state.
@@ -1450,6 +1450,21 @@ class TrajectoryPropagatorUntilAnyState:
     async def propagate_and_concatenate(self, starting_configuration, workdir,
                                         deffnm, tra_out, overwrite=False,
                                         continuation=False):
+        """
+        Chain `propagate` and `concatenate` methods.
+
+        Parameters:
+        -----------
+        starting_configuration - `aimmd.distributed.Trajectory`
+        workdir - absolute or relative path to an existing directory
+        deffnm - the name to use for all MD engine output files
+        tra_out - the filename of the output trajectory
+        overwrite - whether to overwrite any existing output trajectories
+        continuation - bool, whether to (try to) continue a previous run
+                       with given workdir and deffnm but possibly changed states
+
+        Returns (traj_to_state, idx_of_state_reached)
+        """
         # this just chains propagate and cut_and_concatenate
         # usefull for committor simulations, for e.g. TPS one should try to
         # directly concatenate both directions to a full TP if possible
@@ -1457,7 +1472,6 @@ class TrajectoryPropagatorUntilAnyState:
                                 starting_configuration=starting_configuration,
                                 workdir=workdir,
                                 deffnm=deffnm,
-                                run_config=self.run_config,
                                 continuation=continuation
                                                           )
         # NOTE: it should not matter too much speedwise that we recalculate
@@ -1472,6 +1486,19 @@ class TrajectoryPropagatorUntilAnyState:
 
     async def propagate(self, starting_configuration, workdir, deffnm,
                         continuation=False):
+        """
+        Propagate trajectory in parts until any of the states is reached.
+
+        Parameters:
+        -----------
+        starting_configuration - `aimmd.distributed.Trajectory`
+        workdir - absolute or relative path to an existing directory
+        deffnm - the name to use for all MD engine output files
+        continuation - bool, whether to (try to) continue a previous run
+                       with given workdir and deffnm but possibly changed states
+
+        Returns (list_of_traj_parts, idx_of_first_state_reached)
+        """
         # NOTE: curently this just returns a list of trajs + the state reached
         #       this feels a bit uncomfortable but avoids that we concatenate
         #       everything a quadrillion times when we use the results
@@ -1559,6 +1586,21 @@ class TrajectoryPropagatorUntilAnyState:
         return trajs, first_state_reached
 
     async def cut_and_concatenate(self, trajs, tra_out, overwrite=False):
+        """
+        Cut out and concatenate the trajectory until the first state is reached.
+
+        The expected input is a list of trajectories, e.g. the output of the
+        `propagate` method.
+
+        Parameters:
+        -----------
+        trajs - list of `aimmd.distributed.Trajectory`, a continous trajectory
+                split in seperate parts
+        tra_out - the filename of the output trajectory
+        overwrite - whether to overwrite any existing output trajectories
+
+        Returns (traj_to_state, idx_of_first_state_reached)
+        """
         # trajs is a list of trajectoryes, e.g. the return of propagate
         # tra_out and overwrite are passed directly to the Concatenator
         # NOTE: we assume that frame0 of traj0 is outside of any state
