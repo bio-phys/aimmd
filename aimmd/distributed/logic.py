@@ -1417,8 +1417,8 @@ class TrajectoryPropagatorUntilAnyState:
         elif max_frames is not None:
             self.max_frames = max_frames
         else:
-            logger.warning("Neither max_frames nor max_steps given. "
-                           + "Setting max_frames to infinity.")
+            logger.info("Neither max_frames nor max_steps given. "
+                        + "Setting max_frames to infinity.")
             # this is a float but can be compared to ints
             self.max_frames = np.inf
 
