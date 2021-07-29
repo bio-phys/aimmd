@@ -1011,7 +1011,7 @@ class CommittorSimulation:
                         # a deffnm.tpr/mdp etc or a deffnm.partXXXX.trr/xtc etc
                         # so move it
                         os.rename(os.path.join(step_dir, f), os.path.join(subdir, f))
-                    elif "step" in splits[0] and splits[-1] == ".pdb":
+                    elif "step" in splits[0] and splits[-1] == "pdb":
                         # the gromacs stepXXXa/b/c/d.pdb files, that are
                         # written on decomposition errors/too high forces etc
                         # move them too!
@@ -1137,7 +1137,7 @@ class CommittorSimulation:
                                 # so move it
                                 os.rename(os.path.join(step_dir, f),
                                           os.path.join(subdir, f))
-                            elif "step" in splits[0] and splits[-1] == ".pdb":
+                            elif "step" in splits[0] and splits[-1] == "pdb":
                                 # the gromacs stepXXXa/b/c/d.pdb files, that are
                                 # written on decomposition errors/too high forces etc
                                 # move them too!
@@ -1147,15 +1147,17 @@ class CommittorSimulation:
                         # get the task out of the list
                         _ = trials_pending.pop(t_idx)
                         # resubmit the task
-                        trials_pending.insert(asyncio.create_task(
-                                        propagators[t_idx].propagate(
+                        trials_pending.insert(
+                                        t_idx,
+                                        asyncio.create_task(
+                                            propagators[t_idx].propagate(
                                                starting_configuration=starting_confs[t_idx],
                                                workdir=step_dir,
                                                deffnm=deffnms_engine_out[t_idx],
                                                # we crashed so there is nothing to continue from anymore
                                                continuation=False,
-                                                                     )
-                                                                  )
+                                                                         )
+                                                            )
                                               )
                         # and increase counter
                         ns[t_idx] += 1
