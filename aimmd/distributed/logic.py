@@ -14,7 +14,6 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
-import collections
 import os
 import abc
 import asyncio
@@ -968,18 +967,45 @@ class CommittorSimulation:
                 structure_file=self.starting_configurations[conf_num][0].structure_file
                                        )
         # and propagate
-        out = await propagator.propagate_and_concatenate(
-                                starting_configuration=starting_conf,
-                                workdir=step_dir,
-                                deffnm=self.deffnm_engine_out,
-                                tra_out=os.path.join(step_dir,
-                                                     self.fname_traj_to_state
-                                                     ),
-                                continuation=continuation,
-                                overwrite=(not continuation),
-                                                         )
-        tra_out, state_reached = out
-        return state_reached
+        n = 0
+        while True:
+            try:
+                out = await propagator.propagate_and_concatenate(
+                                    starting_configuration=starting_conf,
+                                    workdir=step_dir,
+                                    deffnm=self.deffnm_engine_out,
+                                    tra_out=os.path.join(step_dir,
+                                                         self.fname_traj_to_state
+                                                         ),
+                                    # can only continue if we did not crash (yet)
+                                    continuation=(continuation and n == 0),
+                                                                 )
+            except (MaxFramesReachedError, EngineCrashedError) as e:
+                if n < self.max_retries_on_crash:
+                    if isinstance(e, EngineCrashedError):
+                        subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
+                                                         + f"_{n}crash"))
+                    elif isinstance(e, MaxFramesReachedError):
+                        subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
+                                                         + f"_{n}max_len"))
+                else:
+                    raise e from None
+                # we only end up here if there is cleanup/moving to do
+                os.mkdir(subdir)
+                all_files = os.listdir(step_dir)
+                for f in all_files:
+                    splits = f.split(".")
+                    if splits[0] == f"{self.deffnm_engine_out}":
+                        # if it is exactly deffnm_out it can only be
+                        # a deffnm.tpr/mdp etc or a deffnm.partXXXX.trr/xtc etc
+                        # so move it
+                        os.rename(os.path.join(step_dir, f), os.path.join(subdir, f))
+            else:
+                # no error, return and get out of here
+                tra_out, state_reached = out
+                return state_reached
+            finally:
+                n += 1
 
     async def _run_single_trial_tw(self, conf_num, shot_num, step_dir, continuation):
         # NOTE: this is a potential misuse of a committor simulation,
@@ -1037,25 +1063,91 @@ class CommittorSimulation:
                                   idx=0,
                                                    )
         # and propagate
-        trials = await asyncio.gather(*(
-                        p.propagate(starting_configuration=sconf,
-                                    workdir=step_dir,
-                                    deffnm=deffnm,
-                                    continuation=cont,
-                                    )
-                        for p, sconf, deffnm, cont in zip(
-                                                    propagators,
-                                                    [starting_conf_fw,
-                                                     starting_conf_bw],
-                                                    [self.deffnm_engine_out,
-                                                     self.deffnm_engine_out_bw],
-                                                    [continuation_fw,
-                                                     continuation_bw]
-                                                          )
-                                        )
+        ns = [0, 0]
+        starting_confs = [starting_conf_fw, starting_conf_bw]
+        deffnms_engine_out = [self.deffnm_engine_out, self.deffnm_engine_out_bw]
+        continuations = [continuation_fw, continuation_bw]
+        trials_pending = [asyncio.create_task(
+                          p.propagate(starting_configuration=sconf,
+                                      workdir=step_dir,
+                                      deffnm=deffnm,
+                                      continuation=cont,
                                       )
+                          for p, sconf, deffnm, cont in zip(propagators,
+                                                            starting_confs,
+                                                            deffnms_engine_out,
+                                                            continuations,
+                                                            )
+                                              )
+                          ]
+        trials_done = [None for _ in range(2)]
+        while any([t is None for t in trials_done]):
+            # we leave the loop either when everything is done or via exceptions raised
+            done, pending = await asyncio.wait(trials_pending,
+                                               return_when=asyncio.FIRST_EXCEPTION,
+                                               )
+            for t in done:
+                t_idx = trials_pending.index(t)
+                if isinstance(t.exception(), (EngineCrashedError,
+                                              MaxFramesReachedError)):
+                    # catch error raised when gromacs crashes
+                    if ns[t_idx] < self.max_retries_on_crash:
+                        logger.warning("MD engine crashed. Retrying committor "
+                                       + f"step: Configuration {str(conf_num)}"
+                                       + f", shot {str(shot_num)}, "
+                                       + f"deffm {deffnms_engine_out[t_idx]}.")
+                        # move the files to a subdirectory
+                        if isinstance(t.exception(), EngineCrashedError):
+                            subdir = os.path.join(step_dir,
+                                                  (f"{deffnms_engine_out[t_idx]}"
+                                                   + f"_{ns[t_idx]}crash")
+                                                  )
+                        elif isinstance(t.exception(), MaxFramesReachedError):
+                            subdir = os.path.join(step_dir,
+                                                  (f"{deffnms_engine_out[t_idx]}"
+                                                   + f"_{ns[t_idx]}max_len")
+                                                  )
+                        else:
+                            raise RuntimeError("This should never happen!")
+                        os.mkdir(subdir)
+                        all_files = os.listdir(step_dir)
+                        for f in all_files:
+                            splits = f.split(".")
+                            if splits[0] == f"{deffnms_engine_out[t_idx]}":
+                                # if it is exactly deffnm_out it can only be
+                                # a deffnm.tpr/mdp etc or a deffnm.partXXXX.trr/xtc etc
+                                # so move it
+                                os.rename(os.path.join(step_dir, f),
+                                          os.path.join(subdir, f))
+                        # get the task out of the list
+                        _ = trials_pending.pop(t_idx)
+                        # resubmit the task
+                        trials_pending.insert(asyncio.create_task(
+                                        propagators[t_idx].propagate(
+                                               starting_configuration=starting_confs[t_idx],
+                                               workdir=step_dir,
+                                               deffnm=deffnms_engine_out[t_idx],
+                                               # we crashed so there is nothing to continue from anymore
+                                               continuation=False,
+                                                                     )
+                                                                  )
+                                              )
+                        # and increase counter
+                        ns[t_idx] += 1
+                    else:
+                        # reached maximum tries, raise the error and crash the sampling :)
+                        raise t.exception() from None
+                elif t.exception() is not None:
+                    # any other exception
+                    # raise directly
+                    raise t.exception() from None
+                else:
+                    # no exception raised
+                    # put the result into trials_done at the right idx
+                    t_idx = trials_pending.index(t)
+                    trials_done[t_idx] = t.result()
         # check where they went: construct TP if possible, else concatenate
-        (fw_trajs, fw_state), (bw_trajs, bw_state) = trials
+        (fw_trajs, fw_state), (bw_trajs, bw_state) = trials_done
         if fw_state == bw_state:
             logger.info(f"Both trials reached state {fw_state}.")
         else:
@@ -1074,7 +1166,7 @@ class CommittorSimulation:
                             minus_trajs=minus_trajs, minus_state=minus_state,
                             plus_trajs=plus_trajs, plus_state=plus_state,
                             state_funcs=self.states, tra_out=tra_out,
-                            struct_out=None, overwrite=(not continuation),
+                            struct_out=None, overwrite=False,
                                                                              )
         # TODO: do we want to concatenate the trials to states in any way?
         # i.e. independent of if we can form a TP? or only for no TP cases?
@@ -1090,7 +1182,7 @@ class CommittorSimulation:
         # TODO: we currently dont use the return, should call as _ = ... ?
         concats = await asyncio.gather(*(
                         p.cut_and_concatenate(trajs=trajs, tra_out=tra_out,
-                                              overwrite=(not continuation))
+                                              overwrite=False)
                         for p, trajs, tra_out in zip(propagators,
                                                      [fw_trajs, bw_trajs],
                                                      out_tra_names
@@ -1101,66 +1193,30 @@ class CommittorSimulation:
         return fw_state
 
     async def _run_single_trial(self, conf_num, shot_num, two_way, continuation):
-        n = 0
         step_dir = os.path.join(
                         self.workdir,
                         self._conf_dirs[conf_num],
                         f"{self.shot_dir_prefix}_{str(shot_num)}",
                                 )
-        while True:  # what could possibly go wrong? ;)
-            # retry max_tries_on_crash times before giving up
-            if continuation and n == 0:
-                # dont try to make the directory if we continue a trial
-                pass
-            else:
-                # make it if we dont continue or after we crashed (also when continuing)
-                os.mkdir(step_dir)
-            try:
-                if two_way:
-                    state_reached = await self._run_single_trial_tw(
-                                                            conf_num=conf_num,
-                                                            shot_num=shot_num,
-                                                            step_dir=step_dir,
-                                                            continuation=continuation,
-                                                                    )
-                else:
-                    state_reached = await self._run_single_trial_ow(
-                                                            conf_num=conf_num,
-                                                            shot_num=shot_num,
-                                                            step_dir=step_dir,
-                                                            continuation=continuation,
-                                                                    )
-            except EngineCrashedError as e:
-                # catch error raised when gromacs crashes
-                if n < self.max_retries_on_crash:
-                    logger.warning("MD engine crashed. Retrying committor step"
-                                   + f": Configuration {str(conf_num)}, "
-                                   + f"shot {str(shot_num)}.")
-                    # wait a sec for the cleanup to finish
-                    await asyncio.sleep(self.wait_time_on_crash)
-                    # move stepdir and retry
-                    os.rename(step_dir, step_dir + f"_{n+1}crash")
-                else:
-                    # reached maximum tries, raise the error and crash the sampling :)
-                    raise e from None
-            except MaxFramesReachedError as e:
-                # catch error raised when we reach max frames
-                if n < self.max_retries_on_crash:
-                    logger.warning("Reached maximum number of integration steps."
-                                   + "Retrying committor step"
-                                   + f": Configuration {str(conf_num)}, "
-                                   + f"shot {str(shot_num)}.")
-                    # wait a sec for the cleanup to finish
-                    await asyncio.sleep(self.wait_time_on_crash)
-                    # move stepdir and retry
-                    os.rename(step_dir, step_dir + f"_{n+1}max_len")
-                else:
-                    # reached maximum retries, so raise the error and crash the sampling :)
-                    raise e from None
-            else:
-                return state_reached
-            finally:
-                n += 1
+        if not continuation:
+            # create directory only for new trials
+            os.mkdir(step_dir)
+        if two_way:
+            state_reached = await self._run_single_trial_tw(
+                                                    conf_num=conf_num,
+                                                    shot_num=shot_num,
+                                                    step_dir=step_dir,
+                                                    continuation=continuation,
+                                                            )
+        else:
+            state_reached = await self._run_single_trial_ow(
+                                                    conf_num=conf_num,
+                                                    shot_num=shot_num,
+                                                    step_dir=step_dir,
+                                                    continuation=continuation,
+                                                            )
+
+        return state_reached
 
     async def _run(self, n_per_struct, continuation):
         # NOTE: make this private so we can use it from reassess with continuation

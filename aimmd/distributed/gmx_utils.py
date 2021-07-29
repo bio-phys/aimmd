@@ -69,3 +69,27 @@ def get_all_traj_parts(folder, deffnm, traj_type="TRR"):
                         )
              for num in range(1, max_num+1)]
     return trajs
+
+
+def get_all_file_parts(folder, deffnm, file_ending):
+    """Find and return all files with given ending produced by GmxEngine."""
+    # NOTE: this assumes all files/parts are ther, i.e. nothing was deleted
+    #       we just check for the highest number and also assume they exist
+    def partnum_suffix(num):
+        # construct gromacs num part suffix from simulation_part
+        num_suffix = str(num)
+        while len(num_suffix) < 4:
+            num_suffix = "0" + num_suffix
+        num_suffix = ".part" + num_suffix
+        return num_suffix
+
+    content = os.listdir(folder)
+    filtered = [f for f in content
+                if (f.endswith(file_ending) and f.startswith(deffnm))
+                ]
+    partnums = [int(f.lstrip(f"{deffnm}.part").rstrip(file_ending))
+                for f in filtered]
+    max_num = np.max(partnums)
+    parts = [os.path.join(folder, (f"{deffnm}{partnum_suffix(num)}{file_ending}"))
+             for num in range(1, max_num+1)]
+    return parts

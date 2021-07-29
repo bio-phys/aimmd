@@ -32,5 +32,5 @@ gen-vel                  = no
 gen-temp                 = 300
 gen-seed                 = 173529
 constraints              = all-bonds
-
-
+lincs-iter               = 2
+;constraints              = h-bonds

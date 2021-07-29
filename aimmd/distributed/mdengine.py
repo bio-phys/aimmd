@@ -622,7 +622,7 @@ class GmxEngine(MDEngine):
             # find out the name and dir of the tpr to put the mdp next to it
             head, tail = os.path.split(tpr_out)
             name = tail.split(".")[0]
-            mdp_out = os.path.join(head, name + "_mdout.mdp")
+            mdp_out = os.path.join(head, name + ".mdout.mdp")
         cmd += f" -o {tpr_out} -po {mdp_out}"
         if self.grompp_extra_args != "":
             # add extra args string if it is not empty
@@ -647,7 +647,7 @@ class GmxEngine(MDEngine):
         # cpi (CheckPointIn) is ignored if not present,
         # cpo (CheckPointOut) is the name to use for the (final) checkpoint
         cmd += f" -cpi {deffnm}.cpt -cpo {deffnm}.cpt"
-        cmd += f" -o {deffnm}.trr -x {deffnm}.xtc -c {deffnm}_confout.gro"
+        cmd += f" -o {deffnm}.trr -x {deffnm}.xtc -c {deffnm}.confout.gro"
         cmd += f" -e {deffnm}.edr -g {deffnm}.log"
         if maxh is not None:
             cmd += f" -maxh {maxh}"
