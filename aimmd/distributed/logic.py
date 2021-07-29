@@ -1060,6 +1060,7 @@ class CommittorSimulation:
                                           (f"{self.start_conf_name_prefix}_"
                                            + f"{self.deffnm_engine_out_bw}.trr"),
                                           )
+        continuation_bw = continuation
         if continuation:
             # check if we ever started the backwards trial
             if os.path.isfile(start_conf_name_bw):
@@ -1085,17 +1086,17 @@ class CommittorSimulation:
         deffnms_engine_out = [self.deffnm_engine_out, self.deffnm_engine_out_bw]
         continuations = [continuation_fw, continuation_bw]
         trials_pending = [asyncio.create_task(
-                          p.propagate(starting_configuration=sconf,
-                                      workdir=step_dir,
-                                      deffnm=deffnm,
-                                      continuation=cont,
-                                      )
+                            p.propagate(starting_configuration=sconf,
+                                        workdir=step_dir,
+                                        deffnm=deffnm,
+                                        continuation=cont,
+                                        )
+                            )
                           for p, sconf, deffnm, cont in zip(propagators,
                                                             starting_confs,
                                                             deffnms_engine_out,
                                                             continuations,
                                                             )
-                                              )
                           ]
         trials_done = [None for _ in range(2)]
         while any([t is None for t in trials_done]):
@@ -1162,14 +1163,17 @@ class CommittorSimulation:
                         # and increase counter
                         ns[t_idx] += 1
                     else:
-                        # reached maximum tries, raise the error and crash the sampling :)
-                        logger.error(log_str + " Not retrying anymore this time.")
-                        # TODO: same as for oneway, do we want to raise?!
-                        #       I (hejung) think not, since not raising enables
-                        #       us to finish the simulation adn get a return
-                        #raise t.exception() from None
-                        # no trajs, no state reached
-                        trials_done[t_idx] = (None, None)
+                        # check if we already know that this trial crashed
+                        # if we do we have set the result to (None, None)
+                        if trials_done[t_idx] is None:
+                            # reached maximum tries, raise the error and crash the sampling? :)
+                            logger.error(log_str + " Not retrying anymore this time.")
+                            # TODO: same as for oneway, do we want to raise?!
+                            #       I (hejung) think not, since not raising enables
+                            #       us to finish the simulation adn get a return
+                            #raise t.exception() from None
+                            # no trajs, no state reached
+                            trials_done[t_idx] = (None, None)
                 elif t.exception() is not None:
                     # any other exception
                     # raise directly
