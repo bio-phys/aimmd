@@ -921,7 +921,8 @@ class CommittorSimulation:
         ret = np.zeros((len(self.starting_configurations), len(self.states)))
         for i, results_for_conf in enumerate(self._states_reached):
             for state_reached in results_for_conf:
-                ret[i][state_reached] += 1
+                if state_reached is not None:
+                    ret[i][state_reached] += 1
         return ret
 
     @property
@@ -936,7 +937,8 @@ class CommittorSimulation:
                        )
         for i, results_for_conf in enumerate(self._states_reached):
             for j, state_reached in enumerate(results_for_conf):
-                ret[i][j][state_reached] += 1
+                if state_reached is not None:
+                    ret[i][j][state_reached] += 1
         return ret
 
     async def _run_single_trial_ow(self, conf_num, shot_num, step_dir, continuation):
@@ -981,6 +983,9 @@ class CommittorSimulation:
                                     continuation=(continuation and n == 0),
                                                                  )
             except (MaxFramesReachedError, EngineCrashedError) as e:
+                log_str = (f"MD engine for configuration {conf_num}, shot {shot_num}"
+                           + f", deffnm {self.deffnm_engine_out} crashed for"
+                           + f"the {n}th time.")
                 if n < self.max_retries_on_crash:
                     if isinstance(e, EngineCrashedError):
                         subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
@@ -989,7 +994,13 @@ class CommittorSimulation:
                         subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
                                                          + f"_{n}max_len"))
                 else:
-                    raise e from None
+                    logger.error(log_str + " Not retrying anymore this time.")
+                    # TODO: do we want to raise the error?!
+                    #       I think this way is better as we can still finish
+                    #       the simulation as expected (just with a shot less)
+                    #raise e from None
+                    return None  # no state reached!
+                logger.warning(log_str + " Moving to subfolder and retrying.")
                 # we only end up here if there is cleanup/moving to do
                 os.mkdir(subdir)
                 all_files = os.listdir(step_dir)
@@ -999,6 +1010,12 @@ class CommittorSimulation:
                         # if it is exactly deffnm_out it can only be
                         # a deffnm.tpr/mdp etc or a deffnm.partXXXX.trr/xtc etc
                         # so move it
+                        os.rename(os.path.join(step_dir, f), os.path.join(subdir, f))
+                    elif "step" in splits[0] and splits[-1] == ".pdb":
+                        # the gromacs stepXXXa/b/c/d.pdb files, that are
+                        # written on decomposition errors/too high forces etc
+                        # move them too!
+                        # Note that we assume that only one engine crashes at a time!
                         os.rename(os.path.join(step_dir, f), os.path.join(subdir, f))
             else:
                 # no error, return and get out of here
@@ -1090,12 +1107,12 @@ class CommittorSimulation:
                 t_idx = trials_pending.index(t)
                 if isinstance(t.exception(), (EngineCrashedError,
                                               MaxFramesReachedError)):
+                    log_str = (f"MD engine for configuration {str(conf_num)}, "
+                               + f"shot {str(shot_num)}, "
+                               + f"deffm {deffnms_engine_out[t_idx]} crashed "
+                               + f"for the {ns[t_idx]}th time.")
                     # catch error raised when gromacs crashes
                     if ns[t_idx] < self.max_retries_on_crash:
-                        logger.warning("MD engine crashed. Retrying committor "
-                                       + f"step: Configuration {str(conf_num)}"
-                                       + f", shot {str(shot_num)}, "
-                                       + f"deffm {deffnms_engine_out[t_idx]}.")
                         # move the files to a subdirectory
                         if isinstance(t.exception(), EngineCrashedError):
                             subdir = os.path.join(step_dir,
@@ -1109,6 +1126,7 @@ class CommittorSimulation:
                                                   )
                         else:
                             raise RuntimeError("This should never happen!")
+                        logger.warning(log_str + " Moving to subdirectory and retrying.")
                         os.mkdir(subdir)
                         all_files = os.listdir(step_dir)
                         for f in all_files:
@@ -1117,6 +1135,13 @@ class CommittorSimulation:
                                 # if it is exactly deffnm_out it can only be
                                 # a deffnm.tpr/mdp etc or a deffnm.partXXXX.trr/xtc etc
                                 # so move it
+                                os.rename(os.path.join(step_dir, f),
+                                          os.path.join(subdir, f))
+                            elif "step" in splits[0] and splits[-1] == ".pdb":
+                                # the gromacs stepXXXa/b/c/d.pdb files, that are
+                                # written on decomposition errors/too high forces etc
+                                # move them too!
+                                # Note that we assume that only one engine crashes at a time!
                                 os.rename(os.path.join(step_dir, f),
                                           os.path.join(subdir, f))
                         # get the task out of the list
@@ -1136,7 +1161,13 @@ class CommittorSimulation:
                         ns[t_idx] += 1
                     else:
                         # reached maximum tries, raise the error and crash the sampling :)
-                        raise t.exception() from None
+                        logger.error(log_str + " Not retrying anymore this time.")
+                        # TODO: same as for oneway, do we want to raise?!
+                        #       I (hejung) think not, since not raising enables
+                        #       us to finish the simulation adn get a return
+                        #raise t.exception() from None
+                        # no trajs, no state reached
+                        trials_done[t_idx] = (None, None)
                 elif t.exception() is not None:
                     # any other exception
                     # raise directly
@@ -1148,6 +1179,13 @@ class CommittorSimulation:
                     trials_done[t_idx] = t.result()
         # check where they went: construct TP if possible, else concatenate
         (fw_trajs, fw_state), (bw_trajs, bw_state) = trials_done
+        if (fw_state is None) or (bw_state is None):
+            # if any of the two trials did not finish we return None, i.e. no state reached
+            # TODO: is this what we want? Or should we try to return the state
+            #       reached if one of them finishes
+            #       I (hejung) think None is best, because a half-crashed trial
+            #       should be approached with scrutiny and not just taken as is
+            return None
         if fw_state == bw_state:
             logger.info(f"Both trials reached state {fw_state}.")
         else:
