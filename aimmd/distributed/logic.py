@@ -1631,13 +1631,13 @@ class TrajectoryPropagatorUntilAnyState:
                 # so get all traj parts and calculate the state functions on them
                 trajs = get_all_traj_parts(workdir, deffnm=deffnm,
                                            traj_type=engine.output_traj_type)
-                state_vals = await asyncio.gather(
+                states_vals = await asyncio.gather(
                                 *(self._state_vals_for_traj(t) for t in trajs)
-                                              )
-                states_vals = np.concatenate([np.asarray(s) for s in state_vals],
+                                                   )
+                states_vals = np.concatenate([np.asarray(s) for s in states_vals],
                                              axis=1)
                 # see if we already reached a state on the existing traj parts
-                any_state_reached = np.any(state_vals)
+                any_state_reached = np.any(states_vals)
                 if any_state_reached:
                     states_reached, frame_nums = np.where(states_vals)
                     # gets the frame with the lowest idx where any state is True
