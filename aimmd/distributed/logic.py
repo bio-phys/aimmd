@@ -908,7 +908,11 @@ class CommittorSimulation:
         # find out how many shots we did per configuration, for now we assume
         # that everything went well and we have an equal number of shots per configuration
         dir_list = os.listdir(os.path.join(self.workdir, self._conf_dirs[0]))
-        filtered = [d for d in dir_list if d.startswith(self.shot_dir_prefix)]
+        filtered = [d for d in dir_list
+                    if (d.startswith(self.shot_dir_prefix)
+                        and os.path.isdir(os.path.join(self.workdir, self._conf_dirs[0], d))
+                        )
+                    ]
         n_shots = len(filtered)
         return await self._run(n_per_struct=n_shots, continuation=True)
 
