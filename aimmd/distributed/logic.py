@@ -795,8 +795,8 @@ class CommittorSimulation:
     # $WORKDIR/configuration_$CONF_NUM/shot_$SHOT_NUM,
     # where $WORKDIR is the workdir given at init, and $CONF_NUM, $SHOT_NUM are
     # the index to the input list starting_configurations and a counter for the shots
-    configuration_dir_prefix = "configuration"
-    shot_dir_prefix = "shot"
+    configuration_dir_prefix = "configuration_"
+    shot_dir_prefix = "shot_"
     # together with deffnm this results in "start_conf_trial_bw.trr" and
     # "start_conf_trial_fw.trr"
     start_conf_name_prefix = "start_conf"
@@ -887,7 +887,7 @@ class CommittorSimulation:
                 conf_dir = os.path.join(self.workdir, f"{name}")
             else:
                 conf_dir = os.path.join(self.workdir,
-                                        f"{self.configuration_dir_prefix}_{str(i)}")
+                                        f"{self.configuration_dir_prefix}{str(i)}")
             self._conf_dirs.append(conf_dir)
             if not os.path.isdir(conf_dir):
                 # if its not a directory it either exists (then we will err)
@@ -1240,7 +1240,7 @@ class CommittorSimulation:
         step_dir = os.path.join(
                         self.workdir,
                         self._conf_dirs[conf_num],
-                        f"{self.shot_dir_prefix}_{str(shot_num)}",
+                        f"{self.shot_dir_prefix}{str(shot_num)}",
                                 )
         if not continuation:
             # create directory only for new trials
