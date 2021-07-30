@@ -799,7 +799,7 @@ class CommittorSimulation:
     shot_dir_prefix = "shot_"
     # together with deffnm this results in "start_conf_trial_bw.trr" and
     # "start_conf_trial_fw.trr"
-    start_conf_name_prefix = "start_conf"
+    start_conf_name_prefix = "start_conf_"
     fname_traj_to_state = "traj_to_state.trr"
     fname_traj_to_state_bw = "traj_to_state_bw.trr"  # only in TwoWay
     fname_transition_traj = "transition_traj.trr"  # only in TwoWay
@@ -956,7 +956,7 @@ class CommittorSimulation:
                                     max_steps=self.max_steps,
                                                        )
         start_conf_name = os.path.join(step_dir,
-                                       (f"{self.start_conf_name_prefix}_"
+                                       (f"{self.start_conf_name_prefix}"
                                         + f"{self.deffnm_engine_out}.trr"),
                                        )
         if not continuation:
@@ -1043,7 +1043,7 @@ class CommittorSimulation:
                        for _ in range(2)]
         # forward starting configuration
         start_conf_name_fw = os.path.join(step_dir,
-                                          (f"{self.start_conf_name_prefix}_"
+                                          (f"{self.start_conf_name_prefix}"
                                            + f"{self.deffnm_engine_out}.trr"),
                                           )
         continuation_fw = continuation
@@ -1061,7 +1061,7 @@ class CommittorSimulation:
                                        )
         # backwards starting configuration (forward with inverted velocities)
         start_conf_name_bw = os.path.join(step_dir,
-                                          (f"{self.start_conf_name_prefix}_"
+                                          (f"{self.start_conf_name_prefix}"
                                            + f"{self.deffnm_engine_out_bw}.trr"),
                                           )
         continuation_bw = continuation
