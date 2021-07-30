@@ -967,13 +967,20 @@ class CommittorSimulation:
                                 traj_in=self.starting_configurations[conf_num][0],
                                 idx=self.starting_configurations[conf_num][1],
                                                  )
+            n = 0
         else:
             starting_conf = Trajectory(
                 trajectory_file=start_conf_name,
                 structure_file=self.starting_configurations[conf_num][0].structure_file
                                        )
+            # get the number of times we crashed/reached max length before
+            dir_list = os.listdir(step_dir)
+            filtered = [d for d in dir_list
+                        if (os.path.isdir(os.path.join(step_dir, d))
+                            and d.split("_")[0] == f"{self.deffnm_engine_out}")
+                        ]
+            n = len(filtered)
         # and propagate
-        n = 0
         while True:
             try:
                 out = await propagator.propagate_and_concatenate(
@@ -1054,11 +1061,19 @@ class CommittorSimulation:
                                   traj_in=self.starting_configurations[conf_num][0],
                                   idx=self.starting_configurations[conf_num][1],
                                                    )
+            n_fw = 0
         else:
             starting_conf_fw = Trajectory(
                 trajectory_file=start_conf_name_fw,
                 structure_file=self.starting_configurations[conf_num][0].structure_file
                                        )
+            # get the number of times we crashed/reached max length before
+            dir_list = os.listdir(step_dir)
+            filtered = [d for d in dir_list
+                        if (os.path.isdir(os.path.join(step_dir, d))
+                            and d.split("_")[0] == f"{self.deffnm_engine_out}")
+                        ]
+            n_fw = len(filtered)
         # backwards starting configuration (forward with inverted velocities)
         start_conf_name_bw = os.path.join(step_dir,
                                           (f"{self.start_conf_name_prefix}"
@@ -1084,8 +1099,17 @@ class CommittorSimulation:
                                   traj_in=starting_conf_fw,
                                   idx=0,
                                                    )
+            n_bw = 0
+        else:
+            # get the number of times we crashed/reached max length before
+            dir_list = os.listdir(step_dir)
+            filtered = [d for d in dir_list
+                        if (os.path.isdir(os.path.join(step_dir, d))
+                            and d.split("_")[0] == f"{self.deffnm_engine_out_bw}")
+                        ]
+            n_bw = len(filtered)
         # and propagate
-        ns = [0, 0]
+        ns = [n_fw, n_bw]
         starting_confs = [starting_conf_fw, starting_conf_bw]
         deffnms_engine_out = [self.deffnm_engine_out, self.deffnm_engine_out_bw]
         continuations = [continuation_fw, continuation_bw]
