@@ -807,6 +807,7 @@ class CommittorSimulation:
     deffnm_engine_out_bw = "trial_bw"  # only in twoway (for runs with inverted v)
     max_retries_on_crash = 2  # maximum number of *retries* on MD engine crash
                               # i.e. setting to 1 means *retry* once on crash
+    # TODO: not used anymore?! we should remove it?!
     wait_time_on_crash = 60  # time to wait for cleanup of 'depending threads'
                              # after a crash, 'depending threads' are e.g. the
                              # conjugate trials in a two way simulation,
