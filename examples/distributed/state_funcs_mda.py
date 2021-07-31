@@ -16,7 +16,8 @@ def alpha_R(traj, skip=1):
     #       opening the same traj at the same time from two different processes/universes
     #       to avoid reading a possibly corrupted/in the process of beeing created offsets
     #       file we just rebuild all offsets
-    u = mda.Universe(traj.structure_file, traj.trajectory_file, refresh_offsets=True)
+    u = mda.Universe(traj.structure_file, traj.trajectory_file,
+                     refresh_offsets=True, tpr_resid_from_one=False)
     psi_ag = u.select_atoms("index 6 or index 8 or index 14 or index 16")
     phi_ag = u.select_atoms("index 4 or index 6 or index 8 or index 14")
     # empty arrays to fill
@@ -34,7 +35,8 @@ def alpha_R(traj, skip=1):
 
 
 def C7_eq(traj, skip=1):
-    u = mda.Universe(traj.structure_file, traj.trajectory_file, refresh_offsets=True)
+    u = mda.Universe(traj.structure_file, traj.trajectory_file,
+                     refresh_offsets=True, tpr_resid_from_one=False)
     psi_ag = u.select_atoms("index 6 or index 8 or index 14 or index 16")
     phi_ag = u.select_atoms("index 4 or index 6 or index 8 or index 14")
     # empty arrays to fill
@@ -58,7 +60,8 @@ def descriptor_func_ic(traj, skip=1):
 
 def descriptor_func_psi_phi(traj, skip=1):
     """Only psi and phi angle as internal coords. Actually cos and sin for both of them."""
-    u = mda.Universe(traj.structure_file, traj.trajectory_file, refresh_offsets=True)
+    u = mda.Universe(traj.structure_file, traj.trajectory_file,
+                     refresh_offsets=True, tpr_resid_from_one=False)
     psi_ag = u.select_atoms("index 6 or index 8 or index 14 or index 16")
     phi_ag = u.select_atoms("index 4 or index 6 or index 8 or index 14")
     # empty arrays to fill

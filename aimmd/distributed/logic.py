@@ -894,27 +894,10 @@ class CommittorSimulation:
                 # or we just create it
                 os.mkdir(conf_dir)
 
-    async def reinitialize_from_workdir(self):
-        """
-        Reassess all trials in workdir and populate states_reached counter.
-
-        Possibly extend trials if no state has been reached yet.
-        Add missing backwards shots from scratch if the previous run has been
-        with two_way=False and this one has two_way=True.
-        """
-        # make sure we set everything to zero before we start!
-        self._shot_counter = 0
-        self._states_reached = [[] for _ in range(len(self.starting_configurations))]
-        # find out how many shots we did per configuration, for now we assume
-        # that everything went well and we have an equal number of shots per configuration
-        dir_list = os.listdir(os.path.join(self.workdir, self._conf_dirs[0]))
-        filtered = [d for d in dir_list
-                    if (d.startswith(self.shot_dir_prefix)
-                        and os.path.isdir(os.path.join(self.workdir, self._conf_dirs[0], d))
-                        )
-                    ]
-        n_shots = len(filtered)
-        return await self._run(n_per_struct=n_shots, continuation=True)
+    @property
+    def shot_counter(self):
+        """Return the number of shots per configuration."""
+        return self._shot_counter
 
     @property
     def states_reached(self):
@@ -944,6 +927,32 @@ class CommittorSimulation:
                 if state_reached is not None:
                     ret[i][j][state_reached] += 1
         return ret
+
+    async def reinitialize_from_workdir(self):
+        """
+        Reassess all trials in workdir and populate states_reached counter.
+
+        Possibly extend trials if no state has been reached yet.
+        Add missing backwards shots from scratch if the previous run has been
+        with two_way=False and this one has two_way=True.
+        """
+        # make sure we set everything to zero before we start!
+        self._shot_counter = 0
+        self._states_reached = [[] for _ in range(len(self.starting_configurations))]
+        # find out how many shots we did per configuration, for now we assume
+        # that everything went well and we have an equal number of shots per configuration
+        dir_list = os.listdir(os.path.join(self.workdir, self._conf_dirs[0]))
+        filtered = [d for d in dir_list
+                    if (d.startswith(self.shot_dir_prefix)
+                        and os.path.isdir(os.path.join(self.workdir, self._conf_dirs[0], d))
+                        )
+                    ]
+        n_shots = len(filtered)
+        return await self._run(n_per_struct=n_shots, continuation=True)
+
+    async def run(self, n_per_struct):
+        """Run for n_per_struct committor trials for each configuration."""
+        return await self._run(n_per_struct=n_per_struct, continuation=False)
 
     async def _run_single_trial_ow(self, conf_num, shot_num, step_dir, continuation):
         # construct propagator
@@ -977,7 +986,8 @@ class CommittorSimulation:
             dir_list = os.listdir(step_dir)
             filtered = [d for d in dir_list
                         if (os.path.isdir(os.path.join(step_dir, d))
-                            and d.split("_")[0] == f"{self.deffnm_engine_out}")
+                            and d.startswith(f"{self.deffnm_engine_out}")
+                            and (d.endswith("max_len") or d.endswith("crash")))
                         ]
             n = len(filtered)
         # and propagate
@@ -994,18 +1004,18 @@ class CommittorSimulation:
                                     continuation=(continuation and n == 0),
                                                                  )
             except (MaxFramesReachedError, EngineCrashedError) as e:
-                log_str = (f"MD engine for configuration {conf_num}, shot {shot_num}"
-                           + f", deffnm {self.deffnm_engine_out} crashed for"
-                           + f"the {n}th time.")
+                log_str = (f"MD engine for configuration {conf_num}, "
+                           + f"shot {shot_num}, deffnm {self.deffnm_engine_out}"
+                           + f" crashed for the {n + 1}th time.")
                 if n < self.max_retries_on_crash:
                     if isinstance(e, EngineCrashedError):
                         subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
-                                                         + f"_{n}crash"))
+                                                         + f"_{n + 1}crash"))
                     elif isinstance(e, MaxFramesReachedError):
                         subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
-                                                         + f"_{n}max_len"))
+                                                         + f"_{n + 1}max_len"))
                 else:
-                    logger.error(log_str + " Not retrying anymore this time.")
+                    logger.error(log_str + " Not retrying this time.")
                     # TODO: do we want to raise the error?!
                     #       I think this way is better as we can still finish
                     #       the simulation as expected (just with a shot less)
@@ -1071,7 +1081,8 @@ class CommittorSimulation:
             dir_list = os.listdir(step_dir)
             filtered = [d for d in dir_list
                         if (os.path.isdir(os.path.join(step_dir, d))
-                            and d.split("_")[0] == f"{self.deffnm_engine_out}")
+                            and d.startswith(f"{self.deffnm_engine_out}")
+                            and (d.endswith("max_len") or d.endswith("crash")))
                         ]
             n_fw = len(filtered)
         # backwards starting configuration (forward with inverted velocities)
@@ -1105,7 +1116,8 @@ class CommittorSimulation:
             dir_list = os.listdir(step_dir)
             filtered = [d for d in dir_list
                         if (os.path.isdir(os.path.join(step_dir, d))
-                            and d.split("_")[0] == f"{self.deffnm_engine_out_bw}")
+                            and d.startswith(f"{self.deffnm_engine_out_bw}")
+                            and (d.endswith("max_len") or d.endswith("crash")))
                         ]
             n_bw = len(filtered)
         # and propagate
@@ -1139,19 +1151,19 @@ class CommittorSimulation:
                     log_str = (f"MD engine for configuration {str(conf_num)}, "
                                + f"shot {str(shot_num)}, "
                                + f"deffm {deffnms_engine_out[t_idx]} crashed "
-                               + f"for the {ns[t_idx]}th time.")
+                               + f"for the {ns[t_idx] + 1}th time.")
                     # catch error raised when gromacs crashes
                     if ns[t_idx] < self.max_retries_on_crash:
                         # move the files to a subdirectory
                         if isinstance(t.exception(), EngineCrashedError):
                             subdir = os.path.join(step_dir,
                                                   (f"{deffnms_engine_out[t_idx]}"
-                                                   + f"_{ns[t_idx]}crash")
+                                                   + f"_{ns[t_idx] + 1}crash")
                                                   )
                         elif isinstance(t.exception(), MaxFramesReachedError):
                             subdir = os.path.join(step_dir,
                                                   (f"{deffnms_engine_out[t_idx]}"
-                                                   + f"_{ns[t_idx]}max_len")
+                                                   + f"_{ns[t_idx] + 1}max_len")
                                                   )
                         else:
                             raise RuntimeError("This should never happen!")
@@ -1195,7 +1207,7 @@ class CommittorSimulation:
                         # if we do we have set the result to (None, None)
                         if trials_done[t_idx] is None:
                             # reached maximum tries, raise the error and crash the sampling? :)
-                            logger.error(log_str + " Not retrying anymore this time.")
+                            logger.error(log_str + " Not retrying this time.")
                             # TODO: same as for oneway, do we want to raise?!
                             #       I (hejung) think not, since not raising enables
                             #       us to finish the simulation adn get a return
@@ -1332,9 +1344,6 @@ class CommittorSimulation:
         # TODO: we return the total states reached per shot?!
         #       or should we return only for this run?
         return self.states_reached_per_shot
-
-    async def run(self, n_per_struct):
-        return await self._run(n_per_struct=n_per_struct, continuation=False)
 
 
 async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_state,

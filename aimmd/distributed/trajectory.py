@@ -332,12 +332,7 @@ class Trajectory:
         # NOTE: we assume tra = trr and struct = tpr
         #       but we also expect that anything which works for mdanalysis as
         #       tra and struct should also work here as tra and struct
-        self.trajectory_file = os.path.abspath(trajectory_file)
-        self.structure_file = os.path.abspath(structure_file)
-        self._len = None
-        self._first_step = None
-        self._last_step = None
-        self.nstout = nstout
+
         # TODO: currently we do not use kwargs?!
         #dval = object()
         #for kwarg, value in kwargs.items():
@@ -351,6 +346,18 @@ class Trajectory:
         #                        + f"mismatching type ({type(value)}). "
         #                        + f" Default type is {type(cval)}."
         #                        )
+        if os.path.isfile(trajectory_file):
+            self.trajectory_file = os.path.abspath(trajectory_file)
+        else:
+            raise ValueError(f"trajectory_file ({trajectory_file}) must be accessible.")
+        if os.path.isfile(structure_file):
+            self.structure_file = os.path.abspath(structure_file)
+        else:
+            raise ValueError(f"structure_file ({structure_file}) must be accessible.")
+        self.nstout = nstout
+        self._len = None
+        self._first_step = None
+        self._last_step = None
         self._func_id_to_idx = {}
         self._func_values = []
         self._h5py_grp = None
@@ -360,7 +367,8 @@ class Trajectory:
         if self._len is not None:
             return self._len
         # create/open a mdanalysis universe to get the number of frames
-        u = mda.Universe(self.structure_file, self.trajectory_file)
+        u = mda.Universe(self.structure_file, self.trajectory_file,
+                         tpr_resid_from_one=False)
         self._len = len(u.trajectory)
         return self._len
 
@@ -373,7 +381,8 @@ class Trajectory:
     def first_step(self):
         """The integration step of the first frame."""
         if self._first_step is None:
-            u = mda.Universe(self.structure_file, self.trajectory_file)
+            u = mda.Universe(self.structure_file, self.trajectory_file,
+                             tpr_resid_from_one=False)
             ts = u.trajectory[0]
             # NOTE: works only(?) for trr and xtc
             self._first_step = ts.data["step"]
@@ -383,7 +392,8 @@ class Trajectory:
     def last_step(self):
         """The integration step of the last frame."""
         if self._last_step is None:
-            u = mda.Universe(self.structure_file, self.trajectory_file)
+            u = mda.Universe(self.structure_file, self.trajectory_file,
+                             tpr_resid_from_one=False)
             ts = u.trajectory[-1]
             # NOTE: works only(?) for trr and xtc
             self._last_step = ts.data["step"]
@@ -559,7 +569,8 @@ class TrajectoryConcatenator:
             raise ValueError(f"Output structure file must exist ({struct_out}).")
 
         # special treatment for traj0 because we need n_atoms for the writer
-        u0 = mda.Universe(trajs[0].structure_file, trajs[0].trajectory_file)
+        u0 = mda.Universe(trajs[0].structure_file, trajs[0].trajectory_file,
+                          tpr_resid_from_one=False)
         start0, stop0, step0 = slices[0]
         # if the file exists MDAnalysis will silently overwrite
         with mda.Writer(tra_out, n_atoms=u0.trajectory.n_atoms) as W:
@@ -569,7 +580,8 @@ class TrajectoryConcatenator:
                 W.write(u0.atoms)
             del u0  # should free up memory and does no harm?!
             for traj, sl in zip(trajs[1:], slices[1:]):
-                u = mda.Universe(traj.structure_file, traj.trajectory_file)
+                u = mda.Universe(traj.structure_file, traj.trajectory_file,
+                                 tpr_resid_from_one=False)
                 start, stop, step = sl
                 for ts in u.trajectory[start:stop:step]:
                     if self.invert_v_for_negative_step and step < 0:
@@ -621,7 +633,8 @@ class FrameExtractor(abc.ABC):
             # although we would expect that it exists if it comes from an
             # existing traj, we still check to catch other unrelated issues :)
             raise ValueError(f"Output structure file must exist ({struct_out}).")
-        u = mda.Universe(traj_in.structure_file, traj_in.trajectory_file)
+        u = mda.Universe(traj_in.structure_file, traj_in.trajectory_file,
+                         tpr_resid_from_one=False)
         with mda.Writer(outfile, n_atoms=u.trajectory.n_atoms) as W:
             ts = u.trajectory[idx]
             self.apply_modification(u, ts)
