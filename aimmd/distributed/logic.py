@@ -943,8 +943,15 @@ class CommittorSimulation:
         # find out how many shots we did per configuration, for now we assume
         # that everything went well and we have an equal number of shots per configuration
         dir_list = os.listdir(os.path.join(self.workdir, self._conf_dirs[0]))
+        # build a list of all possible dir names
+        # (these will be too many if there are other files in conf dir)
+        possible_dirnames = [f"{self.shot_dir_prefix}{i}"
+                             for i in range(len(dir_list))
+                             ]
+        # now filter to check that only stuff that is a dir and in possible names
+        # will be taken, then count them: this is the number of shots done already
         filtered = [d for d in dir_list
-                    if (d.startswith(self.shot_dir_prefix)
+                    if (d in possible_dirnames
                         and os.path.isdir(os.path.join(self.workdir, self._conf_dirs[0], d))
                         )
                     ]
