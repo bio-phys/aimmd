@@ -18,6 +18,10 @@ import os
 import shlex
 import asyncio
 import subprocess
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 class SlurmProcess:
@@ -100,6 +104,7 @@ class SlurmProcess:
         sbatch_return = stdout.decode()
         # only jobid (and possibly clustername) returned, semikolon to separate
         jobid = sbatch_return.split(";")[0].strip()
+        logger.debug(f"Submited SLURM job with jobid {jobid}.")
         self._jobid = jobid
 
     @property
@@ -115,6 +120,7 @@ class SlurmProcess:
         sacct_cmd += f" -j {self._jobid}"
         sacct_cmd += " -o jobid,state,exitcode --parsable2"  # separate with |
         sacct_out = subprocess.check_output(shlex.split(sacct_cmd), text=True)
+        logger.debug(f"sacct returned {sacct_out}.")
         # sacct returns one line per substep, we only care for the whole job
         # which should be the first line but we check explictly for jobid
         # (the substeps have .$NUM suffixes)
@@ -123,6 +129,8 @@ class SlurmProcess:
             if len(splits) == 3:
                 jobid, state, exitcode = splits
                 if jobid.strip() == self._jobid:
+                    logger.debug(f"Extracted from sacct output: jobid {jobid},"
+                                 + f" state {state} and exitcode {exitcode}.")
                     # TODO: parse and return the exitcode too?
                     return state
         # if we get here something probably went wrong checking for the job
@@ -137,6 +145,7 @@ class SlurmProcess:
             return None
         for key, val in self.slurm_state_to_exitcode.items():
             if key in slurm_state:
+                logger.debug(f"Parsed SLURM state {slurm_state} as {key}.")
                 # this also recognizes `CANCELLED by ...` as CANCELLED
                 return val
         # we should never finish the loop, it means we miss a slurm job state
