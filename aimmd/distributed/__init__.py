@@ -20,6 +20,7 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 #       processes with arcd on the same cluster, and then this could not work as intended
 import os
 import asyncio
+import resource
 
 
 def set_max_process(num=None, max_num=None):
@@ -50,9 +51,14 @@ def set_max_process(num=None, max_num=None):
 #             the sampling simulation?
 set_max_process()
 
-
 # ensure that only one Chain can access the central model at a time
 _SEM_BRAIN_MODEL = asyncio.Semaphore(1)
+
+# ensure that we do not open too many files
+# resource.getrlimit returns a tuple (soft, hard); we take the soft-limit
+_SEM_MAX_FILES_OPEN = asyncio.Semaphore(resource.getrlimit(
+                                            resource.RLIMIT_NOFILE
+                                                           )[0])
 
 
 # make stuff from submodules available (after defining the semaphores)

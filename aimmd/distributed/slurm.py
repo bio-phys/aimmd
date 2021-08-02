@@ -21,6 +21,9 @@ import subprocess
 import logging
 
 
+from . import _SEM_MAX_FILES_OPEN
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -94,15 +97,25 @@ class SlurmProcess:
 
     async def submit(self):
         sbatch_cmd = f"{self.sbatch_executable} --parsable {self.sbatch_script}"
-        sbatch_proc = await asyncio.subprocess.create_subprocess_exec(
+        # 3 file descriptors: sdtin,stdout,stderr
+        await _SEM_MAX_FILES_OPEN.acquire()
+        await _SEM_MAX_FILES_OPEN.acquire()
+        await _SEM_MAX_FILES_OPEN.acquire()
+        try:
+            sbatch_proc = await asyncio.subprocess.create_subprocess_exec(
                                                 *shlex.split(sbatch_cmd),
                                                 stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE,
                                                 cwd=self.workdir,
                                                 close_fds=True,
-                                                                      )
-        stdout, stderr = await sbatch_proc.communicate()
-        sbatch_return = stdout.decode()
+                                                                          )
+            stdout, stderr = await sbatch_proc.communicate()
+            sbatch_return = stdout.decode()
+        finally:
+            # and put the three back into the semaphore
+            _SEM_MAX_FILES_OPEN.release()
+            _SEM_MAX_FILES_OPEN.release()
+            _SEM_MAX_FILES_OPEN.release()
         # only jobid (and possibly clustername) returned, semikolon to separate
         jobid = sbatch_return.split(";")[0].strip()
         logger.debug(f"Submited SLURM job with jobid {jobid}.")
