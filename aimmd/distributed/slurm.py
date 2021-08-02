@@ -99,6 +99,7 @@ class SlurmProcess:
                                                 stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE,
                                                 cwd=self.workdir,
+                                                close_fds=True,
                                                                       )
         stdout, stderr = await sbatch_proc.communicate()
         sbatch_return = stdout.decode()
