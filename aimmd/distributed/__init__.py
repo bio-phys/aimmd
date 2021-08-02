@@ -56,9 +56,9 @@ _SEM_BRAIN_MODEL = asyncio.Semaphore(1)
 
 # ensure that we do not open too many files
 # resource.getrlimit returns a tuple (soft, hard); we take the soft-limit
-_SEM_MAX_FILES_OPEN = asyncio.Semaphore(resource.getrlimit(
-                                            resource.RLIMIT_NOFILE
-                                                           )[0])
+_SEM_MAX_FILES_OPEN = asyncio.BoundedSemaphore(resource.getrlimit(
+                                                        resource.RLIMIT_NOFILE
+                                                                  )[0])
 
 
 # make stuff from submodules available (after defining the semaphores)
