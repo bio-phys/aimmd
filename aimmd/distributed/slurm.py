@@ -15,6 +15,7 @@ You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import os
+import time
 import shlex
 import asyncio
 import subprocess
@@ -27,16 +28,21 @@ from . import _SEM_MAX_FILES_OPEN
 logger = logging.getLogger(__name__)
 
 
+class SlurmSubmissionError(RuntimeError):
+    """Error raised when something goes wrong submitting a SLURM job."""
+
+
 class SlurmProcess:
     """
     Generic wrapper around SLURM submissions.
 
-    Imitates the interface of asyncio.subprocess.Process
+    Imitates the interface of `asyncio.subprocess.Process`
     """
 
     # we can not simply wait for the subprocess, since slurm exits directly
     # so we will sleep for this long between checks if slurm-job completed
     sleep_time = 30  # TODO: heuristic? dynamically adapt?
+    min_time_between_sacct_calls = 10  # wait for at least 10 s between two sacct calls
     # NOTE: no options to set/pass extra_args for sbatch and sacct:
     #       I think all sbatch options can also be set via SBATCH directives?!
     #       and sacct options would probably only mess up our parsing... ;)
@@ -44,6 +50,9 @@ class SlurmProcess:
     sbatch_executable = "sbatch"
     scancel_executable = "scancel"
     # rudimentary map for slurm state codes to int return codes for poll
+    # NOTE: these are the sacct states (they differ from the squeue states)
+    #       cf. https://slurm.schedmd.com/sacct.html#lbAG
+    #       and https://slurm.schedmd.com/squeue.html#lbAG
     slurm_state_to_exitcode = {
         "BOOT_FAIL": 1,  # Job terminated due to launch failure
         # Job was explicitly cancelled by the user or system administrator.
@@ -94,6 +103,8 @@ class SlurmProcess:
         self.sbatch_script = os.path.abspath(sbatch_script)
         self.workdir = os.path.abspath(workdir)
         self._jobid = None
+        self._last_check_time = None  # make sure we do not call sacct too often
+        self._last_slurm_state = None  # the last slurm state we have seen
 
     async def submit(self):
         sbatch_cmd = f"{self.sbatch_executable} --parsable {self.sbatch_script}"
@@ -117,8 +128,22 @@ class SlurmProcess:
             _SEM_MAX_FILES_OPEN.release()
             _SEM_MAX_FILES_OPEN.release()
         # only jobid (and possibly clustername) returned, semikolon to separate
+        logger.debug(f"sbatch returned {sbatch_return}.")
         jobid = sbatch_return.split(";")[0].strip()
-        logger.debug(f"Submited SLURM job with jobid {jobid}.")
+        # make sure jobid is an int/ can be cast as one
+        err = False
+        try:
+            jobid_int = int(jobid)
+        except ValueError:
+            # can not cast to int, so probably something went wrong submitting
+            err = True
+        else:
+            if str(jobid_int) != jobid:
+                err = True
+        if err:
+            raise SlurmSubmissionError("Could not submit SLURM job."
+                                       + f" sbatch returned {sbatch_return}.")
+        logger.info(f"Submited SLURM job with jobid {jobid}.")
         self._jobid = jobid
 
     @property
@@ -129,6 +154,13 @@ class SlurmProcess:
     def slurm_job_state(self):
         if self._jobid is None:
             return None
+        if self._last_check_time is None:
+            self._last_check_time = time.time()
+        elif (time.time() - self._last_check_time
+              <= self.min_time_between_sacct_calls):
+            return self._last_slurm_state
+        else:
+            self._last_check_time = time.time()
         sacct_cmd = f"{self.sacct_executable} --noheader"
         # query only for the specific job we are running
         sacct_cmd += f" -j {self._jobid}"
@@ -146,10 +178,12 @@ class SlurmProcess:
                     logger.debug(f"Extracted from sacct output: jobid {jobid},"
                                  + f" state {state} and exitcode {exitcode}.")
                     # TODO: parse and return the exitcode too?
+                    self._last_slurm_state = state
                     return state
         # if we get here something probably went wrong checking for the job
         # the 'PENDING' will make us check again in a bit
         # (TODO: is this actually what we want?)
+        self._last_slurm_state = "PENDING"
         return "PENDING"
 
     @property
@@ -181,6 +215,8 @@ class SlurmProcess:
             # TODO: parse/check output?!
             scancel_out = subprocess.check_output(shlex.split(scancel_cmd),
                                                   text=True)
+            logger.debug(f"Canceled SLURM job with jobid {self.slurm_jobid}."
+                         + f"scancel returned {scancel_out}.")
 
     def kill(self):
         self.terminate()

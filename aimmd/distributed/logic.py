@@ -1244,7 +1244,8 @@ class CommittorSimulation:
             logger.info(f"Both trials reached state {fw_state}.")
         else:
             # we can form a TP, so do it (low idx state to high idx state)
-            logger.info(f"TP from state {bw_state} to {fw_state} was generated.")
+            logger.info(f"Forward trajectory reached state {fw_state}, "
+                        + f"backward trajectory reached state {bw_state}.")
             if fw_state > bw_state:
                 minus_trajs, minus_state = bw_trajs, bw_state
                 plus_trajs, plus_state = fw_trajs, fw_state
@@ -1260,6 +1261,7 @@ class CommittorSimulation:
                             state_funcs=self.states, tra_out=tra_out,
                             struct_out=None, overwrite=False,
                                                                              )
+            logger.info(f"TP from state {minus_state} to {plus_state} was generated.")
         # TODO: do we want to concatenate the trials to states in any way?
         # i.e. independent of if we can form a TP? or only for no TP cases?
         # NOTE: (answer to todo?!)

@@ -260,7 +260,7 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
             f.write(script)
         # and submit it
         slurm_proc = SlurmProcess(sbatch_script=sbatch_fname, workdir=tra_dir)
-        slurm_proc.sleep_time = 10  # sleep 5 s between checking if done
+        slurm_proc.sleep_time = 15  # sleep 15 s between checking if done
         await slurm_proc.submit()
         # wait for the slurm job to finish
         # also cancel the job when this future is canceled
