@@ -20,6 +20,7 @@ import shlex
 import asyncio
 import logging
 
+from . import _SEM_MAX_FILES_OPEN
 from .trajectory import Trajectory
 from .slurm import SlurmProcess
 from .mdconfig import MDP
@@ -443,18 +444,26 @@ class GmxEngine(MDEngine):
         cmd_str = self._grompp_cmd(mdp_in=mdp_in, tpr_out=tpr_out,
                                    trr_in=trr_in, mdp_out=mdp_out)
         logger.info(f"{cmd_str}")
-        grompp_proc = await asyncio.create_subprocess_exec(
+        # 2 file descriptors: stdout, stderr
+        await _SEM_MAX_FILES_OPEN.acquire()
+        await _SEM_MAX_FILES_OPEN.acquire()
+        try:
+            grompp_proc = await asyncio.create_subprocess_exec(
                                                 *shlex.split(cmd_str),
                                                 stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE,
                                                 cwd=self.workdir,
-                                                           )
-        stdout, stderr = await grompp_proc.communicate()
-        return_code = grompp_proc.returncode
-        logger.info(f"grompp command returned {return_code}.")
-        logger.debug(f"grompp stdout: {stdout.decode()}.")
-        # gromacs likes to talk on stderr ;)
-        logger.debug(f"grompp stderr: {stderr.decode()}.")
+                                                               )
+            stdout, stderr = await grompp_proc.communicate()
+            logger.debug(f"grompp stdout: {stdout.decode()}.")
+            # gromacs likes to talk on stderr ;)
+            logger.debug(f"grompp stderr: {stderr.decode()}.")
+            return_code = grompp_proc.returncode
+            logger.info(f"grompp command returned {return_code}.")
+        finally:
+            # release the semaphore(s)
+            _SEM_MAX_FILES_OPEN.release()
+            _SEM_MAX_FILES_OPEN.release()
         if return_code != 0:
             # this assumes POSIX
             raise RuntimeError(f"grompp had non-zero return code ({return_code}).")
@@ -504,10 +513,12 @@ class GmxEngine(MDEngine):
         # i.e. we only need to overwite this function to write out the slurm
         # submission script and submit the job
         # TODO: capture sdtout/stderr? This would only work for local gmx...
+        #       also we would need to take care of holdeing/releasing the
+        #       sempaphore until/when the mdrun is done...
         proc = await asyncio.create_subprocess_exec(
                                             *shlex.split(cmd_str),
-                                            stdout=asyncio.subprocess.PIPE,
-                                            stderr=asyncio.subprocess.PIPE,
+                                            #stdout=asyncio.subprocess.PIPE,
+                                            #stderr=asyncio.subprocess.PIPE,
                                             cwd=self.workdir,
                                                     )
         self._proc = proc
