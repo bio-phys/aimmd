@@ -108,7 +108,8 @@ class SlurmProcess:
 
     async def submit(self):
         sbatch_cmd = f"{self.sbatch_executable} --parsable {self.sbatch_script}"
-        # 2 file descriptors: stdout,stderr
+        # 3 file descriptors: stdin,stdout,stderr
+        await _SEM_MAX_FILES_OPEN.acquire()
         await _SEM_MAX_FILES_OPEN.acquire()
         await _SEM_MAX_FILES_OPEN.acquire()
         try:
@@ -122,7 +123,8 @@ class SlurmProcess:
             stdout, stderr = await sbatch_proc.communicate()
             sbatch_return = stdout.decode()
         finally:
-            # and put the two back into the semaphore
+            # and put the three back into the semaphore
+            _SEM_MAX_FILES_OPEN.release()
             _SEM_MAX_FILES_OPEN.release()
             _SEM_MAX_FILES_OPEN.release()
         # only jobid (and possibly clustername) returned, semikolon to separate

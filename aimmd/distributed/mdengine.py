@@ -444,7 +444,8 @@ class GmxEngine(MDEngine):
         cmd_str = self._grompp_cmd(mdp_in=mdp_in, tpr_out=tpr_out,
                                    trr_in=trr_in, mdp_out=mdp_out)
         logger.info(f"{cmd_str}")
-        # 2 file descriptors: stdout, stderr
+        # 3 file descriptors: stdin, stdout, stderr
+        await _SEM_MAX_FILES_OPEN.acquire()
         await _SEM_MAX_FILES_OPEN.acquire()
         await _SEM_MAX_FILES_OPEN.acquire()
         try:
@@ -462,6 +463,7 @@ class GmxEngine(MDEngine):
             logger.info(f"grompp command returned {return_code}.")
         finally:
             # release the semaphore(s)
+            _SEM_MAX_FILES_OPEN.release()
             _SEM_MAX_FILES_OPEN.release()
             _SEM_MAX_FILES_OPEN.release()
         if return_code != 0:
