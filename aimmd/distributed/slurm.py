@@ -23,6 +23,7 @@ import logging
 
 
 from . import _SEM_MAX_FILES_OPEN
+from .utils import ensure_executable_available
 
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,10 @@ class SlurmProcess:
                                     + f"mismatching type ({type(value)}). "
                                     + f" Default type is {type(cval)}."
                                     )
+        # this either checks for our defaults or whatever we just set via kwargs
+        ensure_executable_available(self.sacct_executable)
+        ensure_executable_available(self.sbatch_executable)
+        ensure_executable_available(self.scancel_executable)
         self.sbatch_script = os.path.abspath(sbatch_script)
         self.workdir = os.path.abspath(workdir)
         self._jobid = None

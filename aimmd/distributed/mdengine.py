@@ -25,6 +25,7 @@ from .trajectory import Trajectory
 from .slurm import SlurmProcess
 from .mdconfig import MDP
 from .gmx_utils import nstout_from_mdp, get_all_traj_parts
+from .utils import ensure_executable_available
 
 
 logger = logging.getLogger(__name__)
@@ -138,8 +139,8 @@ class GmxEngine(MDEngine):
     """
 
     # local prepare and option to run a local gmx (mainly for testing)
-    grompp_executable = "gmx grompp"
-    mdrun_executable = "gmx mdrun"
+    _grompp_executable = "gmx grompp"
+    _mdrun_executable = "gmx mdrun"
     # extra_args are expected to be str and will be appended to the end of the
     # respective commands after a separating space,
     # i.e. cmd = base_cmd + " " + extra_args
@@ -189,6 +190,9 @@ class GmxEngine(MDEngine):
         self.gro_file = gro_file  # sets self._gro_file
         self.top_file = top_file  # sets self._top_file
         self.ndx_file = ndx_file  # sets self._ndx_file
+        # dirty hack to make sure we also check for our defaults if they are available
+        self.mdrun_executable = self.mdrun_executable
+        self.grompp_executable = self.grompp_executable
         self._workdir = None
         self._prepared = False
         # NOTE: frames_done and steps_done do not have an easy relation!
@@ -215,26 +219,42 @@ class GmxEngine(MDEngine):
         return state
 
     @property
+    def grompp_executable(self):
+        return self._grompp_executable
+
+    @property.setter
+    def grompp_executable(self, val):
+        self._grompp_executable = ensure_executable_available(val)
+
+    @property
+    def mdrun_executable(self):
+        return self._mdrun_executable
+
+    @property.setter
+    def mdrun_executable(self, val):
+        self._mdrun_executable = ensure_executable_available(val)
+
+    @property
     def current_trajectory(self):
-        if all(v is not None for v in [self._tpr, self._deffnm]):
-            # self._tpr and self._deffnm are set in prepare, i.e. having them
-            # set makes sure that we have at least prepared running the traj
-            # but it might not be done yet
-            # we check if self_proc is set (which prepare sets to None)
+        if self._simulation_part == 0:
+            # we could check if self_proc is set (which prepare sets to None)
             # this should make sure that calling current trajectory after
             # calling prepare does not return a traj, as soon as we called
             # run self._proc will be set, i.e. there is still no gurantee that
             # the traj is done, but it will be started always
             # (even when accessing simulataneous to the call to run),
             # i.e. it is most likely done
-            # NOTE/FIXME we can also check for simulation part, since it seems
-            #  gmx ignores that if no checkpoint is passed, i.e. we will
-            #  **always** start with part0001 anyways!
+            # we can also check for simulation part, since it seems
+            # gmx ignores that if no checkpoint is passed, i.e. we will
+            # **always** start with part0001 anyways!
             # but checking for self._simulation_part == 0 also just makes sure
-            # we did not start a run (i.e. same as checking self._proc)
-            #if self._simulation_part == 0:
-            if self._proc is None:
-                return None
+            # we never started a run (i.e. same as checking self._proc)
+            return None
+        elif (all(v is not None for v in [self._tpr, self._deffnm])
+              and not self.running):
+            # self._tpr and self._deffnm are set in prepare, i.e. having them
+            # set makes sure that we have at least prepared running the traj
+            # but it might not be done yet
             traj = Trajectory(
                     trajectory_file=os.path.join(
                                         self.workdir,
