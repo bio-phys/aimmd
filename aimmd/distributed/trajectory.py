@@ -31,6 +31,7 @@ from scipy import constants
 
 
 from .slurm import SlurmProcess
+from .utils import ensure_executable_available
 from . import _SEM_MAX_PROCESS
 
 
@@ -214,19 +215,8 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
 
     @executable.setter
     def executable(self, val):
-        if os.path.isfile(os.path.abspath(val)):
-            # see if it is a relative path starting from cwd
-            # (or a full path starting with /)
-            exe = os.path.abspath(val)
-            if not os.access(exe, os.X_OK):
-                raise ValueError(f"{exe} must be executable.")
-        elif shutil.which(val) is not None:
-            # see if we find it in $PATH
-            exe = shutil.which(val)
-        else:
-            raise ValueError(f"{val} must be an existing path or accesible via"
-                             + " the $PATH environment variable.")
-        # if we get here it should be save to set, i.e. exists + executable
+        exe = ensure_executable_available(val)
+        # if we get here it should be save to set, i.e. it exists + has X-bit
         self._executable = exe
         self._id = self._get_id_str()  # get the new hash/id
 
@@ -324,8 +314,17 @@ class Trajectory:
     Also makes vailable (and caches) a number of useful attributes, namely:
         - first_step (integration step of first frame in this trajectory [part])
         - last_step (integration step of the last frame in this trajectory [part])
+        - dt (the timeintervall between subsequent *frames* [not steps])
+        - first_time (the integration time of the first frame)
+        - last_time (the integration time of the last frame)
         - length (number of frames in this trajectory)
         - nstout (number of integration steps between subsequent frames)
+
+    NOTE: first_step and last_step is only useful for trajectories that come
+          directly from a MDEngine. As soon as the trajecory has been
+          concatenated using MDAnalysis (i.e. the `TrajectoryConcatenator`)
+          the step information is just the frame number in the trajectory part
+          that became first/last frame in the concatenated trajectory.
     """
 
     def __init__(self, trajectory_file, structure_file, nstout=None, **kwargs):
@@ -354,10 +353,15 @@ class Trajectory:
             self.structure_file = os.path.abspath(structure_file)
         else:
             raise ValueError(f"structure_file ({structure_file}) must be accessible.")
-        self.nstout = nstout
+        # properties
+        self.nstout = nstout  # use the setter to make basic sanity checks
         self._len = None
         self._first_step = None
         self._last_step = None
+        self._dt = None
+        self._first_time = None
+        self._last_time = None
+        # stuff for caching of functions applied to this traj
         self._func_id_to_idx = {}
         self._func_values = []
         self._h5py_grp = None
@@ -376,6 +380,19 @@ class Trajectory:
         return (f"Trajectory(trajectory_file={self.trajectory_file},"
                 + f" structure_file={self.structure_file})"
                 )
+
+    @property
+    def nstout(self):
+        """Output frequency between subsequent frames in integration steps."""
+        return self._nstout
+
+    @nstout.setter
+    def nstout(self, val):
+        if val is not None:
+            # ensure that it is an int
+            val = int(val)
+        # enable setting to None
+        self._nstout = val
 
     @property
     def first_step(self):
@@ -400,17 +417,35 @@ class Trajectory:
         return self._last_step
 
     @property
-    def nstout(self):
-        """Output frequency between subsequent frames in integration steps."""
-        return self._nstout
+    def dt(self):
+        """The time intervall between subsequent *frames* (not steps) in ps."""
+        if self._dt is None:
+            u = mda.Universe(self.structure_file, self.trajectory_file,
+                             tpr_resid_from_one=False)
+            # any frame is fine (assuming they all have the same spacing)
+            ts = u.trajectory[0]
+            self._dt = ts.data["dt"]
+        return self._dt
 
-    @nstout.setter
-    def nstout(self, val):
-        if val is not None:
-            # ensure that it is an int
-            val = int(val)
-        # enable setting to None
-        self._nstout = val
+    @property
+    def first_time(self):
+        """The integration timestep of the first frame in ps."""
+        if self._first_time is None:
+            u = mda.Universe(self.structure_file, self.trajectory_file,
+                             tpr_resid_from_one=False)
+            ts = u.trajectory[0]
+            self._first_time = ts.data["time"]
+        return self._first_time
+
+    @property
+    def last_time(self):
+        """The integration timestep of the last frame in ps."""
+        if self._last_time is None:
+            u = mda.Universe(self.structure_file, self.trajectory_file,
+                             tpr_resid_from_one=False)
+            ts = u.trajectory[-1]
+            self._last_time = ts.data["time"]
+        return self._last_time
 
     async def _apply_wrapped_func(self, func_id, wrapped_func):
         if self._h5py_grp is not None:
@@ -546,7 +581,7 @@ class TrajectoryConcatenator:
         self.invert_v_for_negative_step = invert_v_for_negative_step
 
     def concatenate(self, trajs, slices, tra_out, struct_out=None,
-                    overwrite=False):
+                    overwrite=False, remove_double_frames=True):
         """
         Create concatenated trajectory from given trajectories and frames.
 
@@ -557,6 +592,10 @@ class TrajectoryConcatenator:
                      structure file of the first trajectory in trajs
         overwrite - bool (default=False), if True overwrite existing tra_out,
                     if False and the file exists raise an error
+        remove_double_frames - bool (default=True), if True try to remove double
+                               frames from the concatenated output
+                               NOTE: that we use a simple heuristic, we just
+                                     check if the integration time is the same
         """
         tra_out = os.path.abspath(tra_out)
         if os.path.exists(tra_out) and not overwrite:
@@ -578,15 +617,25 @@ class TrajectoryConcatenator:
                 if self.invert_v_for_negative_step and step0 < 0:
                     u0.atoms.velocities *= -1
                 W.write(u0.atoms)
+                if remove_double_frames:
+                    # remember the last timestamp, so we can take it out
+                    last_time_seen = ts.data["time"]
             del u0  # should free up memory and does no harm?!
             for traj, sl in zip(trajs[1:], slices[1:]):
                 u = mda.Universe(traj.structure_file, traj.trajectory_file,
                                  tpr_resid_from_one=False)
                 start, stop, step = sl
                 for ts in u.trajectory[start:stop:step]:
+                    if remove_double_frames:
+                        if last_time_seen == ts.data["time"]:
+                            # this is a no-op, as they are they same...
+                            #last_time_seen = ts.data["time"]
+                            continue  # skip this timestep/go to next iteration
                     if self.invert_v_for_negative_step and step < 0:
                         u.atoms.velocities *= -1
                     W.write(u.atoms)
+                    if remove_double_frames:
+                        last_time_seen = ts.data["time"]
                 del u
         # return (file paths to) the finished trajectory
         return Trajectory(tra_out, struct_out)
