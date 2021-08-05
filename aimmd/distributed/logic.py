@@ -496,17 +496,19 @@ class ModelDependentPathMover(PathMover):
 # TODO: DOCUMENT
 class TwoWayShootingPathMover(ModelDependentPathMover):
     # for TwoWay shooting moves until any state is reached
-    forward_deffnm = "forward"  # trajctory deffnm forward shot
+    forward_deffnm = "forward"  # engine deffnm for forward shot
     backward_deffnm = "backward"  # same for backward shot
-    transition_filename = "transition"  # filename for produced transitions
+    transition_filename = "transition.trr"  # filename for produced transitions
 
-    def __init__(self, modelstore, states, engines, engine_config,
-                 walltime_per_part, T):
+    def __init__(self, modelstore, states, engine_cls, engine_kwargs,
+                 engine_config, walltime_per_part, T):
         """
         modelstore - arcd.storage.RCModelRack
         states - list of state functions, passed to Propagator
         descriptor_transform - coroutine function used to calculate descriptors
-        engines - list/iterable with two initialized engines
+        engine_cls - the class of the molecular dynamcis engine to use
+        engine_kwargs - a dict with keyword arguments to initialize the given
+                        molecular dynamcis engine
         engine_config - MDConfig subclass [used in prepare() method of engines]
         walltime_per_part - simulation walltime per trajectory part
         T - temperature in degree K (used for velocity randomization)
@@ -517,7 +519,11 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         #       changing anything requires recreating the propagators!
         super().__init__(modelstore=modelstore)
         self.states = states
-        self.engines = engines
+        self.engine_cls = engine_cls
+        self.engine_kwargs = engine_kwargs
+        # build the engines
+        # TODO: do we want to move that to self._build_extracts_and_propas()?
+        self.engines = [self.engine_cls(**self.engine_kwargs) for _ in range(2)]
         self.engine_config = engine_config
         try:
             # make sure we do not generate velocities with gromacs
@@ -620,7 +626,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                 # can only be the other way round
                 minus_trajs, minus_state = fw_trajs, fw_state
                 plus_trajs, plus_state = bw_trajs, bw_state
-            tra_out = os.path.join(wdir, f"{self.transition_filename}.trr")
+            tra_out = os.path.join(wdir, f"{self.transition_filename}")
             path_traj = await construct_TP_from_plus_and_minus_traj_segments(
                             minus_trajs=minus_trajs, minus_state=minus_state,
                             plus_trajs=plus_trajs, plus_state=plus_state,
@@ -1171,6 +1177,7 @@ class CommittorSimulation:
                         ]
             n = len(filtered)
         # and propagate
+        round_one = True
         while True:
             try:
                 out = await propagator.propagate_and_concatenate(
@@ -1180,8 +1187,7 @@ class CommittorSimulation:
                                     tra_out=os.path.join(step_dir,
                                                          self.fname_traj_to_state
                                                          ),
-                                    # can only continue if we did not crash (yet)
-                                    continuation=(continuation and n == 0),
+                                    continuation=(continuation and round_one),
                                     overwrite=overwrite,
                                                                  )
             except (MaxStepsReachedError, EngineCrashedError) as e:
@@ -1225,6 +1231,7 @@ class CommittorSimulation:
                 return state_reached
             finally:
                 n += 1
+                round_one = False
 
     async def _run_single_trial_tw(self, conf_num, shot_num, step_dir,
                                    continuation, overwrite):
@@ -1569,19 +1576,22 @@ async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_stat
     minus_state_vals = np.concatenate(minus_state_vals, axis=0)
     # get the first frame in state
     frames_in_minus, = np.where(minus_state_vals)  # where always returns a tuple
+    # get the first frame in minus state in minus_trajs, this will become the
+    # first frame of the traj since we invert this part
     first_frame_in_minus = np.min(frames_in_minus)
     # I think this is overkill, i.e. we can always expect that
     # first frame in state is in last part?!
     # [this could potentially make this a bit shorter and maybe
     #  even a bit more readable :)]
     # But for now: better be save than sorry :)
-    # find the part in which minus state is reached
+    # find the first part in which minus state is reached, i.e. the last one
+    # to take when constructing the TP
     last_part_idx = 0
     frame_sum = part_lens[last_part_idx]
     while first_frame_in_minus >= frame_sum:
         last_part_idx += 1
         frame_sum += part_lens[last_part_idx]
-    # find the first frame in state (counting from start of last part)
+    # find the first frame in state (counting from start of last part to take)
     _first_frame_in_minus = (first_frame_in_minus
                              - sum(part_lens[:last_part_idx]))  # >= 0
     # now construct the slices and trajs list (backwards!)
@@ -1616,15 +1626,22 @@ async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_stat
     # NOTE: here we exclude the starting configuration, i.e. the SP,
     #       such that it is in the concatenated trajectory only once!
     #       (gromacs has the first frame in the trajectory)
-    slices += [(1, None, 1)]
-    trajs += [plus_trajs[0]]
-    # these are the trajectory segments we take completely
-    # [this excludes last_part_idx so far]
-    slices += [(0, None, 1) for _ in range(1, last_part_idx)]
-    trajs += [plus_trajs[i] for i in range(1, last_part_idx)]
-    # add last part (with the last frame as first frame in plus state)
-    slices += [(0, _first_frame_in_plus + 1, 1)]
-    trajs += [plus_trajs[last_part_idx]]
+    if last_part_idx > 0:
+        # these are the trajectory segments we take completely
+        # [this excludes last_part_idx so far]
+        slices += [(1, None, 1)]
+        trajs += [plus_trajs[0]]
+        # these will be empty if last_part_idx < 2
+        slices += [(0, None, 1) for _ in range(1, last_part_idx)]
+        trajs += [plus_trajs[i] for i in range(1, last_part_idx)]
+        # add last part (with the last frame as first frame in plus state)
+        slices += [(0, _first_frame_in_plus + 1, 1)]
+        trajs += [plus_trajs[last_part_idx]]
+    else:
+        # first and last part is the same, so exclude starting configuration
+        # from the same segment that has the last frame as first frame in plus
+        slices += [(1, _first_frame_in_plus + 1, 1)]
+        trajs += [plus_trajs[last_part_idx]]
     # finally produce the concatenated path
     concat = functools.partial(TrajectoryConcatenator().concatenate,
                                trajs=trajs,
