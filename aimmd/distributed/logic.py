@@ -924,6 +924,93 @@ class CommittorSimulation:
                     ret[i][j][state_reached] += 1
         return ret
 
+    @property
+    def trajs_to_state(self):
+        """
+        Return all forward trajectories until a state generated so far.
+
+        They are sorted as a list of lists. The outer list is configurations,
+        the inner list is shots, i.e. the outer list will always have
+        len=n_starting_configurations and the inner lists will all have
+        len=self.shot_counter.
+        """
+        trajs_to_state = []
+        for cnum, cdir in enumerate(self._conf_dirs):
+            trajs_per_conf = []
+            for snum in range(self.shot_counter):
+                traj_fname = os.path.join(cdir,
+                                          f"{self.shot_dir_prefix}{snum}",
+                                          f"{self.trajs_to_state}")
+                struct_fname = os.path.join(cdir,
+                                            f"{self.shot_dir_prefix}{snum}",
+                                            # TODO/FIXME: only works for gmx!
+                                            f"{self.deffnm_engine_out}.tpr")
+                if os.path.isfile(traj_fname):
+                    trajs_per_conf += [Trajectory(trajectory_file=traj_fname,
+                                                  structure_file=struct_fname)
+                                       ]
+            trajs_to_state += [trajs_per_conf]
+        return trajs_to_state
+
+    @property
+    def trajs_to_state_bw(self):
+        """
+        Return all backward trajectories until a state generated so far.
+
+        They are sorted as a list of lists. The outer list is configurations,
+        the inner list is shots, i.e. the outer list will always have
+        len=n_starting_configurations and the inner lists will all have
+        len=self.shot_counter.
+        """
+        trajs_to_state = []
+        for cnum, cdir in enumerate(self._conf_dirs):
+            trajs_per_conf = []
+            for snum in range(self.shot_counter):
+                traj_fname = os.path.join(cdir,
+                                          f"{self.shot_dir_prefix}{snum}",
+                                          f"{self.trajs_to_state_bw}")
+                struct_fname = os.path.join(cdir,
+                                            f"{self.shot_dir_prefix}{snum}",
+                                            # TODO/FIXME: only works for gmx!
+                                            f"{self.deffnm_engine_out}.tpr")
+                if os.path.isfile(traj_fname):
+                    trajs_per_conf += [Trajectory(trajectory_file=traj_fname,
+                                                  structure_file=struct_fname)
+                                       ]
+            trajs_to_state += [trajs_per_conf]
+        return trajs_to_state
+
+    @property
+    def transitions(self):
+        """
+        Return all transitions generated so far.
+
+        They are sorted as a list of lists. The outer list is configurations,
+        the inner list is shots, i.e. the outer list will always have
+        len=n_starting_configurations and the inner lists then just contains
+        all transitions for the respective configuration and can also be empty.
+        """
+        if not self.two_way:
+            # can not have transitions
+            return [[] for _ in range(len(self._conf_dirs))]
+        transitions = []
+        for cnum, cdir in enumerate(self._conf_dirs):
+            trans_per_conf = []
+            for snum in range(self.shot_counter):
+                traj_fname = os.path.join(cdir,
+                                          f"{self.shot_dir_prefix}{snum}",
+                                          f"{self.fname_transition_traj}")
+                struct_fname = os.path.join(cdir,
+                                            f"{self.shot_dir_prefix}{snum}",
+                                            # TODO/FIXME: only works for gmx!
+                                            f"{self.deffnm_engine_out}.tpr")
+                if os.path.isfile(traj_fname):
+                    trans_per_conf += [Trajectory(trajectory_file=traj_fname,
+                                                  structure_file=struct_fname)
+                                       ]
+            transitions += [trans_per_conf]
+        return transitions
+
     async def reinitialize_from_workdir(self, overwrite=False):
         """
         Reassess all trials in workdir and populate states_reached counter.
