@@ -80,32 +80,14 @@ class MDEngine(abc.ABC):
     def running(self):
         raise NotImplementedError
 
-    # NOTE: this is redundant and poll() is not very async/await like
-    #@abc.abstractmethod
-    #def poll(self):
-        # return the return code of last engine run
-        # [or None (if the engine is running or never ran)]
-    #    raise NotImplementedError
-
     @abc.abstractproperty
-    def returncode(self):
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def wait(self):
-        raise NotImplementedError
-
-    @abc.abstractproperty
-    # TODO do we need this? or is prepare always fast enough that we can block
-    #      everything/the main program flow and just wait for it to finish?
-    def ready_for_run(self):
-        # should be set to True when preparation is done
+    def steps_done(self):
         raise NotImplementedError
 
 
 # TODO: DOCUMENT!
 # TODO: capture mdrun stdout+ stderr? for local gmx? for slurm it goes to file
-# NOTE: with tra we mean trr, i.e. a full precision trajectory with velocities
+# NOTE: with tra we usually mean trr, i.e. a full precision trajectory with velocities
 class GmxEngine(MDEngine):
     """
     Steer gromacs molecular dynamics simulation from python.
@@ -152,7 +134,6 @@ class GmxEngine(MDEngine):
                               #       However this does not mean that no other
                               #       trajs will/can be written, we simply
                               #       ignore them
-    first_frame_in_traj = True  # GmxEngines always output the initial frame
 
     def __init__(self, gro_file, top_file, ndx_file=None, **kwargs):
         """
@@ -201,6 +182,8 @@ class GmxEngine(MDEngine):
         self._frames_done = 0
         # number of integration steps done since last call to prepare
         self._steps_done = 0
+        # integration time since last call to prepare in ps
+        self._time_done = 0.
         self._nstout = None
         # Popen handle for gmx mdrun, used to check if we are running
         self._proc = None
@@ -224,7 +207,10 @@ class GmxEngine(MDEngine):
 
     @grompp_executable.setter
     def grompp_executable(self, val):
-        self._grompp_executable = ensure_executable_available(val)
+        # split because mdrun and grompp can be both subcommands of gmx
+        test_exe = val.split(" ")[0]
+        ensure_executable_available(test_exe)
+        self._grompp_executable = val
 
     @property
     def mdrun_executable(self):
@@ -232,7 +218,9 @@ class GmxEngine(MDEngine):
 
     @mdrun_executable.setter
     def mdrun_executable(self, val):
-        self._mdrun_executable = ensure_executable_available(val)
+        test_exe = val.split(" ")[0]
+        ensure_executable_available(test_exe)
+        self._mdrun_executable = val
 
     @property
     def current_trajectory(self):
@@ -277,23 +265,12 @@ class GmxEngine(MDEngine):
         if self._proc is None:
             # this happens when we did not call run() yet
             return False
-        if self.returncode is None:
+        if self._proc.returncode is None:
             # no return code means it is still running
             return True
         # dont care for the value of the exit code,
         # we are not running anymore if we crashed ;)
         return False
-
-    @property
-    def returncode(self):
-        if self._proc is not None:
-            return self._proc.returncode
-        # Note: we also return None when we never ran, i.e. with no _proc set
-        return None
-
-    async def wait(self):
-        if self._proc is not None:
-            return await self._proc.wait()
 
     @property
     def workdir(self):
@@ -341,6 +318,30 @@ class GmxEngine(MDEngine):
             val = os.path.abspath(val)
         # set it anyway (even if it is None)
         self._ndx_file = val
+
+    @property
+    def dt(self):
+        """Integration timestep in ps."""
+        if self._run_config is None:
+            raise ValueError("Can only determine dt with a given .mdp file,"
+                             " i.e. after calling any 'prepare' method.")
+        return self._run_config["dt"]
+
+    @property
+    def time_done(self):
+        """
+        Integration time since last call to prepare in ps.
+
+        Takes into account 'tinit' from the .mdp file if set.
+        """
+        if self._run_config is None:
+            raise ValueError("Can only determine time_done after calling prepare.")
+        try:
+            tinit = self._run_config["tinit"]
+        except KeyError:
+            tinit = 0.
+        finally:
+            return self._time_done - tinit
 
     # TODO/FIXME: we assume that all output frequencies are multiples of the
     #             smallest when determing the number of frames etc
@@ -497,6 +498,7 @@ class GmxEngine(MDEngine):
         self._proc = None
         self._frames_done = 0  # (re-)set how many frames we did
         self._steps_done = 0
+        self._time_done = 0.
         self._prepared = True
 
     async def prepare_from_files(self, workdir, deffnm):
@@ -527,6 +529,7 @@ class GmxEngine(MDEngine):
         # steps done is the more reliable info if we want to know how many
         # integration steps we did
         self._steps_done = previous_trajs[-1].last_step
+        self._time_done = previous_trajs[-1].last_time
         self._proc = None
         self._prepared = True
 
@@ -594,7 +597,8 @@ class GmxEngine(MDEngine):
         logger.info(f"{cmd_str}")
         await self._start_gmx_mdrun(cmd_str=cmd_str)
         try:
-            exit_code = await self.wait()
+            # self._proc is set by _start_gmx_mdrun!
+            exit_code = await self._proc.wait()
         except asyncio.CancelledError:
             self._proc.kill()
         else:
@@ -602,9 +606,10 @@ class GmxEngine(MDEngine):
                 raise EngineCrashedError("Non-zero exit code from mdrun."
                                          + f" Exit code was: {exit_code}.")
             self._frames_done += len(self.current_trajectory)
-            # dont care if we did a littel more and only the checkpoint knows
+            # dont care if we did a little more and only the checkpoint knows
             # we will only find out with the next trajectory part anyways
             self._steps_done = self.current_trajectory.last_step
+            self._time_done = self.current_trajectory.last_time
             return self.current_trajectory
 
     async def run_steps(self, nsteps, steps_per_part=False):

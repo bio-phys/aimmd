@@ -36,7 +36,7 @@ from .gmx_utils import get_all_traj_parts, nstout_from_mdp
 logger = logging.getLogger(__name__)
 
 
-class MaxFramesReachedError(Exception):
+class MaxStepsReachedError(Exception):
     """
     Error raised when the simulation terminated because the (user-defined)
     maximum number of integration steps/trajectory frames has been reached.
@@ -807,11 +807,6 @@ class CommittorSimulation:
     deffnm_engine_out_bw = "trial_bw"  # only in twoway (for runs with inverted v)
     max_retries_on_crash = 2  # maximum number of *retries* on MD engine crash
                               # i.e. setting to 1 means *retry* once on crash
-    # TODO: not used anymore?! we should remove it?!
-    wait_time_on_crash = 60  # time to wait for cleanup of 'depending threads'
-                             # after a crash, 'depending threads' are e.g. the
-                             # conjugate trials in a two way simulation,
-                             # in seconds!
 
     def __init__(self, workdir, starting_configurations, states, engine_cls,
                  engine_kwargs, engine_run_config, T, walltime_per_part,
@@ -1011,7 +1006,7 @@ class CommittorSimulation:
                                     # can only continue if we did not crash (yet)
                                     continuation=(continuation and n == 0),
                                                                  )
-            except (MaxFramesReachedError, EngineCrashedError) as e:
+            except (MaxStepsReachedError, EngineCrashedError) as e:
                 log_str = (f"MD engine for configuration {conf_num}, "
                            + f"shot {shot_num}, deffnm {self.deffnm_engine_out}"
                            + f" crashed for the {n + 1}th time.")
@@ -1019,7 +1014,7 @@ class CommittorSimulation:
                     if isinstance(e, EngineCrashedError):
                         subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
                                                          + f"_{n + 1}crash"))
-                    elif isinstance(e, MaxFramesReachedError):
+                    elif isinstance(e, MaxStepsReachedError):
                         subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
                                                          + f"_{n + 1}max_len"))
                 else:
@@ -1155,7 +1150,7 @@ class CommittorSimulation:
             for t in done:
                 t_idx = trials_pending.index(t)
                 if isinstance(t.exception(), (EngineCrashedError,
-                                              MaxFramesReachedError)):
+                                              MaxStepsReachedError)):
                     log_str = (f"MD engine for configuration {str(conf_num)}, "
                                + f"shot {str(shot_num)}, "
                                + f"deffm {deffnms_engine_out[t_idx]} crashed "
@@ -1168,7 +1163,7 @@ class CommittorSimulation:
                                                   (f"{deffnms_engine_out[t_idx]}"
                                                    + f"_{ns[t_idx] + 1}crash")
                                                   )
-                        elif isinstance(t.exception(), MaxFramesReachedError):
+                        elif isinstance(t.exception(), MaxStepsReachedError):
                             subdir = os.path.join(step_dir,
                                                   (f"{deffnms_engine_out[t_idx]}"
                                                    + f"_{ns[t_idx] + 1}max_len")
@@ -1558,16 +1553,14 @@ class TrajectoryPropagatorUntilAnyState:
             logger.warning("Both max_steps and max_frames given. Note that "
                            + "max_steps will take precedence.")
         if max_steps is not None:
-            if not (max_steps % nstout == 0):
-                raise ValueError("max_steps must be a multiple of nstout")
-            self.max_frames = max_steps // nstout
+            self.max_steps = max_steps
         elif max_frames is not None:
-            self.max_frames = max_frames
+            self.max_steps = max_frames * nstout
         else:
             logger.info("Neither max_frames nor max_steps given. "
-                        + "Setting max_frames to infinity.")
+                        + "Setting max_steps to infinity.")
             # this is a float but can be compared to ints
-            self.max_frames = np.inf
+            self.max_steps = np.inf
 
     #TODO/FIXME: self._states is a list...that means users can change
     #            single elements without using the setter!
@@ -1672,7 +1665,7 @@ class TrajectoryPropagatorUntilAnyState:
                                     )
                 any_state_reached = False
                 trajs = []
-                frame_counter = 0
+                step_counter = 0
             else:
                 # NOTE: we assume that the state function could be different
                 # so get all traj parts and calculate the state functions on them
@@ -1695,32 +1688,21 @@ class TrajectoryPropagatorUntilAnyState:
                 # Did not reach a state yet, so prepare the engine to continue
                 # the simulation until we reach any of the (new) states
                 await engine.prepare_from_files(workdir=workdir, deffnm=deffnm)
-                frame_counter = engine.frames_done
+                step_counter = engine.steps_done
 
             while ((not any_state_reached)
-                   and (frame_counter <= self.max_frames)):
+                   and (step_counter <= self.max_steps)):
                 traj = await engine.run_walltime(self.walltime_per_part)
                 state_vals = await self._state_vals_for_traj(traj)
                 any_state_reached = np.any(state_vals)
-                frame_counter += len(traj)
-                if self.engine_cls.first_frame_in_traj:
-                    # makes sure we do not double count frames
-                    # TODO/FIXME: this potentially undercounts!
-                    # some (all gmx) engines with first_frame_in_traj will not
-                    # write the initial conf when running for a specific walltime
-                    # this way we will undercount by always taking - 1, but
-                    # it should not matter much (?) because we do not call with
-                    # a specific number of steps anyway, i.e. max_frames is just
-                    # to avoid getting stuck forever and we do not care if we
-                    # potentially run a little longer
-                    frame_counter -= 1
+                step_counter = engine.steps_done
                 trajs.append(traj)
             if not any_state_reached:
                 # left while loop because of max_frames reached
-                raise MaxFramesReachedError(
-                        f"Engine produced {frame_counter} "
-                        + f"frames (>= {self.max_frames})."
-                                            )
+                raise MaxStepsReachedError(
+                        f"Engine produced {step_counter} "
+                        + f"steps (>= {self.max_steps})."
+                                           )
         # state_vals are the ones for the last traj
         # here we get which states are True and at which frame
         states_reached, frame_nums = np.where(state_vals)
