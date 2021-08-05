@@ -222,7 +222,7 @@ class GmxEngine(MDEngine):
     def grompp_executable(self):
         return self._grompp_executable
 
-    @property.setter
+    @grompp_executable.setter
     def grompp_executable(self, val):
         self._grompp_executable = ensure_executable_available(val)
 
@@ -230,7 +230,7 @@ class GmxEngine(MDEngine):
     def mdrun_executable(self):
         return self._mdrun_executable
 
-    @property.setter
+    @mdrun_executable.setter
     def mdrun_executable(self, val):
         self._mdrun_executable = ensure_executable_available(val)
 
