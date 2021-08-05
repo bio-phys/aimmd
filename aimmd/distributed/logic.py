@@ -924,13 +924,17 @@ class CommittorSimulation:
                     ret[i][j][state_reached] += 1
         return ret
 
-    async def reinitialize_from_workdir(self):
+    async def reinitialize_from_workdir(self, overwrite=False):
         """
         Reassess all trials in workdir and populate states_reached counter.
 
         Possibly extend trials if no state has been reached yet.
         Add missing backwards shots from scratch if the previous run has been
         with two_way=False and this one has two_way=True.
+
+        If overwrite=True we will allow to overwrite existing concatenated
+        output trajectories, i.e. traj_to_state, traj_to_state_bw and
+        transition_traj.
         """
         # make sure we set everything to zero before we start!
         self._shot_counter = 0
@@ -951,13 +955,16 @@ class CommittorSimulation:
                         )
                     ]
         n_shots = len(filtered)
-        return await self._run(n_per_struct=n_shots, continuation=True)
+        return await self._run(n_per_struct=n_shots, continuation=True,
+                               overwrite=overwrite)
 
     async def run(self, n_per_struct):
         """Run for n_per_struct committor trials for each configuration."""
-        return await self._run(n_per_struct=n_per_struct, continuation=False)
+        return await self._run(n_per_struct=n_per_struct, continuation=False,
+                               overwrite=False)
 
-    async def _run_single_trial_ow(self, conf_num, shot_num, step_dir, continuation):
+    async def _run_single_trial_ow(self, conf_num, shot_num, step_dir,
+                                   continuation, overwrite):
         # construct propagator
         propagator = TrajectoryPropagatorUntilAnyState(
                                     states=self.states,
@@ -1005,6 +1012,7 @@ class CommittorSimulation:
                                                          ),
                                     # can only continue if we did not crash (yet)
                                     continuation=(continuation and n == 0),
+                                    overwrite=overwrite,
                                                                  )
             except (MaxStepsReachedError, EngineCrashedError) as e:
                 log_str = (f"MD engine for configuration {conf_num}, "
@@ -1048,7 +1056,8 @@ class CommittorSimulation:
             finally:
                 n += 1
 
-    async def _run_single_trial_tw(self, conf_num, shot_num, step_dir, continuation):
+    async def _run_single_trial_tw(self, conf_num, shot_num, step_dir,
+                                   continuation, overwrite):
         # NOTE: this is a potential misuse of a committor simulation,
         #       see the note further down for more on why it is/should be ok
         # propagators
@@ -1254,7 +1263,7 @@ class CommittorSimulation:
                             minus_trajs=minus_trajs, minus_state=minus_state,
                             plus_trajs=plus_trajs, plus_state=plus_state,
                             state_funcs=self.states, tra_out=tra_out,
-                            struct_out=None, overwrite=False,
+                            struct_out=None, overwrite=overwrite,
                                                                              )
             logger.info(f"TP from state {minus_state} to {plus_state} was generated.")
         # TODO: do we want to concatenate the trials to states in any way?
@@ -1271,7 +1280,7 @@ class CommittorSimulation:
         # TODO: we currently dont use the return, should call as _ = ... ?
         concats = await asyncio.gather(*(
                         p.cut_and_concatenate(trajs=trajs, tra_out=tra_out,
-                                              overwrite=False)
+                                              overwrite=overwrite)
                         for p, trajs, tra_out in zip(propagators,
                                                      [fw_trajs, bw_trajs],
                                                      out_tra_names
@@ -1281,7 +1290,8 @@ class CommittorSimulation:
         # (tra_out_fw, fw_state), (tra_out_bw, bw_state) = concats
         return fw_state
 
-    async def _run_single_trial(self, conf_num, shot_num, two_way, continuation):
+    async def _run_single_trial(self, conf_num, shot_num, two_way,
+                                continuation, overwrite):
         step_dir = os.path.join(
                         self.workdir,
                         self._conf_dirs[conf_num],
@@ -1296,6 +1306,7 @@ class CommittorSimulation:
                                                     shot_num=shot_num,
                                                     step_dir=step_dir,
                                                     continuation=continuation,
+                                                    overwrite=overwrite,
                                                             )
         else:
             state_reached = await self._run_single_trial_ow(
@@ -1303,11 +1314,12 @@ class CommittorSimulation:
                                                     shot_num=shot_num,
                                                     step_dir=step_dir,
                                                     continuation=continuation,
+                                                    overwrite=overwrite,
                                                             )
 
         return state_reached
 
-    async def _run(self, n_per_struct, continuation):
+    async def _run(self, n_per_struct, continuation, overwrite):
         # NOTE: make this private so we can use it from reassess with continuation
         #       but avoid unhappy users who dont understand when/how continuation
         #       can/should be used
@@ -1333,6 +1345,7 @@ class CommittorSimulation:
                                              shot_num=snum,
                                              two_way=self.two_way[cnum],
                                              continuation=continuation,
+                                             overwrite=overwrite,
                                              )
                       for snum in range(self._shot_counter,
                                         self._shot_counter + n_per_struct
