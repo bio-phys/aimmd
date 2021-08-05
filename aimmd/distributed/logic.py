@@ -773,28 +773,46 @@ class RCModelSPSelector:
 ## Committor stuff
 # TODO: DOCUMENT! (and clean up)
 class CommittorSimulation:
-    # TODO: remove when done! also document!
-    # takes:
-    # - a list of tuples (traj, idx, [name]), these are the starting structs
-    #    Note that name is an optional string, the name to use for the configuration folder
-    # - a list of state-funcs
-    # - an engine-class (uninitialized) and a dict with kwargs needed to initialize the engine, also a run_config with MD options
-    # - an int: max concurrent shots (to limit e.g. number of slurm jobs)
-    # - a float: the temperature to use for random velocity generation
-    # - a float: walltime per part
-    # - a bool: if we should do TwoWay shots (i.e. also propagate with inverted velocites in the hope of producing a TP)
-    # NOTE: some of these can be lists and are then per configuration!
-    #      namely:
-    #           - engine-class, engine_kwargs and engine_run_config
-    #           - the temperature T
-    #           - the bool indicating if we should do two way shots
-    #      This enables the use of one CommittorSimulation for a range of different
-    #      physical ensembles (differing in number of molecules, temperature or pressure)
+    """
+    Run committor simulation for multiple starting configurations in parallel.
+
+    Given a list of starting configurations and a list of states propagate
+    trajectories until any of the states is reached. Write out the concatenated
+    trajectory from the starting configuration to the first state.
+    When twoway shooting is performed additionally write out any potential
+    transitions (going from the lower index state to the higher index state).
+    Note that the `CommittorSimulation` allows for the simulation of different
+    ensembles per starting configuration (see the `__init__` docstring).
+
+    Notable functions:
+    ------------------
+        - `run(n_per_struct)` performs/adds `n_per_struct` committor trials for
+          every starting configuration
+        - `reinitialize_from_workdir()` populates the results counters from the
+          current workdir, possibly with new/different states and additional
+          twoway shooting performed if `self.two_way == True`
+
+    Notable properties:
+    -------------------
+        - `states_reached`, `states_reached_per_shot` and `shot_counter` keep
+          track of the results of the running simulation
+        - `trajs_to_state`, `trajs_to_state_bw` and `transitions` give access
+          to the resulting concatenated trajectories
+
+    Notable attributes:
+    -------------------
+        - `fname_traj_to_state`, `fname_traj_to_state`, `fname_transition_traj`
+          `deffnm_engine_out` and `deffnm_engine_out_bw` can be used to control
+          the names of the output files
+        - `max_retries_on_crash`
+    """
 
     # NOTE: the defaults here will results in the layout:
     # $WORKDIR/configuration_$CONF_NUM/shot_$SHOT_NUM,
     # where $WORKDIR is the workdir given at init, and $CONF_NUM, $SHOT_NUM are
     # the index to the input list starting_configurations and a counter for the shots
+    # Note that configuration_dir_prefix is only used if no names are given for
+    # the configurations
     configuration_dir_prefix = "configuration_"
     shot_dir_prefix = "shot_"
     # together with deffnm this results in "start_conf_trial_bw.trr" and
@@ -811,6 +829,65 @@ class CommittorSimulation:
     def __init__(self, workdir, starting_configurations, states, engine_cls,
                  engine_kwargs, engine_run_config, T, walltime_per_part,
                  n_max_concurrent=10, two_way=False, max_steps=None, **kwargs):
+        """
+        Initialize a `CommittorSimulation`.
+
+        Parameters:
+        -----------
+        workdir - str, absolute or relative path to an existing working directory
+        starting_configurations - list of iterables, each entry in the list is
+                                  describing a starting configuration and must
+                                  have at least the two entries:
+                                   (`aimd.distributed.Trajectory`,
+                                    `index_of_conf_in_traj`)
+                                  It can optionally have the form:
+                                   (`aimd.distributed.Trajectory`,
+                                    `index_of_conf_in_traj`,
+                                    `name_for_configuration`)
+        states - A list of state functions, preferably wrapped using any
+                 `aimmd.distributed.TrajectoryFunctionWrapper`
+        engine_cls - a subclass of `aimmd.distributed.MDEngine`, the molecular
+                     dynamics engine to use
+        engine_kwargs - a dictionary with keyword arguments that can be used
+                        to instantiate the engine given in `engine_cls`
+        engine_run_config - a subclass of `aimmd.distributed.MDConfig`
+                            compatible with the given `engine_cls` describing
+                            the molecular dynamis parameters to use
+        T - float, the temperature to use when generating Maxwell-Boltzmann
+            velocities
+        walltime_per_part - float, walltime per trajectory segment in hours,
+                            note that this does not limit the maximum length of
+                            the combined trajectory but only the size/time per
+                            single trajectory segment
+        n_max_concurrent - int, the maximum number of trials to propagate
+                           concurrently, note that for two way simulations you
+                           will run 2*`n_max_concurrent` molecular dynamic
+                           simulations in parallel
+        two_way - bool, wheter to run molecular dynamcis forwards and backwards
+                  in time
+        max_steps - int or None, the maximum number of integration steps to
+                    perform in total per trajectory, note that for two way
+                    simulations the combined maximum length of the resulting
+                    trajectory will be 2*`max_steps`
+
+        Note that all attributes can be set at intialization by passing keyword
+        arguments with their name.
+
+        Note, that the `CommittorSimulation` allows the simulation of different
+        physical ensembles for every starting configuration. This is achieved
+        by allowing the parameters `engine_cls`, `engine_kwargs`,
+        `engine_run_config`, `T` and `twoway` to be either singletons (then
+        they aer the same for the whole committor simulation) or a list with of
+        same length as `starting_configurations`, i.e. one value per starting
+        configuration.
+        This means you can simulate systems differing in the number of
+        molecules (by changing the topology used in the engine), at different
+        pressures (by changing the molecular dynamics parameters passed with
+        `engine_run_config`), at different temperatures (by changing `T` and
+        the parameters in the `engine_run_config`) and even perform two way
+        shots only for a selected subset of starting configurations (e.g. the
+        ones you expect to be a transition state).
+        """
         def ensure_list(val, length: int, name: str) -> list:
             if isinstance(val, list):
                 if not len(val) == length:
@@ -897,10 +974,13 @@ class CommittorSimulation:
 
     @property
     def states_reached(self):
-        # states_reached per configuration (i.e. summed over shots)
-        # returns states_reached as a np array shape (n_conf, n_states)
-        # the entries give the counts of states reached,
-        # i.e. format is as in the arcd.TrainSet
+        """
+        states_reached per configuration (i.e. summed over shots)
+
+        Return states_reached as a np.array with shape (n_conf, n_states),
+        where the entries give the counts of states reached, i.e. the format is
+        as in an `arcd.TrainSet`.
+        """
         ret = np.zeros((len(self.starting_configurations), len(self.states)))
         for i, results_for_conf in enumerate(self._states_reached):
             for state_reached in results_for_conf:
@@ -910,10 +990,13 @@ class CommittorSimulation:
 
     @property
     def states_reached_per_shot(self):
-        # states_reached per shot (i.e. single trial results)
-        # returns a np array shape (n_conf, n_shots, n_states)
-        # the entries give the counts of states reached,
-        # i.e. format is as in the arcd.TrainSet
+        """
+        states_reached per shot (i.e. single trial results)
+
+        Return a np.array shape (n_conf, n_shots, n_states), where the entries
+        give the counts of states reached for every single shot, i.e. summing
+        over the states axis will always give 1 (or 2 if twoway=True).
+        """
         ret = np.zeros((len(self.starting_configurations),
                         self._shot_counter,
                         len(self.states))
@@ -940,7 +1023,7 @@ class CommittorSimulation:
             for snum in range(self.shot_counter):
                 traj_fname = os.path.join(cdir,
                                           f"{self.shot_dir_prefix}{snum}",
-                                          f"{self.trajs_to_state}")
+                                          f"{self.fname_traj_to_state}")
                 struct_fname = os.path.join(cdir,
                                             f"{self.shot_dir_prefix}{snum}",
                                             # TODO/FIXME: only works for gmx!
@@ -968,7 +1051,7 @@ class CommittorSimulation:
             for snum in range(self.shot_counter):
                 traj_fname = os.path.join(cdir,
                                           f"{self.shot_dir_prefix}{snum}",
-                                          f"{self.trajs_to_state_bw}")
+                                          f"{self.fname_traj_to_state_bw}")
                 struct_fname = os.path.join(cdir,
                                             f"{self.shot_dir_prefix}{snum}",
                                             # TODO/FIXME: only works for gmx!
@@ -1627,16 +1710,32 @@ class TrajectoryPropagatorUntilAnyState:
         self.run_config = run_config
         self.walltime_per_part = walltime_per_part
         # TODO: other/more sanity checks?
+        # TODO: this assumes gmx-engines! At some point we will need to write
+        #       generic functions to check these things!
         try:
             # make sure we do not generate velocities with gromacs
             gen_vel = self.run_config["gen-vel"]
         except KeyError:
             logger.info("Setting 'gen-vel = no' in mdp.")
-            self.run_config["gen-vel"] = ["no"]
+            self.run_config["gen-vel"] = "no"
         else:
             if gen_vel[0] != "no":
                 logger.warning(f"Setting 'gen-vel = no' in mdp (was '{gen_vel[0]}').")
-                self.run_config["gen-vel"] = ["no"]
+                self.run_config["gen-vel"] = "no"
+        try:
+            # TODO/FIXME: this could also be 'unconstrained-start'!
+            #             however already the gmx v4.6.3 docs say
+            #            "continuation: formerly know as 'unconstrained-start'"
+            #            so I think we can ignore that for now?!
+            engine_continuation = self.run_config["continuation"]
+        except KeyError:
+            logger.info("Setting 'continuation = yes' in mdp.")
+            self.run_config["continuation"] = "yes"
+        else:
+            if engine_continuation[0] != "yes":
+                logger.warning("Setting 'continuation = yes' in mdp "
+                               + f"(was '{engine_continuation[0]}').")
+                self.run_config["continuation"] = "yes"
         # find out nstout
         # TODO: we are assuming GMX engines here...at some point we will write
         #       a generic nstout_from_mdconfig method that sorts out which
