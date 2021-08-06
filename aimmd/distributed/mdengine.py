@@ -613,7 +613,7 @@ class GmxEngine(MDEngine):
                                   # TODO: use more/any other kwargs?
                                   maxh=walltime, nsteps=nsteps)
         logger.info(f"{cmd_str}")
-        await self._acquire_resources_gmx_mdrun(self)
+        await self._acquire_resources_gmx_mdrun()
         try:  # this try is just to make sure we always call cleanup/release
             await self._start_gmx_mdrun(cmd_str=cmd_str)
             try:
@@ -632,7 +632,7 @@ class GmxEngine(MDEngine):
                 self._time_done = self.current_trajectory.last_time
                 return self.current_trajectory
         finally:
-            await self._cleanup_gmx_mdrun(self)
+            await self._cleanup_gmx_mdrun()
 
     async def run_steps(self, nsteps, steps_per_part=False):
         """
