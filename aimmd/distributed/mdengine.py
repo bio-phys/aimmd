@@ -714,6 +714,11 @@ class SlurmGmxEngine(GmxEngine):
     #          (it seems submission is frickly in pyslurm)
 
     mdrun_executable = "gmx_mpi mdrun"  # MPI as default for clusters
+    # make slurm executable setable from user-facing code but keep defaults
+    # at central location in the `SlurmProcess`
+    sacct_executable = SlurmProcess.sacct_executable
+    sbatch_executable = SlurmProcess.sbatch_executable
+    scancel_executable = SlurmProcess.scancel_executable
 
     def __init__(self, gro_file, top_file, sbatch_script, ndx_file=None, **kwargs):
         """
@@ -755,7 +760,11 @@ class SlurmGmxEngine(GmxEngine):
             logger.error(f"Overwriting exisiting submission file ({fname}).")
         with open(fname, 'w') as f:
             f.write(script)
-        self._proc = SlurmProcess(sbatch_script=fname, workdir=self.workdir)
+        self._proc = SlurmProcess(sbatch_script=fname, workdir=self.workdir,
+                                  sacct_executable=self.sacct_executable,
+                                  sbatch_executable=self.sbatch_executable,
+                                  scancel_executable=self.scancel_executable,
+                                  )
         await self._proc.submit()
 
     # TODO: do we even need/want that?

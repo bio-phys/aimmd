@@ -42,7 +42,21 @@ logger = logging.getLogger(__name__)
 # TODO: DaskTrajectoryFunctionWrapper?!
 class TrajectoryFunctionWrapper:
     """ABC to define the API and some common methods."""
-    def __init__(self) -> None:
+    def __init__(self, **kwargs) -> None:
+        # make it possible to set any attribute via kwargs
+        # check the type for attributes with default values
+        dval = object()
+        for kwarg, value in kwargs.items():
+            cval = getattr(self, kwarg, dval)
+            if cval is not dval:
+                if isinstance(value, type(cval)):
+                    # value is of same type as default so set it
+                    setattr(self, kwarg, value)
+                else:
+                    raise TypeError(f"Setting attribute {kwarg} with "
+                                    + f"mismatching type ({type(value)}). "
+                                    + f" Default type is {type(cval)}."
+                                    )
         self._id = None
         self._call_kwargs = {}  # init to empty dict such that iteration works
 
@@ -82,8 +96,8 @@ class PyTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
     # wrap functions for use on aimmd.distributed.Trajectory
     # makes sure that we check for cached values if we apply the wrapped func
     # to an aimmd.distributed.Trajectory
-    def __init__(self, function, call_kwargs={}):
-        super().__init__()
+    def __init__(self, function, call_kwargs={}, **kwargs):
+        super().__init__(**kwargs)
         self._func = None
         self._func_src = None
         # use the properties to directly calculate/get the id
@@ -164,11 +178,16 @@ class PyTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
 #       -> accept struct, traj, outfile
 #       -> write numpy npy files! (or pass custom load func!)
 class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
-    """Wrap functions for use on `aimmd.distributed.Trajectory`"""
+    """Wrap functions for use on `aimmd.distributed.Trajectory`."""
+    # make it possible to set values for slurm executables from this class
+    # but keep the defaults in one central location (the `SlurmProcess`)
+    sacct_executable = SlurmProcess.sacct_executable
+    sbatch_executable = SlurmProcess.sbatch_executable
+    scancel_executable = SlurmProcess.scancel_executable
 
     def __init__(self, executable, sbatch_script, call_kwargs={},
-                 load_results_func=None):
-        super().__init__()
+                 load_results_func=None, **kwargs):
+        super().__init__(**kwargs)
         self._executable = None
         # we expect sbatch_script to be a str,
         # but it could be either the path to a submit script or the content of
@@ -249,8 +268,12 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
         with open(sbatch_fname, 'w') as f:
             f.write(script)
         # and submit it
-        slurm_proc = SlurmProcess(sbatch_script=sbatch_fname, workdir=tra_dir)
-        slurm_proc.sleep_time = 15  # sleep 15 s between checking if done
+        slurm_proc = SlurmProcess(sbatch_script=sbatch_fname, workdir=tra_dir,
+                                  sacct_executable=self.sacct_executable,
+                                  sbatch_executable=self.sbatch_executable,
+                                  scancel_executable=self.scancel_executable,
+                                  sleep_time=15,  # sleep 15 s between checking
+                                  )
         await slurm_proc.submit()
         # wait for the slurm job to finish
         # also cancel the job when this future is canceled
