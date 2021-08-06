@@ -103,7 +103,7 @@ def ensure_mdp_options(mdp, genvel="no", continuation="yes"):
     """
     Ensure that some commonly used mdp options have the given values.
 
-    Modifies the MDP inplace.
+    Modifies the MDP inplace but also returns it.
     """
     try:
         # make sure we do not generate velocities with gromacs
@@ -129,3 +129,5 @@ def ensure_mdp_options(mdp, genvel="no", continuation="yes"):
             logger.warning(f"Setting 'continuation = {continuation}' in mdp "
                            + f"(was '{continuation_test[0]}').")
             mdp["continuation"] = continuation
+
+    return mdp

@@ -526,12 +526,13 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         #       at some point we will need to write a general function working
         #       on any MDConfig (possibly delegating to our current gmx helper
         #       functions)
-        ensure_mdp_options(self.engine_config,
-                           # dont generate velocities, we do that ourself
-                           genvel="no",
-                           # dont apply constraints at start of simulation
-                           continuation="yes",
-                           )
+        self.engine_config = ensure_mdp_options(
+                                self.engine_config,
+                                # dont generate velocities, we do that ourself
+                                genvel="no",
+                                # dont apply constraints at start of simulation
+                                continuation="yes",
+                                                )
         self.walltime_per_part = walltime_per_part
         self.T = T
         self._build_extracts_and_propas()
@@ -920,19 +921,19 @@ class CommittorSimulation:
                                    name="two_way")
         # TODO: we assume gmx engines here!
         if isinstance(engine_run_config, list):
-            for rc in engine_run_config:
-                ensure_mdp_options(
-                               rc,
+            for i in range(len(engine_run_config)):
+                engine_run_config[i] = ensure_mdp_options(
+                               engine_run_config[i],
                                # dont generate velocities, we do that ourself
                                genvel="no",
                                # dont apply constraints at start of simulation
                                continuation="yes",
-                                   )
+                                                          )
         else:
-            ensure_mdp_options(engine_run_config,
-                               genvel="no",
-                               continuation="yes",
-                               )
+            engine_run_config = ensure_mdp_options(engine_run_config,
+                                                   genvel="no",
+                                                   continuation="yes",
+                                                   )
         self.engine_run_config = ensure_list(val=engine_run_config,
                                              length=len(starting_configurations),
                                              name="engine_run_config")
