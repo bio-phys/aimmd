@@ -15,8 +15,12 @@ You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import os
+import logging
 import numpy as np
 from .trajectory import Trajectory
+
+
+logger = logging.getLogger(__name__)
 
 
 def nstout_from_mdp(mdp, traj_type="TRR"):
@@ -93,3 +97,35 @@ def get_all_file_parts(folder, deffnm, file_ending):
     parts = [os.path.join(folder, (f"{deffnm}{partnum_suffix(num)}{file_ending}"))
              for num in range(1, max_num+1)]
     return parts
+
+
+def ensure_mdp_options(mdp, genvel="no", continuation="yes"):
+    """
+    Ensure that some commonly used mdp options have the given values.
+
+    Modifies the MDP inplace.
+    """
+    try:
+        # make sure we do not generate velocities with gromacs
+        genvel_test = mdp["gen-vel"]
+    except KeyError:
+        logger.info(f"Setting 'gen-vel = {genvel}' in mdp.")
+        mdp["gen-vel"] = genvel
+    else:
+        if genvel_test[0] != genvel:
+            logger.warning(f"Setting 'gen-vel = {genvel}' in mdp (was '{genvel_test[0]}').")
+            mdp["gen-vel"] = genvel
+    try:
+        # TODO/FIXME: this could also be 'unconstrained-start'!
+        #             however already the gmx v4.6.3 docs say
+        #            "continuation: formerly know as 'unconstrained-start'"
+        #            so I think we can ignore that for now?!
+        continuation_test = mdp["continuation"]
+    except KeyError:
+        logger.info(f"Setting 'continuation = {continuation}' in mdp.")
+        mdp["continuation"] = continuation
+    else:
+        if continuation_test[0] != continuation:
+            logger.warning(f"Setting 'continuation = {continuation}' in mdp "
+                           + f"(was '{continuation_test[0]}').")
+            mdp["continuation"] = continuation

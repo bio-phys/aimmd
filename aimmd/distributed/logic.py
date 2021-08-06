@@ -30,7 +30,7 @@ from .trajectory import (Trajectory, TrajectoryConcatenator,
                          RandomVelocitiesFrameExtractor,
                          )
 from .mdengine import EngineCrashedError
-from .gmx_utils import get_all_traj_parts, nstout_from_mdp
+from .gmx_utils import get_all_traj_parts, nstout_from_mdp, ensure_mdp_options
 
 
 logger = logging.getLogger(__name__)
@@ -522,16 +522,16 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         self.engine_cls = engine_cls
         self.engine_kwargs = engine_kwargs
         self.engine_config = engine_config
-        try:
-            # make sure we do not generate velocities with gromacs
-            gen_vel = engine_config["gen-vel"]
-        except KeyError:
-            logger.info("Setting 'gen-vel = no' in mdp.")
-            engine_config["gen-vel"] = ["no"]
-        else:
-            if gen_vel[0] != "no":
-                logger.warning(f"Setting 'gen-vel = no' in mdp (was '{gen_vel[0]}').")
-                engine_config["gen-vel"] = ["no"]
+        # TODO: we assume gmx engines here!
+        #       at some point we will need to write a general function working
+        #       on any MDConfig (possibly delegating to our current gmx helper
+        #       functions)
+        ensure_mdp_options(self.engine_config,
+                           # dont generate velocities, we do that ourself
+                           genvel="no",
+                           # dont apply constraints at start of simulation
+                           continuation="yes",
+                           )
         self.walltime_per_part = walltime_per_part
         self.T = T
         self._build_extracts_and_propas()
@@ -918,21 +918,24 @@ class CommittorSimulation:
         self.two_way = ensure_list(val=two_way,
                                    length=len(starting_configurations),
                                    name="two_way")
+        # TODO: we assume gmx engines here!
+        if isinstance(engine_run_config, list):
+            for rc in engine_run_config:
+                ensure_mdp_options(
+                               rc,
+                               # dont generate velocities, we do that ourself
+                               genvel="no",
+                               # dont apply constraints at start of simulation
+                               continuation="yes",
+                                   )
+        else:
+            ensure_mdp_options(engine_run_config,
+                               genvel="no",
+                               continuation="yes",
+                               )
         self.engine_run_config = ensure_list(val=engine_run_config,
                                              length=len(starting_configurations),
                                              name="engine_run_config")
-        # TODO: check mdp before making them a list? (at least if it is only one?)
-        for rc in self.engine_run_config:
-            try:
-                # make sure we do not generate velocities with gromacs
-                gen_vel = rc["gen-vel"]
-            except KeyError:
-                logger.info("Setting 'gen-vel = no' in mdp.")
-                rc["gen-vel"] = ["no"]
-            else:
-                if gen_vel[0] != "no":
-                    logger.warning(f"Setting 'gen-vel = no' in mdp (was '{gen_vel[0]}').")
-                    rc["gen-vel"] = ["no"]
         self.walltime_per_part = walltime_per_part
         self.n_max_concurrent = n_max_concurrent
         self.max_steps = max_steps
@@ -1726,33 +1729,6 @@ class TrajectoryPropagatorUntilAnyState:
         self.engine_kwargs = engine_kwargs
         self.run_config = run_config
         self.walltime_per_part = walltime_per_part
-        # TODO: other/more sanity checks?
-        # TODO: this assumes gmx-engines! At some point we will need to write
-        #       generic functions to check these things!
-        try:
-            # make sure we do not generate velocities with gromacs
-            gen_vel = self.run_config["gen-vel"]
-        except KeyError:
-            logger.info("Setting 'gen-vel = no' in mdp.")
-            self.run_config["gen-vel"] = "no"
-        else:
-            if gen_vel[0] != "no":
-                logger.warning(f"Setting 'gen-vel = no' in mdp (was '{gen_vel[0]}').")
-                self.run_config["gen-vel"] = "no"
-        try:
-            # TODO/FIXME: this could also be 'unconstrained-start'!
-            #             however already the gmx v4.6.3 docs say
-            #            "continuation: formerly know as 'unconstrained-start'"
-            #            so I think we can ignore that for now?!
-            engine_continuation = self.run_config["continuation"]
-        except KeyError:
-            logger.info("Setting 'continuation = yes' in mdp.")
-            self.run_config["continuation"] = "yes"
-        else:
-            if engine_continuation[0] != "yes":
-                logger.warning("Setting 'continuation = yes' in mdp "
-                               + f"(was '{engine_continuation[0]}').")
-                self.run_config["continuation"] = "yes"
         # find out nstout
         # TODO: we are assuming GMX engines here...at some point we will write
         #       a generic nstout_from_mdconfig method that sorts out which
