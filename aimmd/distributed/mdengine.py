@@ -94,7 +94,10 @@ class GmxEngine(MDEngine):
 
     An async/await enabled wrapper around gromacs grompp and gromacs mdrun.
     Please use the power of concurrent execution of computationally bound
-    subprocesses responsibly... ;)
+    subprocesses responsibly...or crash your workstation ;)
+    The `SlurmGmxEngine` alleviates this problem somewhat by submitting the
+    (computationally expensive) mdruns via SLURM...in that case please have in
+    mind that your colleagues might also want to use the cluster :)
 
     Notable functions:
     ------------------
@@ -104,9 +107,9 @@ class GmxEngine(MDEngine):
 
     Notable properties:
     -------------------
-        - `nstout`, `frames_done` and `steps_done` provide read-only access to
-           the trajectory output frequency and frames/steps done in total for
-           the current deffnm and workdir
+        - `nstout`, `frames_done`, `steps_done` adn `time_done` provide
+          read-only access to the trajectory output frequency and frames/steps/
+          time done in total for the current deffnm and workdir
 
     Notable attributes:
     -------------------
@@ -611,7 +614,7 @@ class GmxEngine(MDEngine):
                                   maxh=walltime, nsteps=nsteps)
         logger.info(f"{cmd_str}")
         await self._acquire_resources_gmx_mdrun(self)
-        try:
+        try:  # this try is just to make sure we always call cleanup/release
             await self._start_gmx_mdrun(cmd_str=cmd_str)
             try:
                 # self._proc is set by _start_gmx_mdrun!
@@ -718,21 +721,26 @@ class GmxEngine(MDEngine):
 # TODO: DOCUMENT!
 class SlurmGmxEngine(GmxEngine):
     # use local prepare (i.e. grompp) of GmxEngine then submit run to slurm
-    # we reuse the `GmxEngine._proc` to keep the jobid
-    # therefore we only need to reimplement `poll()` and `_start_gmx_mdrun()`
-    # currently take submit script as str/file, use pythons .format to insert stuff!
+    # we reuse the `GmxEngine._proc` to keep a reference to a `SlurmProcess`
+    # which emulates the API of `asyncio.subprocess.Process` and can (for our
+    # purposes) be used as a drop-in replacement, therefore we only need to
+    # reimplement `_start_gmx_mdrun()`, `_acquire_resources_gmx_mdrun()` and
+    # `_cleanup_gmx_mdrun()` to have a working SlurmGmxEngine
+    # take submit script as str/file, use pythons .format to insert stuff!
     # TODO: document what we insert! currently: mdrun_cmd, jobname
-    # TODO: we should insert time if we know it?!
-    #  (some qeue eligibility can depend on time requested so we should request the known minimum)
-    # we get the job state from parsing sacct output
+    # TODO/FIXME: we should insert time if we know it!
+    #  (some qeue eligibility can depend on time requested so we should request
+    #   the known minimum)
 
-    # TODO: these are improvements for the above options, but they result
-    #       in additional dependencies...
-    #        - jinja2 templates for slurm submission scripts?!
+    # TODO: these are possible options, but they result in added dependencies
+    #        - jinja2 templates for slurm submission scripts?
+    #          (does not look like we gain flexibility but we get more work,
+    #           so probably not?!)
     #        - pyslurm for job status checks?!
-    #          (it seems submission is frickly in pyslurm)
+    #          (it seems submission is frickly/impossible in pyslurm,
+    #           so also probably not?!)
 
-    mdrun_executable = "gmx_mpi mdrun"  # MPI as default for clusters
+    _mdrun_executable = "gmx_mpi mdrun"  # MPI as default for clusters
     # make slurm executable setable from user-facing code but keep defaults
     # at central location in the `SlurmProcess`
     sacct_executable = SlurmProcess.sacct_executable
@@ -750,6 +758,12 @@ class SlurmGmxEngine(GmxEngine):
         top_file - absolute or relative path to a gromacs topolgy (.top) file
         sbatch_script - absolute or relative path to a slurm sbatch script
                         or a string with the content of the sbatch script
+                        NOTE that the submission script must contain the
+                        following placeholders (also see the examples folder):
+                            {mdrun_cmd} - will be replaced by the command to
+                                          run gmx mdrun
+                            {jobname} - will be replaced by the name of the job
+                                        containing the deffnm of the mdrun
         ndx_file - (optional) absolute or relative path to a gromacs index file
         slurm_maxjob_semaphore - (optional) `asyncio.Semaphore`, can be used to
                                  bound the maximum number of submitted jobs

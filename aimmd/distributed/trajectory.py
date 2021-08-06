@@ -312,7 +312,7 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                                   )
         if self.slurm_maxjob_semaphore is not None:
             await self.slurm_maxjob_semaphore.acquire()
-        try:
+        try:  # this try is just to make sure we always release the semaphore
             await slurm_proc.submit()
             # wait for the slurm job to finish
             # also cancel the job when this future is canceled
