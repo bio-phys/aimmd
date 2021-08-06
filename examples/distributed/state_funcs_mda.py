@@ -8,7 +8,7 @@ import os
 import argparse
 import numpy as np
 import MDAnalysis as mda
-from MDAnalysis.lib.distances import calc_dihedrals
+from MDAnalysis.lib.distances import calc_bonds, calc_angles, calc_dihedrals
 
 
 def alpha_R(traj, skip=1):
@@ -53,9 +53,54 @@ def C7_eq(traj, skip=1):
     return state
 
 
-def descriptor_func_ic(traj, skip=1):
-    # TODO: write this!
-    raise NotImplementedError
+def generate_atomgroups_for_ic(molecule):
+    """
+    Generate atomgroups describing all bonds, angles and dihedrals of given molecule.
+
+    Parameters:
+    -----------
+    molecule - `MDAnalysis.AtomGroup` (preferably) of one continous molecule
+
+    Returns:
+    --------
+    bonds, angles, dihedrals - lists of `MDAnalysis.AtomGroup` of len 2, 3 and 4
+    """
+    bonds = [mda.AtomGroup([], molecule.universe) for _ in range(2)]
+    angles = [mda.AtomGroup([], molecule.universe) for _ in range(3)]
+    dihedrals = [mda.AtomGroup([], molecule.universe) for _ in range(4)]
+    for b in molecule.bonds:
+        for i, at in enumerate(b.atoms):
+            bonds[i] += at
+    for a in molecule.angles:
+        for i, at in enumerate(a.atoms):
+             angles[i] += at
+    for d in molecule.dihedrals:
+        for i, at in enumerate(d.atoms):
+            dihedrals[i] += at
+
+    return bonds, angles, dihedrals
+
+def descriptor_func_ic(traj, molecule_selection="protein", skip=1):
+    """Calculate symmetry invariant internal coordinate representation for molecule_selection."""
+    u = mda.Universe(traj.structure_file, traj.trajectory_file,
+                     refresh_offsets=True, tpr_resid_from_one=False)
+    molecule = u.select_atoms(molecule_selection)
+    bonds, angles, dihedrals = generate_atomgroups_for_ic(molecule)
+    bond_vals = np.empty((len(u.trajectory[::skip]), len(bonds[0])), dtype=np.float64)
+    angle_vals = np.empty((len(u.trajectory[::skip]), len(angles[0])), dtype=np.float64)
+    dihedral_vals = np.empty((len(u.trajectory[::skip]), len(dihedrals[0])), dtype=np.float64)
+    for f, ts in enumerate(u.trajectory):
+        calc_bonds(bonds[0].positions, bonds[1].positions, box=ts.dimensions, result=bond_vals[f])
+        calc_angles(*(angles[i].positions for i in range(3)), box=ts.dimensions, result=angle_vals[f])
+        calc_dihedrals(*(dihedrals[i].positions for i in range(4)), box=ts.dimensions, result=dihedral_vals[f])
+
+    # capture perdiodicity
+    angle_vals = 0.5 * (1. + np.cos(angle_vals))
+    dihedrals_out = np.empty((dihedral_vals.shape[0], dihedral_vals.shape[1] * 2))
+    dihedrals_out[:, ::2] = 0.5 * (1. + np.sin(dihedral_vals))
+    dihedrals_out[:, 1::2] = 0.5 * (1. + np.cos(dihedral_vals))
+
+    return np.concatenate((bond_vals, angle_vals, dihedrals_out), axis=1)
 
 
 def descriptor_func_psi_phi(traj, skip=1):
@@ -85,12 +130,14 @@ if __name__ == "__main__":
                         default="descriptors",
                         choices=["alphaR", "C7eq", "descriptors_ic", "descriptors_psi_phi"])
     parser.add_argument("-s", "--skip", type=int, default=1)
+    parser.add_argument("-ms", "--molecule-selection", dest="molecule_selection", type=str, default="protein",
+                        help="molecule selection string for internal coordinate representation")
     args = parser.parse_args()
     # NOTE: since args is a namespace args.trajectory_file will be the path to
     #       the trajectory file, i.e. we can pass args instead of an
     #       aimmd.Trajectory to the functions above
     if args.function == "descriptors_ic":
-        vals = descriptor_func_ic(args, skip=args.skip)
+        vals = descriptor_func_ic(args, molecule_selection=args.molecule_selection, skip=args.skip)
     elif args.function == "descriptors_psi_phi":
         vals = descriptor_func_psi_phi(args, skip=args.skip)
     elif args.function == "alphaR":
