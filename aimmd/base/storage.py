@@ -492,7 +492,7 @@ class MCstepMemory(collections.abc.Sequence):
             # we get a KeyError if there is no transition
             return None
         else:
-            return ArcdObjectShelf(tp_grp).load()
+            return AimmdObjectShelf(tp_grp).load()
 
     @path.setter
     def path(self, val):
@@ -504,7 +504,7 @@ class MCstepMemory(collections.abc.Sequence):
         else:
             tp_grp = self._root_grp.require_group(self._h5py_paths["path"])
             # the group should be empty, so lets fails if it is not
-            ArcdObjectShelf(tp_grp).save(obj=val, overwrite=False)
+            AimmdObjectShelf(tp_grp).save(obj=val, overwrite=False)
 
     def __len__(self):
         # return number of trial trajectories as length
@@ -515,12 +515,12 @@ class MCstepMemory(collections.abc.Sequence):
             if key >= len(self):
                 raise IndexError(f"Index (was {key}) must be <= len(self).")
             else:
-                return ArcdObjectShelf(self._tras_grp[str(key)]).load()
+                return AimmdObjectShelf(self._tras_grp[str(key)]).load()
         elif isinstance(key, slice):
             start, stop, step = key.indices(len(self))
             ret_val = []
             for idx in range(start, stop, step):
-                ret_val += [ArcdObjectShelf(self._tras_grp[str(idx)]).load()]
+                ret_val += [AimmdObjectShelf(self._tras_grp[str(idx)]).load()]
             return ret_val
         else:
             raise TypeError("Keys must be int or slice.")
@@ -530,7 +530,7 @@ class MCstepMemory(collections.abc.Sequence):
         # TODO: check that value is of type Trajectory?
         single_tra_grp = self._tras_grp.require_group(str(len(self)))
         # group should be empty so overwrite=False to fail if its not
-        ArcdObjectShelf(single_tra_grp).save(obj=value, overwrite=False)
+        AimmdObjectShelf(single_tra_grp).save(obj=value, overwrite=False)
 
 
 class ChainMemory(collections.abc.Sequence):

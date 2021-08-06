@@ -521,9 +521,6 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         self.states = states
         self.engine_cls = engine_cls
         self.engine_kwargs = engine_kwargs
-        # build the engines
-        # TODO: do we want to move that to self._build_extracts_and_propas()?
-        self.engines = [self.engine_cls(**self.engine_kwargs) for _ in range(2)]
         self.engine_config = engine_config
         try:
             # make sure we do not generate velocities with gromacs
@@ -545,10 +542,13 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                                  "bw": InvertedVelocitiesFrameExtractor(),
                                  }
         self.propagators = [TrajectoryPropagatorUntilAnyState(
-                                    states=self.states, engine=e,
+                                    states=self.states,
+                                    engine_cls=self.engine_cls,
+                                    engine_kwargs=self.engine_kwargs,
+                                    run_config=self.engine_config,
                                     walltime_per_part=self.walltime_per_part
                                                               )
-                            for e in self.engines
+                            for _ in range(2)
                             ]
 
     def __getstate__(self):
@@ -585,7 +585,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                         p.propagate(starting_configuration=sconf,
                                     workdir=wdir,
                                     deffnm=deffnm,
-                                    run_config=self.engine_config)
+                                    )
                         for p, sconf, deffnm in zip(self.propagators,
                                                     [fw_startconf,
                                                      bw_startconf],
