@@ -533,20 +533,35 @@ class GmxEngine(MDEngine):
         self._proc = None
         self._prepared = True
 
+    # NOTE: this enables us to reuse run and prepare methods in SlurmGmxEngine,
+    # i.e. we only need to overwite the next 3 functions to write out the slurm
+    # submission script, submit the job and allocate/release different resources
     async def _start_gmx_mdrun(self, cmd_str):
-        # should enable us to reuse run and prepare methods in SlurmGmxEngine,
-        # i.e. we only need to overwite this function to write out the slurm
-        # submission script and submit the job
-        # TODO: capture sdtout/stderr? This would only work for local gmx...
-        #       also we would need to take care of holdeing/releasing the
-        #       sempaphore until/when the mdrun is done...
         proc = await asyncio.create_subprocess_exec(
                                             *shlex.split(cmd_str),
-                                            #stdout=asyncio.subprocess.PIPE,
-                                            #stderr=asyncio.subprocess.PIPE,
+                                            stdout=asyncio.subprocess.PIPE,
+                                            stderr=asyncio.subprocess.PIPE,
                                             cwd=self.workdir,
                                                     )
         self._proc = proc
+
+    async def _acquire_resources_gmx_mdrun(self):
+        # *always* called before any gmx_mdrun, use to get Semaphores for resources
+        # for local gmx we need 3 file descriptors: stdin, stdout, stderr
+        await _SEM_MAX_FILES_OPEN.acquire()
+        await _SEM_MAX_FILES_OPEN.acquire()
+        await _SEM_MAX_FILES_OPEN.acquire()
+
+    async def _cleanup_gmx_mdrun(self):
+        # *always* called after any gmx_mdrun, use to release Semaphores and friends
+        # read stdout and stderr from gmx mdrun
+        stdout, stderr = await self._proc.communicate()
+        logger.debug(f"gmx mdrun stdout: {stdout.decode()}")
+        logger.debug(f"gmx mdrun stderr: {stderr.decode()}")
+        # release the semaphore for the 3 file descriptors
+        _SEM_MAX_FILES_OPEN.release()
+        _SEM_MAX_FILES_OPEN.release()
+        _SEM_MAX_FILES_OPEN.release()
 
     async def run(self, nsteps=None, walltime=None, steps_per_part=False):
         """
@@ -595,22 +610,26 @@ class GmxEngine(MDEngine):
                                   # TODO: use more/any other kwargs?
                                   maxh=walltime, nsteps=nsteps)
         logger.info(f"{cmd_str}")
-        await self._start_gmx_mdrun(cmd_str=cmd_str)
+        await self._acquire_resources_gmx_mdrun(self)
         try:
-            # self._proc is set by _start_gmx_mdrun!
-            exit_code = await self._proc.wait()
-        except asyncio.CancelledError:
-            self._proc.kill()
-        else:
-            if exit_code != 0:
-                raise EngineCrashedError("Non-zero exit code from mdrun."
-                                         + f" Exit code was: {exit_code}.")
-            self._frames_done += len(self.current_trajectory)
-            # dont care if we did a little more and only the checkpoint knows
-            # we will only find out with the next trajectory part anyways
-            self._steps_done = self.current_trajectory.last_step
-            self._time_done = self.current_trajectory.last_time
-            return self.current_trajectory
+            await self._start_gmx_mdrun(cmd_str=cmd_str)
+            try:
+                # self._proc is set by _start_gmx_mdrun!
+                exit_code = await self._proc.wait()
+            except asyncio.CancelledError:
+                self._proc.kill()
+            else:
+                if exit_code != 0:
+                    raise EngineCrashedError("Non-zero exit code from mdrun."
+                                             + f" Exit code was: {exit_code}.")
+                self._frames_done += len(self.current_trajectory)
+                # dont care if we did a little more and only the checkpoint knows
+                # we will only find out with the next trajectory part anyways
+                self._steps_done = self.current_trajectory.last_step
+                self._time_done = self.current_trajectory.last_time
+                return self.current_trajectory
+        finally:
+            await self._cleanup_gmx_mdrun(self)
 
     async def run_steps(self, nsteps, steps_per_part=False):
         """
@@ -720,7 +739,8 @@ class SlurmGmxEngine(GmxEngine):
     sbatch_executable = SlurmProcess.sbatch_executable
     scancel_executable = SlurmProcess.scancel_executable
 
-    def __init__(self, gro_file, top_file, sbatch_script, ndx_file=None, **kwargs):
+    def __init__(self, gro_file, top_file, sbatch_script, ndx_file=None,
+                 slurm_maxjob_semaphore=None, **kwargs):
         """
         Initialize a `SlurmGmxEngine`.
 
@@ -731,13 +751,15 @@ class SlurmGmxEngine(GmxEngine):
         sbatch_script - absolute or relative path to a slurm sbatch script
                         or a string with the content of the sbatch script
         ndx_file - (optional) absolute or relative path to a gromacs index file
+        slurm_maxjob_semaphore - (optional) `asyncio.Semaphore`, can be used to
+                                 bound the maximum number of submitted jobs
 
         Note that all attributes can be set at intialization by passing keyword
         arguments with their name, e.g. mdrun_extra_args="-ntomp 2" to instruct
         gromacs to use 2 openMP threads.
         """
-        super().__init__(gro_file=gro_file, top_file=top_file, ndx_file=ndx_file,
-                         **kwargs)
+        super().__init__(gro_file=gro_file, top_file=top_file,
+                         ndx_file=ndx_file, **kwargs)
         # we expect sbatch_script to be a str,
         # but it could be either the path to a submit script or the content of
         # the submission script directly
@@ -747,6 +769,7 @@ class SlurmGmxEngine(GmxEngine):
             with open(sbatch_script, 'r') as f:
                 sbatch_script = f.read()
         self.sbatch_script = sbatch_script
+        self.slurm_maxjob_semaphore = slurm_maxjob_semaphore
 
     async def _start_gmx_mdrun(self, cmd_str):
         # create a name from deffnm and partnum
@@ -758,14 +781,23 @@ class SlurmGmxEngine(GmxEngine):
         if os.path.exists(fname):
             # TODO: should we raise an error?
             logger.error(f"Overwriting exisiting submission file ({fname}).")
-        with open(fname, 'w') as f:
-            f.write(script)
+        async with _SEM_MAX_FILES_OPEN:
+            with open(fname, 'w') as f:
+                f.write(script)
         self._proc = SlurmProcess(sbatch_script=fname, workdir=self.workdir,
                                   sacct_executable=self.sacct_executable,
                                   sbatch_executable=self.sbatch_executable,
                                   scancel_executable=self.scancel_executable,
                                   )
         await self._proc.submit()
+
+    async def _acquire_resources_gmx_mdrun(self):
+        if self.slurm_maxjob_semaphore is not None:
+            await self.slurm_maxjob_semaphore.acquire()
+
+    async def _cleanup_gmx_mdrun(self):
+        if self.slurm_maxjob_semaphore is not None:
+            self.slurm_maxjob_semaphore.release()
 
     # TODO: do we even need/want that?
     @property

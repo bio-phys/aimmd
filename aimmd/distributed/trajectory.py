@@ -32,7 +32,7 @@ from scipy import constants
 
 from .slurm import SlurmProcess
 from .utils import ensure_executable_available
-from . import _SEM_MAX_PROCESS
+from . import _SEM_MAX_PROCESS, _SEM_MAX_FILES_OPEN
 
 
 logger = logging.getLogger(__name__)
@@ -186,7 +186,41 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
     scancel_executable = SlurmProcess.scancel_executable
 
     def __init__(self, executable, sbatch_script, call_kwargs={},
-                 load_results_func=None, **kwargs):
+                 load_results_func=None, slurm_maxjob_semaphore=None, **kwargs,
+                 ):
+        """
+        Initialize `SlurmTrajectoryFunctionWrapper`.
+
+        Parameters:
+        -----------
+        executable - absolute or relative path to an executable or name of an
+                     executable available via the environment (e.g. via the
+                      $PATH variable on LINUX)
+                     TODO: document how exe will be called/what we expect of it
+        sbatch_script - path to a sbatch submission script file or string with
+                        the content of a submission script.
+                        NOTE that the submission script must contain the
+                        following placeholders (also see the examples folder):
+                            {cmd_str} - will be replaced by the command to call
+                                        the executable on a given trajectory
+                            {jobname} - will be replaced by the name of the job
+                                        containing the hash of the function
+        call_kwargs - dictionary of additional arguments to pass to the
+                      executable, they will be added to the call as pair
+                      ' {key} {val}', note that in case you want to pass single
+                      command line flags (like '-v') this can be achieved by
+                      setting key='-v' and val='', i.e. to the empty string
+        load_results_func - None or function to call to customize the loading
+                            of the results, if a function it will be called
+                            with the full path to the results file (as in the
+                            call to the executable) and should return a numpy
+                            array containing the loaded values
+        slurm_maxjob_semaphore - None or `asyncio.Semaphore`, can be used to
+                                 bound the maximum number of submitted jobs
+
+        Note that all attributes can be set via __init__ by passing them as
+        keyword arguments.
+        """
         super().__init__(**kwargs)
         self._executable = None
         # we expect sbatch_script to be a str,
@@ -202,6 +236,7 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
         self.executable = executable
         self.call_kwargs = call_kwargs
         self.load_results_func = load_results_func
+        self.slurm_maxjob_semaphore = slurm_maxjob_semaphore
 
     def __repr__(self) -> str:
         return (f"SlurmTrajectoryFunctionWrapper(executable={self._executable}, "
@@ -265,8 +300,9 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
         if os.path.exists(sbatch_fname):
             # TODO: should we raise an error?
             logger.error(f"Overwriting exisiting submission file ({sbatch_fname}).")
-        with open(sbatch_fname, 'w') as f:
-            f.write(script)
+        async with _SEM_MAX_FILES_OPEN:
+            with open(sbatch_fname, 'w') as f:
+                f.write(script)
         # and submit it
         slurm_proc = SlurmProcess(sbatch_script=sbatch_fname, workdir=tra_dir,
                                   sacct_executable=self.sacct_executable,
@@ -274,50 +310,57 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                                   scancel_executable=self.scancel_executable,
                                   sleep_time=15,  # sleep 15 s between checking
                                   )
-        await slurm_proc.submit()
-        # wait for the slurm job to finish
-        # also cancel the job when this future is canceled
+        if self.slurm_maxjob_semaphore is not None:
+            await self.slurm_maxjob_semaphore.acquire()
         try:
-            exit_code = await slurm_proc.wait()
-        except asyncio.CancelledError:
-            slurm_proc.kill()
-        else:
-            if exit_code != 0:
-                raise RuntimeError("Non-zero exit code from CV batch job for "
-                                   + f"executable {self.executable} on "
-                                   + f"trajectory {traj.trajectory_file} "
-                                   + f"(slurm jobid {slurm_proc.slurm_jobid})."
-                                   + f" Exit code was: {exit_code}."
-                                   )
-            os.remove(sbatch_fname)
-            if self.load_results_func is None:
-                # we do not have '.npy' ending in results_file,
-                # numpy.save() adds it if it is not there, so we need it here
-                vals = np.load(result_file + ".npy")
-                os.remove(result_file + ".npy")
-            else:
-                # use custom loading function from user
-                vals = self.load_results_func(result_file)
-                os.remove(result_file)
+            await slurm_proc.submit()
+            # wait for the slurm job to finish
+            # also cancel the job when this future is canceled
             try:
-                # (try to) remove slurm output files
-                os.remove(
-                    os.path.join(tra_dir,
-                                 f"{jobname}.out.{slurm_proc.slurm_jobid}")
-                          )
-                os.remove(
-                    os.path.join(tra_dir,
-                                 f"{jobname}.err.{slurm_proc.slurm_jobid}")
-                          )
-            except FileNotFoundError:
-                # probably just a naming issue, so lets warn our users
-                logger.warning("Could not remove SLURM output files. Maybe "
-                               + "they were not named as expected? Consider "
-                               + "adding '#SBATCH -o ./{jobname}.out.%j'"
-                               + " and '#SBATCH -e ./{jobname}.err.%j' to the "
-                               + "submission script.")
-
-            return vals
+                exit_code = await slurm_proc.wait()
+            except asyncio.CancelledError:
+                slurm_proc.kill()
+            else:
+                if exit_code != 0:
+                    raise RuntimeError(
+                                "Non-zero exit code from CV batch job for "
+                                + f"executable {self.executable} on "
+                                + f"trajectory {traj.trajectory_file} "
+                                + f"(slurm jobid {slurm_proc.slurm_jobid})."
+                                + f" Exit code was: {exit_code}."
+                                       )
+                os.remove(sbatch_fname)
+                if self.load_results_func is None:
+                    # we do not have '.npy' ending in results_file,
+                    # numpy.save() adds it if it is not there, so we need it here
+                    vals = np.load(result_file + ".npy")
+                    os.remove(result_file + ".npy")
+                else:
+                    # use custom loading function from user
+                    vals = self.load_results_func(result_file)
+                    os.remove(result_file)
+                try:
+                    # (try to) remove slurm output files
+                    os.remove(
+                        os.path.join(tra_dir,
+                                     f"{jobname}.out.{slurm_proc.slurm_jobid}")
+                              )
+                    os.remove(
+                        os.path.join(tra_dir,
+                                     f"{jobname}.err.{slurm_proc.slurm_jobid}")
+                              )
+                except FileNotFoundError:
+                    # probably just a naming issue, so lets warn our users
+                    logger.warning(
+                            "Could not remove SLURM output files. Maybe "
+                            + "they were not named as expected? Consider "
+                            + "adding '#SBATCH -o ./{jobname}.out.%j'"
+                            + " and '#SBATCH -e ./{jobname}.err.%j' to the "
+                            + "submission script.")
+                return vals
+        finally:
+            if self.slurm_maxjob_semaphore is not None:
+                self.slurm_maxjob_semaphore.release()
 
     async def __call__(self, value):
         if isinstance(value, Trajectory) and self.id is not None:
