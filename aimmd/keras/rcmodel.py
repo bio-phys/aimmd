@@ -22,7 +22,7 @@ import numpy as np
 from abc import abstractmethod
 from tensorflow.keras import backend as K
 from ..base import Properties
-from ..base.rcmodel import RCModel
+from ..base.rcmodel import RCModel, RCModelAsync
 from ..base.rcmodel_train_decision import (_train_decision_funcs,
                                            _train_decision_defaults,
                                            _train_decision_docs)
@@ -196,6 +196,13 @@ class KerasRCModel(RCModel):
                              )
 
 
+# the async version is the same, it just uses the async base class
+KerasRCModelAsync = type("KerasRCModelAsync",
+                         (RCModelAsync,),
+                         dict(KerasRCModel.__dict__)
+                         )
+
+
 class EEScaleKerasRCModel(KerasRCModel):
     """Expected efficiency scale KerasRCModel."""
     __doc__ += _train_decision_docs['EEscale']
@@ -211,6 +218,14 @@ class EEScaleKerasRCModel(KerasRCModel):
         self.ee_params = ee_params_defaults
 
     train_decision = _train_decision_funcs['EEscale']
+
+
+# inject the async RCModels at the right point in bases to get the correct MRO
+#  Method Resolution Order (class resolution order)
+EEScaleKerasRCModelAsync = type("EEScaleKerasRCModelAsync",
+                                (KerasRCModelAsync, RCModelAsync),
+                                dict(EEScaleKerasRCModel.__dict__)
+                                )
 
 
 class EERandKerasRCModel(KerasRCModel):
@@ -229,3 +244,9 @@ class EERandKerasRCModel(KerasRCModel):
         self._decisions_since_last_train = 0
 
     train_decision = _train_decision_funcs['EErand']
+
+
+EERandKerasRCModelAsync = type("EERandKerasRCModelAsync",
+                               (KerasRCModelAsync, RCModelAsync),
+                               dict(EERandKerasRCModel.__dict__)
+                               )
