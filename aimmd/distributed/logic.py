@@ -268,10 +268,11 @@ class Brain:
         weights - None or list of weights, one for each trajectory
         replace - bool, whether to draw the trajectories with replacement
         """
-        # TODO/FIXME: make sure this is only called on unitialized chains?!
-        #             i.e. on chains that have `self.current_step is None` ?!
         # TODO: should we check/make the movers check if the choosen traj
         #       satistfies the correct ensemble?!
+        if any(c.current_step is not None for c in self.chains):
+            raise ValueError("Can only seed if all managed chains have no "
+                             + "current_step set.")
         if weights is not None:
             if len(weights) != len(trajectories):
                 raise ValueError("trajectories and weights must have the same"
@@ -301,8 +302,9 @@ class Brain:
 
     # TODO:! write this to save the brain and its chains!
     #        only need to take care of the movers (but those should be pickleable?!)
-    #        (and the chainstores + brain.storage)
-    #        then we can use the usual AimmdShelfs
+    #        and the chainstores + brain.storage
+    #        and the model and the tasks?
+    #        then we can use the usual AimmdShelfs, i.e. pickle
     def object_for_pickle(self, group, overwrite):
         # currently overwrite will always be True
         return self

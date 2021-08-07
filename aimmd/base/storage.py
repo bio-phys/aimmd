@@ -534,7 +534,6 @@ class MCstepMemory(collections.abc.Sequence):
 
 
 class ChainMemory(collections.abc.Sequence):
-    # TODO: (re)add MCstates!
     # TODO: do we want Sequence behaivour for trials or for MCStates?!
     #       (and have the other available via a method/methods)
     # NOTE: we inherhit from Sequence (instead of MutableSequence) and write a custom .append method
