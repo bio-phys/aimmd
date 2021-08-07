@@ -148,6 +148,7 @@ class DensityCollectionTask(BrainTask):
                 dc.reevaluate_density(model=self.model)
 
 
+# TODO: better name!? PathSamplingBundle ? PathSamplingChainBundle?
 class Brain:
     """The 'brain' of the simulation."""
     # TODO: docstring + remove obsolete notes when we are done
@@ -232,7 +233,7 @@ class Brain:
         """
         Initialize `self` with n_chain PathSamplingChains with given movers.
 
-        Convienence function to set up a brain with multiple identical chains,
+        Convienience function to set up a brain with multiple identical chains,
         each chain is created with movers defined by movers_cls, movers_kwargs
         (and the optional mover_weights).
         All other arguments are directly passed to `self.__init__()`.
@@ -583,8 +584,8 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
     backward_deffnm = "backward"  # same for backward shot
     transition_filename = "transition.trr"  # filename for produced transitions
 
-    def __init__(self, states, engine_cls, engine_kwargs,
-                 engine_config, walltime_per_part, T):
+    def __init__(self, states, engine_cls, engine_kwargs, engine_config,
+                 walltime_per_part, T, sp_selector=None):
         """
         states - list of state functions, passed to Propagator
         descriptor_transform - coroutine function used to calculate descriptors
@@ -594,6 +595,8 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         engine_config - MDConfig subclass [used in prepare() method of engines]
         walltime_per_part - simulation walltime per trajectory part
         T - temperature in degree K (used for velocity randomization)
+        sp_selector - `aimmd.distributed.logic.RCModelSPSelector` or None,
+                      if None we will initialialize a selector with defaults
         """
         # NOTE: we expect state funcs to be coroutinefuncs!
         # TODO: check that we use the same T as GMX? or maybe even directly take T from GMX (mdp)?
@@ -621,6 +624,9 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                                                 )
         self.walltime_per_part = walltime_per_part
         self.T = T
+        if sp_selector is None:
+            sp_selector = RCModelSPSelector()
+        self.sp_selector = sp_selector
         self._build_extracts_and_propas()
 
     def _build_extracts_and_propas(self):
@@ -656,8 +662,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         #  prediction accuracy in the close past to decide if we want to train)
         async with _SEM_BRAIN_MODEL:
             self.store_model(model=model, stepnum=stepnum)
-            selector = RCModelSPSelector(model=model)
-            sp_idx = await selector.pick(instep.path)
+            sp_idx = await self.sp_selector.pick(instep.path, model=model)
         # release the Semaphore, we load the stored model for accept/reject later
         fw_sp_name = os.path.join(wdir, f"{self.forward_deffnm}_SP.trr")
         fw_startconf = self.frame_extractors["fw"].extract(outfile=fw_sp_name,
@@ -704,9 +709,8 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         states_reached = np.array([0. for _ in range(len(self.states))])
         states_reached[fw_state] += 1
         states_reached[bw_state] += 1
-        # load the selecting model and set it in the selector
+        # load the selecting model for accept/reject
         model = self.get_model(stepnum=stepnum)
-        selector.model = model
         # use selecting model to predict the commitment probabilities for the SP
         predicted_committors_sp = (await model(fw_startconf))[0]
         # check if they end in different states
@@ -739,8 +743,12 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                             struct_out=None, overwrite=False,
                                                                              )
             # accept or reject?
-            p_sel_old = await selector.probability(fw_startconf, instep.path)
-            p_sel_new = await selector.probability(fw_startconf, path_traj)
+            p_sel_old = await self.sp_selector.probability(fw_startconf,
+                                                           instep.path,
+                                                           model=model)
+            p_sel_new = await self.sp_selector.probability(fw_startconf,
+                                                           path_traj,
+                                                           model=model)
             # p_acc = ((p_sel_new * p_mod_sp_new_to_old * p_eq_sp_new)
             #          / (p_sel_old * p_mod_sp_old_to_new * p_eq_sp_old)
             #          )
@@ -767,12 +775,14 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
 
 #TODO: DOCUMENT
 class RCModelSPSelector:
-    def __init__(self, model, scale=1.,
-                 distribution="lorentzian", density_adaptation=True):
-        self.model = model
+    def __init__(self, scale=1., distribution="lorentzian",
+                 density_adaptation=True, exclude_first_last_frame=True):
         self.distribution = distribution
         self.scale = scale
         self.density_adaptation = density_adaptation
+        # whether we allow to choose first and last frame
+        # if False they will also not contribute to sum_bias and accept/reject
+        self.exclude_first_last_frame = exclude_first_last_frame
 
     @property
     def distribution(self):
@@ -781,11 +791,11 @@ class RCModelSPSelector:
 
     @distribution.setter
     def distribution(self, val):
-        if val == 'gaussian':
-            self._f_sel = lambda z: self._gaussian(z)
+        if val.lower() == 'gaussian':
+            self._f_sel = self._gaussian
             self._distribution = val
-        elif val == 'lorentzian':
-            self._f_sel = lambda z: self._lorentzian(z)
+        elif val.lower() == 'lorentzian':
+            self._f_sel = self._lorentzian
             self._distribution = val
         else:
             raise ValueError('Distribution must be one of: '
@@ -797,10 +807,10 @@ class RCModelSPSelector:
     def _gaussian(self, z):
         return np.exp(-z**2/self.scale)
 
-    async def f(self, snapshot, trajectory):
+    async def f(self, snapshot, trajectory, model):
         """Return the unnormalized proposal probability of a snapshot."""
         # we expect that 'snapshot' is a len 1 trajectory!
-        z_sel = await self.model.z_sel(snapshot)
+        z_sel = await model.z_sel(snapshot)
         any_nan = np.any(np.isnan(z_sel))
         if any_nan:
             logger.error('The model predicts NaNs. '
@@ -810,35 +820,40 @@ class RCModelSPSelector:
         # i.e. we check that snapshot really was a len-1 trajectory
         ret = float(self._f_sel(z_sel))
         if self.density_adaptation:
-            committor_probs = await self.model(snapshot)
+            committor_probs = await model(snapshot)
             if any_nan:
                 committor_probs = np.nan_to_num(committor_probs)
-            density_fact = self.model.density_collector.get_correction(
+            density_fact = model.density_collector.get_correction(
                                                             committor_probs
-                                                                       )
+                                                                  )
             ret *= density_fact
         if ret == 0.:
             if await self.sum_bias(trajectory) == 0.:
+                logger.error("All SP weights are 0. Using equal probabilities.")
                 return 1.
         return ret
 
-    async def probability(self, snapshot, trajectory):
+    async def probability(self, snapshot, trajectory, model):
         """Return proposal probability of the snapshot for this trajectory."""
         # we expect that 'snapshot' is a len 1 trajectory!
-        biases = await self._biases(trajectory)
-        sum_bias = np.sum(biases)
+        sum_bias = await self.sum_bias(trajectory, model)
         if sum_bias == 0.:
-            return 1./len(biases)
-        return (await self.f(snapshot, trajectory)) / sum_bias
+            logger.error("All SP weights are 0. Using equal probabilities.")
+            if self.exclude_first_last_frame:
+                return 1. / (len(trajectory) - 2)
+            else:
+                return 1. / len(trajectory)
+        return (await self.f(snapshot, trajectory, model)) / sum_bias
 
-    async def sum_bias(self, trajectory):
+    async def sum_bias(self, trajectory, model):
         """
         Return the partition function of proposal probabilities for trajectory.
         """
-        return np.sum(await self._biases(trajectory))
+        biases = await self._biases(trajectory, model)
+        return np.sum(biases)
 
-    async def _biases(self, trajectory):
-        z_sels = await self.model.z_sel(trajectory)
+    async def _biases(self, trajectory, model):
+        z_sels = await model.z_sel(trajectory)
         any_nan = np.any(np.isnan(z_sels))
         if any_nan:
             logger.error('The model predicts NaNs. '
@@ -846,16 +861,18 @@ class RCModelSPSelector:
             z_sels = np.nan_to_num(z_sels)
         ret = self._f_sel(z_sels)
         if self.density_adaptation:
-            committor_probs = await self.model(trajectory)
+            committor_probs = await model(trajectory)
             if any_nan:
                 committor_probs = np.nan_to_num(committor_probs)
-            density_fact = self.model.density_collector.get_correction(
+            density_fact = model.density_collector.get_correction(
                                                             committor_probs
-                                                                       )
+                                                                  )
             ret *= density_fact.reshape(committor_probs.shape)
+        if self.exclude_first_last_frame:
+            ret = ret[1:-1]
         return ret
 
-    async def pick(self, trajectory):
+    async def pick(self, trajectory, model):
         """Return the index of the chosen snapshot within trajectory."""
         # NOTE: this does not register the SP with model!
         #       i.e. we do stuff different than in the ops selector
@@ -863,14 +880,25 @@ class RCModelSPSelector:
         #       commitment probabilities at the shooting point with the MCStep
         #       this way we can make sure that they are added to the central model
         #       in the same order as the shooting results to the trainset
-        biases = await self._biases(trajectory)
+        biases = await self._biases(trajectory, model)
         sum_bias = np.sum(biases)
         if sum_bias == 0.:
             logger.error('Model not able to give educated guess.\
                          Choosing based on luck.')
             # we can not give any meaningfull advice and choose at random
-            return np.random.randint(len(biases))
+            if self.exclude_first_last_frame:
+                # choose from [1, len(traj) - 1 )
+                return np.random.randint(1, len(trajectory) - 1)
+            else:
+                # choose from [0, len(traj) )
+                return np.random.randint(len(trajectory))
 
+        # if self.exclude_first_last_frame == True
+        # biases will be have the length of traj - 2,
+        # i.e. biases already excludes the two frames
+        # that means the idx we choose here is shifted by one in that case,
+        # e.g. idx=0 means frame_idx=1 in the trajectory
+        # (and we can not choose the last frame because biases ends before)
         rand = np.random.random() * sum_bias
         idx = 0
         prob = biases[0]
@@ -878,6 +906,8 @@ class RCModelSPSelector:
             idx += 1
             prob += biases[idx]
         # and return chosen idx
+        if self.exclude_first_last_frame:
+            idx += 1
         return idx
 
 
