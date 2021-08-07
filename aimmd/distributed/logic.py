@@ -149,23 +149,7 @@ class DensityCollectionTask(BrainTask):
 
 
 class Brain:
-    """
-    The 'brain' of the simulation.
-
-    Attributes
-    ----------
-        model - the committor model
-        workdir - a directory
-        storage - arcd.Storage
-        movers - list of PathMovers
-        mover_weights - None or list of floats, entries must be probabilities,
-                        i.e. must sum to 1
-        tasks - list of `BrainTask` objects,
-                tasks will be checked if they should run in the order they are
-                in the list after any one TPS sim has finished a trial,
-                note that tasks will only be ran at their specified intervals
-
-    """
+    """The 'brain' of the simulation."""
     # TODO: docstring + remove obsolete notes when we are done
     # tasks should do basically what the hooks do in the ops case:
     #   - call the models train_hook, i.e. let it decide if it wants to train
@@ -179,7 +163,26 @@ class Brain:
     #   TODO: make it possible to pass task state?
     chain_directory_prefix = "chain_"
 
-    def __init__(self, model, workdir, storage, movers, mover_weights, tasks=[], **kwargs):
+    def __init__(self, model, workdir, storage, movers_per_chain,
+                 mover_weights_per_chain=None, tasks=[], **kwargs):
+        """
+        Initialize an `aimmd.distributed.Brain`.
+
+        Parameters:
+        ----------
+        model - the committor model
+        workdir - a directory
+        storage - aimmd.Storage
+        movers_per_chain - list of list of (initialized) PathMovers
+        mover_weights_per_chain - None or list of list of floats, entries must
+                                  be probabilities, i.e. must sum to 1
+                                  if None we will take equal probabilities for
+                                  all movers
+        tasks - list of `BrainTask` objects,
+                tasks will be checked if they should run in the order they are
+                in the list after any one TPS sim has finished a trial,
+                note that tasks will only be ran at their specified intervals
+        """
         # TODO: we expect movers/mover_weights to be lists of lists?
         #       one for each chain, this is lazy and put the setup burden on the user!
         # TODO: descriptor_transform and states?!
@@ -206,24 +209,91 @@ class Brain:
         self.total_steps = 0
         # chain-setup
         cwdirs = [os.path.join(self.workdir, f"{self.chain_directory_prefix}{i}")
-                  for i in range(len(movers))]
+                  for i in range(len(movers_per_chain))]
         # make the dirs
         [os.mkdir(d) for d in cwdirs]
-        #self.storage.initialize_central_memory(n_chains=len(movers))
-        cstores = [c for c in self.storage.central_memory]
+        self.storage.initialize_central_memory(n_chains=len(movers_per_chain))
+        if mover_weights_per_chain is None:
+            mover_weights_per_chain = [None for _ in range(len(movers_per_chain))]
         self.chains = [PathSamplingChain(workdir=wdir,
                                          chainstore=cstore,
                                          movers=movs,
                                          mover_weights=mov_ws)
                        for wdir, cstore, movs, mov_ws
-                       in zip(cwdirs, cstores, movers, mover_weights)
+                       in zip(cwdirs, self.storage.central_memory,
+                              movers_per_chain, mover_weights_per_chain)
                        ]
 
-    # TODO: do we need/want weights? better func name?
-    def seed_initial_mcsteps(self, trajectories, weights):
-        # should put a trajectory into every PathSampling sim
-        # tranjectories should be a list of 'trajectory' objects?
-        return NotImplementedError
+    # TODO: DOCUMENT!
+    @classmethod
+    def chains_from_moverlist(cls, model, workdir, storage, n_chain,
+                              movers_cls, movers_kwargs, mover_weights=None,
+                              tasks=[], **kwargs):
+        """
+        Initialize `self` with n_chain PathSamplingChains with given movers.
+
+        Convienence function to set up a brain with multiple identical chains,
+        each chain is created with movers defined by movers_cls, movers_kwargs
+        (and the optional mover_weights).
+        All other arguments are directly passed to `self.__init__()`.
+        """
+        movers_per_chain = [[mov(**kwargs) for mov, kwargs in zip(movers_cls,
+                                                                  movers_kwargs
+                                                                  )
+                             ]
+                            for _ in range(n_chain)
+                            ]
+        mover_weights_per_chain = [mover_weights] * n_chain
+        return cls(model=model, workdir=workdir, storage=storage,
+                   movers_per_chain=movers_per_chain,
+                   mover_weights_per_chain=mover_weights_per_chain,
+                   tasks=tasks, **kwargs,
+                   )
+
+    # TODO: better func name? (seed_initial_paths() or seed_initial-mcsteps()?)
+    def seed_initial_paths(self, trajectories, weights=None, replace=True):
+        """
+        Initialize all PathSampling chains from given trajectories.
+
+        Creates initial MonteCarlo steps for each PathSampling chain containing
+        one of the given transitions drawn at random (with given weights).
+
+        Parameters:
+        ----------
+        trajectories - list of `aimmd.distributed.Trajectory`
+        weights - None or list of weights, one for each trajectory
+        replace - bool, whether to draw the trajectories with replacement
+        """
+        # TODO/FIXME: make sure this is only called on unitialized chains?!
+        #             i.e. on chains that have `self.current_step is None` ?!
+        # TODO: should we check/make the movers check if the choosen traj
+        #       satistfies the correct ensemble?!
+        if weights is not None:
+            if len(weights) != len(trajectories):
+                raise ValueError("trajectories and weights must have the same"
+                                 + f" length, but have {len(trajectories)} and"
+                                 + f" {len(weights)} respectively.")
+            # normalize to probabilities
+            weights = np.array(weights) / np.sum(weights)
+        # draw the idxs for the trajectories
+        traj_idxs = np.random.choice(np.arange(len(trajectories)),
+                                     size=len(self.chains),
+                                     replace=replace,
+                                     p=weights)
+        # put a (dummy) MCstep with the trajectory into every PathSampling sim
+        for idx, chain in zip(traj_idxs, self.chains):
+            # assume that we can get dir from trajectory_file, i.e. dont check
+            # (and dont care) if the structure_file is somewhere else
+            sdir, _ = os.path.split(trajectories[idx].trajectory_file)
+            s = MCstep(mover=None, stepnum=0, directory=sdir,  # required
+                       # our initial seed path for this chain
+                       path=trajectories[idx],
+                       # initial step must be an accepted MCstate
+                       accepted=True,
+                       )
+            chain.current_step = s
+            # save the initial step to storage
+            chain.chainstore.append(s)
 
     # TODO:! write this to save the brain and its chains!
     #        only need to take care of the movers
@@ -344,6 +414,11 @@ class PathSamplingChain:
         self.workdir = os.path.abspath(workdir)
         self.chainstore = chainstore
         self.movers = movers
+        for mover in self.movers:
+            # set the store for all ModelDependentpathMovers
+            # this way we can initialzie them without a store
+            if isinstance(mover, ModelDependentPathMover):
+                mover.modelstore = self.chainstore.modelstore
         if mover_weights is None:
             self.mover_weights = [1/len(movers) for _ in range(len(movers))]
         else:
@@ -357,6 +432,7 @@ class PathSamplingChain:
     def current_step(self):
         return self._current_step
 
+    # TODO/FIXME: set self._step_num, self._accepts etc?!
     @current_step.setter
     def current_step(self, step):
         self._current_step = step
@@ -465,10 +541,13 @@ class ModelDependentPathMover(PathMover):
     # TODO: make it possible to use without an arcd.Storage?!
     savename_prefix = "model_at_step"
 
-    def __init__(self, modelstore):
-        # NOTE: modelstore - arcd.storage.RCModelRack
+    def __init__(self, modelstore=None):
+        # NOTE: modelstore - aimmd.storage.RCModelRack
         #       this should enable us to use the same arcd.Storage for multiple
         #       MC chains at the same time, if we have/create multiple RCModelRacks (in Brain?)
+        # NOTE : we set it to None by default because it will be set through
+        #        PathSamplingChain.__init__ for all movers it owns to the
+        #        rcmodel-store associated with the chainstore
         self.modelstore = modelstore
         self._rng = np.random.default_rng()  # numpy newstyle RNG, one per Mover
 
@@ -483,9 +562,13 @@ class ModelDependentPathMover(PathMover):
     #        (see the TwoWayShooting for an example)
 
     def store_model(self, model, stepnum):
+        if self.modelstore is None:
+            raise RuntimeError("self.modelstore must be set to store a model.")
         self.modelstore[f"{self.savename_prefix}{stepnum}"] = model
 
     def get_model(self, stepnum):
+        if self.modelstore is None:
+            raise RuntimeError("self.modelstore must be set to load a model.")
         return self.modelstore[f"{self.savename_prefix}{stepnum}"]
 
     @abc.abstractmethod
@@ -500,10 +583,9 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
     backward_deffnm = "backward"  # same for backward shot
     transition_filename = "transition.trr"  # filename for produced transitions
 
-    def __init__(self, modelstore, states, engine_cls, engine_kwargs,
+    def __init__(self, states, engine_cls, engine_kwargs,
                  engine_config, walltime_per_part, T):
         """
-        modelstore - arcd.storage.RCModelRack
         states - list of state functions, passed to Propagator
         descriptor_transform - coroutine function used to calculate descriptors
         engine_cls - the class of the molecular dynamcis engine to use
@@ -517,7 +599,11 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         # TODO: check that we use the same T as GMX? or maybe even directly take T from GMX (mdp)?
         # TODO: we should make properties out of everything
         #       changing anything requires recreating the propagators!
-        super().__init__(modelstore=modelstore)
+        # NOTE on modelstore:
+        # we implicitly pass None here, it will be set by
+        # `PathSamplingChain.__init__()` to the rcmodel-store associated with
+        # the chainstore of the chain this sampler will be used with
+        super().__init__() #modelstore=None)
         self.states = states
         self.engine_cls = engine_cls
         self.engine_kwargs = engine_kwargs
@@ -582,19 +668,37 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         bw_startconf = self.frame_extractors["bw"].extract(outfile=bw_sp_name,
                                                            traj_in=fw_startconf,
                                                            idx=0)
-        trials = await asyncio.gather(*(
-                        p.propagate(starting_configuration=sconf,
-                                    workdir=wdir,
-                                    deffnm=deffnm,
-                                    )
-                        for p, sconf, deffnm in zip(self.propagators,
-                                                    [fw_startconf,
-                                                     bw_startconf],
-                                                    [self.forward_deffnm,
-                                                     self.backward_deffnm]
-                                                    )
-                                        )
-                                      )
+        trial_tasks = [asyncio.create_task(p.propagate(
+                                                starting_configuration=sconf,
+                                                workdir=wdir,
+                                                deffnm=deffnm,
+                                                       )
+                                           )
+                       for p, sconf, deffnm in zip(self.propagators,
+                                                   [fw_startconf,
+                                                    bw_startconf],
+                                                   [self.forward_deffnm,
+                                                    self.backward_deffnm],
+                                                   )
+                       ]
+        # use wait to be able to cancel all tasks when the first exception
+        # is raised
+        done, pending = await asyncio.wait(trial_tasks,
+                                           return_when=asyncio.FIRST_EXCEPTION)
+        # check for exceptions
+        for t in done:
+            if t.exception() is not None:
+                # cancel all tasks that might still be running
+                for tt in trial_tasks:
+                    tt.cancel()
+                # raise the exception, we take care of retrying complete steps
+                # in the PathSamplingChain
+                raise t.exception() from None
+        # if no task raised an exception all should done, so get the results
+        assert len(pending) == 0  # but make sure everything went as we expect
+        trials = []
+        for t in trial_tasks:
+            trials += [t.result()]
         # propagate returns (list_of_traj_parts, state_reached)
         (fw_trajs, fw_state), (bw_trajs, bw_state) = trials
         states_reached = np.array([0. for _ in range(len(self.states))])

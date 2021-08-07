@@ -449,7 +449,7 @@ class MCstepMemory(collections.abc.Sequence):
 
     def save(self, mcstep):
         if len(self) != 0:
-            raise RuntimeError("Can not modify overwrite saved MCsteps.")
+            raise RuntimeError("Can not modify/overwrite saved MCsteps.")
         trajs = mcstep.trial_trajectories
         path = mcstep.path
         mover = mcstep.mover
@@ -597,7 +597,7 @@ class ChainMemory(collections.abc.Sequence):
             self._mcstates_grp[str(n)] = self._mcstates_grp[str(n - 1)]
 
     def mcstates(self):
-        """Return a generator over all Markov Chain states."""
+        """Return a generator over all active Markov Chain states."""
         for idx in range(len(self._mcstates_grp.keys())):
             yield MCstepMemory(self._mcstates_grp[str(idx)],
                                modelstore=self.modelstore).load()
@@ -614,11 +614,11 @@ class ChainMemory(collections.abc.Sequence):
 
 
 class CentralMemory(collections.abc.Sequence):
-    # store N TPS chains
+    # store N (T)PS chains
     # should behave like a list of chains?!
     def __init__(self, root_grp):
         self._root_grp = root_grp
-        self._h5py_paths = {"chains": "TPSchains"}
+        self._h5py_paths = {"chains": "PSchains"}
         self._chains_grp = self._root_grp.require_group(
                                                 self._h5py_paths["chains"]
                                                         )
@@ -676,7 +676,6 @@ class Storage:
         "trainset_store": h5py_path_dict["level0"] + "/TrainSet",
         "tra_dc_cache": h5py_path_dict["cache"] + "/TrajectoryDensityCollectors",
         "distributed_cm": h5py_path_dict["level0"] + "/Distributed/CentralMemory",
-        "distributed_brain": h5py_path_dict["level0"] + "/Distributed/Brain",
                            })
     # NOTE: update this below if we introduce breaking API changes!
     # if the current aimmd version is higher than the compatibility_version
@@ -791,6 +790,8 @@ class Storage:
 
     def initialize_central_memory(self, n_chains):
         """Initialize central_memory for distributed TPS with n_chains."""
+        if self.central_memory is not None:
+            raise ValueError("CentralMemory already initialized")
         cm_grp = self.file.require_group(self.h5py_path_dict["distributed_cm"])
         self._central_memory = CentralMemory(cm_grp)
         self.central_memory.n_chains = n_chains

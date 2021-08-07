@@ -621,6 +621,7 @@ class GmxEngine(MDEngine):
                 exit_code = await self._proc.wait()
             except asyncio.CancelledError:
                 self._proc.kill()
+                raise  # reraise the error for encompassing coroutines
             else:
                 if exit_code != 0:
                     raise EngineCrashedError("Non-zero exit code from mdrun."

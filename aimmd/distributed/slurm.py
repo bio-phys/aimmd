@@ -210,8 +210,15 @@ class SlurmProcess:
             await asyncio.sleep(self.sleep_time)
         return self.returncode
 
-    async def send_signal(signal):
+    async def communicate(self, input=None):
+        # TODO: write this (if we need it)
+        #       [at least the reading from stdout, stderr should be doable
+        #        if we know the slurm output files for that]
+        raise NotImplementedError
+
+    def send_signal(self, signal):
         # TODO: write this! (if we actually need it?)
+        #       [should be doable via scancel, which can send signals to jobs]
         raise NotImplementedError
 
     def terminate(self):

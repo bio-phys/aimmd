@@ -178,7 +178,24 @@ class PyTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
 #       -> accept struct, traj, outfile
 #       -> write numpy npy files! (or pass custom load func!)
 class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
-    """Wrap functions for use on `aimmd.distributed.Trajectory`."""
+    """
+    Wrap executables to use on `aimmd.distributed.Trajectory` via SLURM.
+
+    The execution of the job is submited to the queueing system with the
+    given sbatch script (template).
+    The executable will be called with the following postitional arguments:
+        - full filepath of the structure file associated with the trajectory
+        - full filepath of the trajectory to calculate values for
+        - full filepath of the file the results should be written to without
+          fileending, Note that if no custom loading function is supplied we
+          expect that the written file has 'npy' format and the added ending
+          '.npy', i.e. we expect the executable to add the ending '.npy' to
+          the passed filepath (as e.g. `np.save($FILEPATH, data)` would do)
+        - any additional arguments from call_kwargs are added as
+          `" {key} {value}" for key, value in call_kwargs.items()`
+    See also the examples for a reference (python) implementation of multiple
+    different functions for use with this class.
+    """
     # make it possible to set values for slurm executables from this class
     # but keep the defaults in one central location (the `SlurmProcess`)
     sacct_executable = SlurmProcess.sacct_executable
@@ -196,7 +213,6 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
         executable - absolute or relative path to an executable or name of an
                      executable available via the environment (e.g. via the
                       $PATH variable on LINUX)
-                     TODO: document how exe will be called/what we expect of it
         sbatch_script - path to a sbatch submission script file or string with
                         the content of a submission script.
                         NOTE that the submission script must contain the
@@ -320,6 +336,7 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                 exit_code = await slurm_proc.wait()
             except asyncio.CancelledError:
                 slurm_proc.kill()
+                raise  # reraise for encompassing coroutines
             else:
                 if exit_code != 0:
                     raise RuntimeError(
