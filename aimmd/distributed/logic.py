@@ -148,7 +148,9 @@ class DensityCollectionTask(BrainTask):
                 dc.reevaluate_density(model=self.model)
 
 
-# TODO: better name!? PathSamplingBundle ? PathSamplingChainBundle?
+# TODO: better name!? 'PathSamplingBundle'? 'PathSamplingChainBundle'?
+#       then we should also rename the storage stuff from 'central_memory'
+#       to 'distributed'? 'chainbundle'?
 class Brain:
     """The 'brain' of the simulation."""
     # TODO: docstring + remove obsolete notes when we are done
@@ -215,6 +217,7 @@ class Brain:
         [os.mkdir(d) for d in cwdirs]
         self.storage.initialize_central_memory(n_chains=len(movers_per_chain))
         if mover_weights_per_chain is None:
+            # let each PathSamplingChain generate equal weigths for its movers
             mover_weights_per_chain = [None for _ in range(len(movers_per_chain))]
         self.chains = [PathSamplingChain(workdir=wdir,
                                          chainstore=cstore,
@@ -297,9 +300,9 @@ class Brain:
             chain.chainstore.append(s)
 
     # TODO:! write this to save the brain and its chains!
-    #        only need to take care of the movers
+    #        only need to take care of the movers (but those should be pickleable?!)
     #        (and the chainstores + brain.storage)
-    #        then we can use the usual arcdShelfs
+    #        then we can use the usual AimmdShelfs
     def object_for_pickle(self, group, overwrite):
         # currently overwrite will always be True
         return self
@@ -445,6 +448,10 @@ class PathSamplingChain:
     @property
     def n_accepts(self):
         return sum(self._accepts)
+
+    @property
+    def accepts(self):
+        return self._accepts.copy()
 
     async def run_step(self, model):
         # run one MCstep from current_step

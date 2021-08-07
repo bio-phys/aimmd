@@ -325,7 +325,7 @@ class MutableObjectShelf:
     def __init__(self, group):
         self.group = group
 
-    def load(self, buffsize=2**29):
+    def load(self, buffsize=2**20):
         try:
             dset = self.group['pickle_data']
         except KeyError:
@@ -338,7 +338,7 @@ class MutableObjectShelf:
                 obj = pickle.load(stream_file)
         return obj
 
-    def save(self, obj, overwrite=True, buffsize=2**29):
+    def save(self, obj, overwrite=True, buffsize=2**20):
         exists = True
         try:
             dset = self.group['pickle_data']
@@ -376,18 +376,18 @@ class AimmdObjectShelf(MutableObjectShelf):
     Stores any object with a .from_h5py_group and a .ready_for_pickle method.
     """
 
-    def load(self):
-        obj = super().load()
+    def load(self, buffsize=2**20):
+        obj = super().load(buffsize=buffsize)
         obj = obj.complete_from_h5py_group(self.group)
         return obj
 
-    def save(self, obj, overwrite=True, **kwargs):
+    def save(self, obj, overwrite=True, buffsize=2**20, **kwargs):
         # kwargs make it possible to pass aimmd object specific keyword args
         # to the object_for_pickle functions
         obj_to_save = obj.object_for_pickle(self.group,
                                             overwrite=overwrite,
                                             **kwargs)
-        super().save(obj=obj_to_save, overwrite=overwrite)
+        super().save(obj=obj_to_save, overwrite=overwrite, buffsize=buffsize)
 
 
 class RCModelRack(collections.abc.MutableMapping):
@@ -399,7 +399,7 @@ class RCModelRack(collections.abc.MutableMapping):
         self._storage_directory = storage_directory
 
     def __getitem__(self, key):
-        return AimmdObjectShelf(self._group[key]).load()
+        return AimmdObjectShelf(self._group[key]).load(buffsize=2**25)
 
     def __setitem__(self, key, value):
         try:
@@ -410,7 +410,7 @@ class RCModelRack(collections.abc.MutableMapping):
         except KeyError:
             pass
         group = self._group.require_group(key)
-        AimmdObjectShelf(group).save(obj=value, overwrite=True,
+        AimmdObjectShelf(group).save(obj=value, overwrite=True, buffsize=2**25,
                                      name=key, storage_directory=self._storage_directory,
                                      )
 
