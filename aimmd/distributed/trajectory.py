@@ -16,7 +16,6 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import os
 import abc
-import shutil
 import collections
 import asyncio
 import inspect

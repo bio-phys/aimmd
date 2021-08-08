@@ -70,4 +70,7 @@ from .trajectory import (Trajectory, PyTrajectoryFunctionWrapper,
                          SlurmTrajectoryFunctionWrapper)
 from .mdconfig import MDP
 from .mdengine import GmxEngine, SlurmGmxEngine
-from .logic import MCstep, Brain, TwoWayShootingPathMover, CommittorSimulation
+from .committors import CommittorSimulation
+# TODO: what PathSampling stuff do we want to have available at the top level?
+from .pathsampling import Brain
+from .pathmovers import MCstep, TwoWayShootingPathMover

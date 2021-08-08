@@ -23,7 +23,7 @@ import h5py
 import numpy as np
 from pkg_resources import parse_version
 from .trainset import TrainSet
-from ..distributed.logic import ModelDependentPathMover
+from ..distributed.pathmovers import ModelDependentPathMover
 from .. import __about__
 
 
