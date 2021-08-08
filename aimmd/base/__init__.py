@@ -23,4 +23,12 @@ class Properties:
     phi = "committors"
 
 
-from .rcmodel import RCModel
+# setup dictionary mapping descriptive strings to 'paths' in HDF5 file
+_H5PY_PATH_DICT = {"level0": "/aimmd_data"}  # toplevel aimmd group
+_H5PY_PATH_DICT["cache"] = _H5PY_PATH_DICT["level0"] + "/cache"  # cache
+_H5PY_PATH_DICT.update({  # these depend on cache and level0 to be defined
+        "rcmodel_store": _H5PY_PATH_DICT["level0"] + "/RCModels",
+        "trainset_store": _H5PY_PATH_DICT["level0"] + "/TrainSet",
+        "tra_dc_cache": _H5PY_PATH_DICT["cache"] + "/TrajectoryDensityCollectors",
+        "distributed_cm": _H5PY_PATH_DICT["level0"] + "/Distributed/CentralMemory",
+                       })

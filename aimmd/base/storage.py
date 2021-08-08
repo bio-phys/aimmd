@@ -22,6 +22,8 @@ import collections.abc
 import h5py
 import numpy as np
 from pkg_resources import parse_version
+
+from . import _H5PY_PATH_DICT
 from .trainset import TrainSet
 from ..distributed.pathmovers import ModelDependentPathMover
 from .. import __about__
@@ -564,17 +566,23 @@ class ChainMemory(collections.abc.Sequence):
     def __getitem__(self, key):
         if isinstance(key, (int, np.int)):
             if key >= len(self):
-                raise IndexError(f"Index (was {key}) must be <= len(self).")
+                raise IndexError(f"Index (was {key}) must be < len(self).")
             else:
                 return MCstepMemory(self._mcsteps_grp[str(key)],
                                     modelstore=self.modelstore).load()
         elif isinstance(key, slice):
             start, stop, step = key.indices(len(self))
-            # TODO: or do we want the generator (i.e. yield)?
-            # (this list could get quite big if we have many trials?)
+            # TODO: do we want the generator (i.e. yield)?
+            # (the list could get quite big if we have many trials...?)
+            # TODO/FIXME: using a generator does not work!!
+            # (we would need to use yield also to return single mcsteps
+            # and get them with .__next__() or using `for s in steps[0]`
+            # which is both strange...we can only write a custom Iterator to
+            # return for the slices...
             ret_val = []
             for idx in range(start, stop, step):
-                #yield TrialMemory(self._trials_grp[str(idx)])
+                #yield MCstepMemory(self._mcsteps_grp[str(idx)],
+                #                   modelstore=self.modelstore).load()
                 ret_val += [MCstepMemory(self._mcsteps_grp[str(idx)],
                                          modelstore=self.modelstore).load()]
             return ret_val
@@ -667,15 +675,6 @@ class Storage:
           through accessing it as Storage.file.
     """
 
-    # setup dictionary mapping descriptive strings to 'paths' in HDF5 file
-    h5py_path_dict = {"level0": "/aimmd_data"}  # toplevel aimmd group
-    h5py_path_dict["cache"] = h5py_path_dict["level0"] + "/cache"  # cache
-    h5py_path_dict.update({  # these depend on cache and level0 to be defined
-        "rcmodel_store": h5py_path_dict["level0"] + "/RCModels",
-        "trainset_store": h5py_path_dict["level0"] + "/TrainSet",
-        "tra_dc_cache": h5py_path_dict["cache"] + "/TrajectoryDensityCollectors",
-        "distributed_cm": h5py_path_dict["level0"] + "/Distributed/CentralMemory",
-                           })
     # NOTE: update this below if we introduce breaking API changes!
     # if the current aimmd version is higher than the compatibility_version
     # we expect to be able to read the storage
@@ -707,7 +706,7 @@ class Storage:
         """
         fexists = os.path.exists(fname)
         self.file = h5py.File(fname, mode=mode)
-        self._store = self.file.require_group(self.h5py_path_dict["level0"])
+        self._store = self.file.require_group(_H5PY_PATH_DICT["level0"])
         self._dirname = os.path.dirname(os.path.abspath(os.path.join(os.getcwd(), fname)))
         self._central_memory = None
         if ("w" in mode) or ("a" in mode and not fexists):
@@ -769,7 +768,7 @@ class Storage:
                         logger.warn("The directory containing the storage changed, we updated it in the storage."
                                     + "Note that currently you need to copy the KerasRCModels folder yourself.")
 
-        rcm_grp = self.file.require_group(self.h5py_path_dict["rcmodel_store"])
+        rcm_grp = self.file.require_group(_H5PY_PATH_DICT["rcmodel_store"])
         self.rcmodels = RCModelRack(rcmodel_group=rcm_grp, storage_directory=self._dirname)
         self._empty_cache()  # should be empty, but to be sure
 
@@ -780,7 +779,7 @@ class Storage:
         if self._central_memory is not None:
             return self._central_memory
         try:
-            cm_grp = self.file[self.h5py_path_dict["distributed_cm"]]
+            cm_grp = self.file[_H5PY_PATH_DICT["distributed_cm"]]
         except KeyError:
             return None
         else:
@@ -791,7 +790,7 @@ class Storage:
         """Initialize central_memory for distributed TPS with n_chains."""
         if self.central_memory is not None:
             raise ValueError("CentralMemory already initialized")
-        cm_grp = self.file.require_group(self.h5py_path_dict["distributed_cm"])
+        cm_grp = self.file.require_group(_H5PY_PATH_DICT["distributed_cm"])
         self._central_memory = CentralMemory(cm_grp)
         self.central_memory.n_chains = n_chains
 
@@ -811,7 +810,7 @@ class Storage:
     def _empty_cache(self):
         # empty TrajectoryDensityCollector_cache
         traDC_cache_grp = self.file.require_group(
-                                name=self.h5py_path_dict["tra_dc_cache"]
+                                name=_H5PY_PATH_DICT["tra_dc_cache"]
                                                   )
         traDC_cache_grp.clear()
 
@@ -832,12 +831,10 @@ class Storage:
         sr_shape = trainset.shot_results.shape
         w_shape = trainset.weights.shape
         try:
-            ts_group = self.file[self.h5py_path_dict["trainset_store"]]
+            ts_group = self.file[_H5PY_PATH_DICT["trainset_store"]]
         except KeyError:
             # we never stored a TrainSet here before, so setup datasets
-            ts_group = self.file.create_group(
-                                        self.h5py_path_dict["trainset_store"]
-                                              )
+            ts_group = self.file.create_group(_H5PY_PATH_DICT["trainset_store"])
             des_group = ts_group.create_dataset(name='descriptors',
                                                 dtype=trainset.descriptors.dtype,
                                                 shape=d_shape,
@@ -873,7 +870,7 @@ class Storage:
     def load_trainset(self):
         """Load an aimmd.TrainSet."""
         try:
-            ts_group = self.file[self.h5py_path_dict["trainset_store"]]
+            ts_group = self.file[_H5PY_PATH_DICT["trainset_store"]]
         except KeyError:
             raise KeyError('No TrainSet in file.')
         descriptors = ts_group['descriptors'][:]

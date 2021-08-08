@@ -21,8 +21,11 @@ import asyncio
 import logging
 import numpy as np
 
+from .. import TrainSet
+from ..base.rcmodel import RCModelAsync
 from .mdengine import EngineError, EngineCrashedError
-from .pathmovers import (MCstep, ModelDependentPathMover)
+from .pathmovers import (MCstep, PathMover, ModelDependentPathMover)
+from .utils import accepted_trajs_from_aimmd_storage
 
 
 logger = logging.getLogger(__name__)
@@ -41,15 +44,15 @@ class BrainTask(abc.ABC):
 
 
 class SaveTask(BrainTask):
-    def __init__(self, storage, model, trainset, interval=100,
-                 name_prefix="Central_RCModel"):
+    def __init__(self, storage, model: RCModelAsync, trainset: TrainSet,
+                 interval=100, name_prefix="Central_RCModel"):
         super().__init__(interval=interval)
         self.storage = storage
         self.model = model
         self.trainset = trainset
         self.name_prefix = name_prefix
 
-    async def run(self, brain, mcstep, chain_idx):
+    async def run(self, brain, mcstep: MCstep, chain_idx):
         # this only runs when total_steps % interval == 0
         # i.e. we can just save when we run
         self.storage.save_trainset(self.trainset)
@@ -59,12 +62,12 @@ class SaveTask(BrainTask):
 
 class TrainingTask(BrainTask):
     # add stuff to trainset + call model trainhook
-    def __init__(self, model, trainset, interval=1):
+    def __init__(self, model: RCModelAsync, trainset: TrainSet, interval=1):
         super().__init__(interval=interval)
         self.trainset = trainset
         self.model = model
 
-    async def run(self, brain, mcstep, chain_idx):
+    async def run(self, brain, mcstep: MCstep, chain_idx):
         try:
             states_reached = mcstep.states_reached
             shooting_snap = mcstep.shooting_snap
@@ -83,52 +86,60 @@ class TrainingTask(BrainTask):
         self.model.train_hook(self.trainset)
 
 
-# TODO: finish this!! (when we have played with storage a bit,
-#                      to make sure the API that we use stays)
+# TODO: DOCUMENT
 class DensityCollectionTask(BrainTask):
     # do density collection
-    def __init__(self, model, first_collection=100, recreate_interval=500,
-                 interval=10):
+    def __init__(self, model: RCModelAsync, first_collection=100,
+                 recreate_interval=500, interval=10):
         super().__init__(interval=interval)
         self.model = model
         self.first_collection = first_collection
         self.recreate_interval = recreate_interval
+        self._last_collection = None  # start step values for collections
 
-    async def run(self, brain, mcstep, chain_idx):
+    async def run(self, brain, mcstep: MCstep, chain_idx):
         if brain.storage is None:
-            logger.warn("Density collection/adaptation is currently only "
-                        + "possible for simulations with attached storage."
-                        )
+            logger.error("Density collection/adaptation is currently only "
+                         + "possible for simulations with attached storage."
+                         )
             return
         dc = self.model.density_collector
         if brain.total_steps - self.first_collection >= 0:
             if brain.total_steps - self.first_collection == 0:
                 # first collection
-                # TODO: write this function for arcd storages!
-                #tps, counts = accepted_trials_from_ops_storage(
-                #                                storage=sim.storage,
-                #                                start=-self.first_collection,
-                #                                               )
-                dc.add_density_for_trajectories(model=self.model,
-                                                trajectories=tps,
-                                                counts=counts,
-                                                )
+                trajs, counts = accepted_trajs_from_aimmd_storage(
+                                                storage=brain.storage,
+                                                per_chain=False,
+                                                starts=None,
+                                                                  )
+                await dc.add_density_for_trajectories(model=self.model,
+                                                      trajectories=trajs,
+                                                      counts=counts,
+                                                      )
+                # remember the start values for next time
+                self._last_collection = [len(cs)
+                                         for cs in brain.storage.central_memory
+                                         ]
             elif brain.total_steps % self.interval == 0:
                 # add only the last interval steps
-                # TODO: write this function for arcd storages!
-                #tps, counts = accepted_trials_from_ops_storage(
-                #                                storage=sim.storage,
-                #                                start=-self.interval,
-                #                                               )
-                dc.add_density_for_trajectories(model=self.model,
-                                                trajectories=tps,
-                                                counts=counts,
-                                                )
+                trajs, counts = accepted_trajs_from_aimmd_storage(
+                                                storage=brain.storage,
+                                                per_chain=False,
+                                                starts=self._last_collection,
+                                                                  )
+                await dc.add_density_for_trajectories(model=self.model,
+                                                      trajectories=trajs,
+                                                      counts=counts,
+                                                      )
+                # remember the start values for next time
+                self._last_collection = [len(cs)
+                                         for cs in brain.storage.central_memory
+                                         ]
             # Note that this below is an if because reevaluation should be
             # independent of adding new TPs in the same MCStep
             if brain.total_steps % self.recreate_interval == 0:
                 # reevaluation time
-                dc.reevaluate_density(model=self.model)
+                await dc.reevaluate_density(model=self.model)
 
 
 # TODO: better name!? 'PathSamplingBundle'? 'PathSamplingChainBundle'?

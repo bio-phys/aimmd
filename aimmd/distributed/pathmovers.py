@@ -14,7 +14,8 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
-# code to move around in path-space, i.e. from one MCStep to the next
+# code to move around in path-space, pathmovers generate new trial paths and
+# accept/reject them, i.e. they move the MarkovChain from one MCStep to the next
 import os
 import abc
 import asyncio

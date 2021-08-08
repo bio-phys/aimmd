@@ -21,7 +21,8 @@ from openpathsampling.engines.trajectory import Trajectory as OPSTrajectory
 from openpathsampling.collectivevariable import CollectiveVariable
 from openpathsampling import Volume
 from abc import ABC, abstractmethod
-from .storage import Storage
+
+from . import _H5PY_PATH_DICT
 
 
 logger = logging.getLogger(__name__)
@@ -517,7 +518,7 @@ class TrajectoryDensityCollector:
             # and ONLY ONCE, so it is probably best to have them defined in
             # storage.py (?) as constants and import them from there
             traDC_cache_grp = cache_file.require_group(
-                                        Storage.h5py_path_dict["tra_dc_cache"]
+                                        _H5PY_PATH_DICT["tra_dc_cache"]
                                                        )
             if copy_from is None:
                 # nothing to copy, create empty group
@@ -796,12 +797,12 @@ class TrajectoryDensityCollectorAsync(TrajectoryDensityCollector):
         # add descriptors to self
         if counts is None:
             counts = len(trajectories) * [1.]
-        async for tra, c in zip(trajectories, counts):
+        for tra, c in zip(trajectories, counts):
             descriptors = await model.descriptor_transform(tra)
             self.append(tra_descriptors=descriptors, multiplicity=c)
         # now predict for the newly added
-        pred = model(self._descriptors[len_before:self._fill_pointer],
-                     use_transform=False)
+        pred = await model(self._descriptors[len_before:self._fill_pointer],
+                           use_transform=False)
         histo, edges = np.histogramdd(sample=pred,
                                       bins=self.bins,
                                       range=[[0., 1.]
@@ -824,12 +825,9 @@ class TrajectoryDensityCollectorAsync(TrajectoryDensityCollector):
 
     reevaluate_density_add_trajectories.__doc__ = TrajectoryDensityCollector.reevaluate_density_add_trajectories.__doc__
 
-    # NOTE: this actually does not need to be async, we make it for consistency
-    #       this way all methods that involve the model/descriptor_transform
-    #       are async
     async def reevaluate_density(self, model):
-        pred = model(self._descriptors[:self._fill_pointer],
-                     use_transform=False)
+        pred = await model(self._descriptors[:self._fill_pointer],
+                           use_transform=False)
         histo, edges = np.histogramdd(
                             sample=pred,
                             bins=self.bins,
