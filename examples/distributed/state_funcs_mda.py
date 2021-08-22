@@ -80,7 +80,7 @@ def generate_atomgroups_for_ic(molecule):
 
     return bonds, angles, dihedrals
 
-def descriptor_func_ic(traj, molecule_selection="protein", skip=1):
+def descriptor_func_ic(traj, molecule_selection="protein", skip=1, use_SI=True):
     """Calculate symmetry invariant internal coordinate representation for molecule_selection."""
     u = mda.Universe(traj.structure_file, traj.trajectory_file,
                      refresh_offsets=True, tpr_resid_from_one=False)
@@ -99,6 +99,10 @@ def descriptor_func_ic(traj, molecule_selection="protein", skip=1):
     dihedrals_out = np.empty((dihedral_vals.shape[0], dihedral_vals.shape[1] * 2))
     dihedrals_out[:, ::2] = 0.5 * (1. + np.sin(dihedral_vals))
     dihedrals_out[:, 1::2] = 0.5 * (1. + np.cos(dihedral_vals))
+
+    if use_SI:
+        # mdanalysis uses \AA
+        bond_vals /= 10.
 
     return np.concatenate((bond_vals, angle_vals, dihedrals_out), axis=1)
 
@@ -130,6 +134,7 @@ if __name__ == "__main__":
                         default="descriptors",
                         choices=["alphaR", "C7eq", "descriptors_ic", "descriptors_psi_phi"])
     parser.add_argument("-s", "--skip", type=int, default=1)
+    parser.add_argument("-si", "--use-SI", dest="use_SI", type=bool, default=True)
     parser.add_argument("-ms", "--molecule-selection", dest="molecule_selection", type=str, default="protein",
                         help="molecule selection string for internal coordinate representation")
     args = parser.parse_args()

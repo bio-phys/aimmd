@@ -47,7 +47,7 @@ def descriptor_func_ic(traj, scratch_dir):
                     # mdt can not work with tprs, so we use theinitial gro for now
                     top=os.path.join(scratch_dir, "gmx_infiles/conf.gro"),
                     )
-    pairs, triples, quadruples = aimmd.coords.internal.generate_indices(traj.topology, source_idx=0)
+    pairs, triples, quadruples = aimmd.coords.internal.generate_indices(traj.topology, source_idx=1)
     descriptors = aimmd.coords.internal.transform(traj, pairs=pairs, triples=triples, quadruples=quadruples)
 
     return descriptors
