@@ -125,7 +125,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         descriptor_transform - coroutine function used to calculate descriptors
         engine_cls - the class of the molecular dynamcis engine to use
         engine_kwargs - a dict with keyword arguments to initialize the given
-                        molecular dynamcis engine
+                        molecular dynamics engine
         engine_config - MDConfig subclass [used in prepare() method of engines]
         walltime_per_part - simulation walltime per trajectory part
         T - temperature in degree K (used for velocity randomization)

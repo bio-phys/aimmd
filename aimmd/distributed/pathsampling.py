@@ -21,6 +21,7 @@ import asyncio
 import logging
 import numpy as np
 
+from . import _SEM_BRAIN_MODEL
 from .. import TrainSet
 from ..base.rcmodel import RCModelAsync
 from .mdengine import EngineError, EngineCrashedError
@@ -55,9 +56,10 @@ class SaveTask(BrainTask):
     async def run(self, brain, mcstep: MCstep, chain_idx):
         # this only runs when total_steps % interval == 0
         # i.e. we can just save when we run
-        self.storage.save_trainset(self.trainset)
-        savename = f"{self.name_prefix}_after_step{brain.total_steps}"
-        self.storage.rcmodels[savename] = self.model
+        async with _SEM_BRAIN_MODEL:
+            self.storage.save_trainset(self.trainset)
+            savename = f"{self.name_prefix}_after_step{brain.total_steps}"
+            self.storage.rcmodels[savename] = self.model
 
 
 class TrainingTask(BrainTask):
@@ -77,13 +79,16 @@ class TrainingTask(BrainTask):
             logger.warning("Tried to add a step that was no shooting snapshot")
         else:
             descriptors = await self.model.descriptor_transform(shooting_snap)
-            # descriptors is 2d but append_point expects 1d
-            self.trainset.append_point(descriptors=descriptors[0],
-                                       shot_results=states_reached)
-            # append the committor prediction at the time of selection for the SP
-            self.model.expected_p.append(predicted_committors_sp)
-        # always call the train hook, the model 'decides' on its own if it trains
-        self.model.train_hook(self.trainset)
+            async with _SEM_BRAIN_MODEL:
+                # descriptors is 2d but append_point expects 1d
+                self.trainset.append_point(descriptors=descriptors[0],
+                                           shot_results=states_reached)
+                # append the committor prediction for the SP at the time of
+                # selection
+                self.model.expected_p.append(predicted_committors_sp)
+                # call the train hook every time, the model 'decides' on its
+                # own if it trains
+                self.model.train_hook(self.trainset)
 
 
 # TODO: DOCUMENT
@@ -112,10 +117,11 @@ class DensityCollectionTask(BrainTask):
                                                 per_chain=False,
                                                 starts=None,
                                                                   )
-                await dc.add_density_for_trajectories(model=self.model,
-                                                      trajectories=trajs,
-                                                      counts=counts,
-                                                      )
+                async with _SEM_BRAIN_MODEL:
+                    await dc.add_density_for_trajectories(model=self.model,
+                                                          trajectories=trajs,
+                                                          counts=counts,
+                                                          )
                 # remember the start values for next time
                 self._last_collection = [len(cs)
                                          for cs in brain.storage.central_memory
@@ -127,10 +133,11 @@ class DensityCollectionTask(BrainTask):
                                                 per_chain=False,
                                                 starts=self._last_collection,
                                                                   )
-                await dc.add_density_for_trajectories(model=self.model,
-                                                      trajectories=trajs,
-                                                      counts=counts,
-                                                      )
+                async with _SEM_BRAIN_MODEL:
+                    await dc.add_density_for_trajectories(model=self.model,
+                                                          trajectories=trajs,
+                                                          counts=counts,
+                                                          )
                 # remember the start values for next time
                 self._last_collection = [len(cs)
                                          for cs in brain.storage.central_memory
@@ -139,7 +146,8 @@ class DensityCollectionTask(BrainTask):
             # independent of adding new TPs in the same MCStep
             if brain.total_steps % self.recreate_interval == 0:
                 # reevaluation time
-                await dc.reevaluate_density(model=self.model)
+                async with _SEM_BRAIN_MODEL:
+                    await dc.reevaluate_density(model=self.model)
 
 
 # TODO: better name!? 'PathSamplingBundle'? 'PathSamplingChainBundle'?
@@ -318,6 +326,11 @@ class Brain:
                 # iterate over all done results, because there can be multiple
                 # done sometimes?
                 chain_idx = chain_tasks.index(result)
+                # await 'result' to get the actual result out of the wrapped
+                # task, i.e. what a call to `result.result()` contains
+                # but this also raises all exceptions that might have been
+                # raised by the task and suppressed so fair, i.e. check for
+                # `result.exception() is None` and raise if not
                 mcstep = await result
                 self.total_steps += 1
                 if mcstep.accepted:
