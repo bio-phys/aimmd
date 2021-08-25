@@ -14,6 +14,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
+import os
 import logging
 import copy
 import h5py
@@ -51,21 +52,37 @@ class KerasRCModel(RCModel):
     #def n_out(self):
     #    return self.nnet.output_shape[1]
 
-    # NOTE: NEW LOADING-SAVING API
-    def object_for_pickle(self, group, overwrite=True):
+    def object_for_pickle(self, group, overwrite=True, name=None, **kwargs):
+        dirname = group.file["/aimmd_data"].attrs["dirname"].decode("ASCII")
+        if name is None:
+            raise ValueError("name must be given to deduce the filename.")
+        if not name.lower().endswith(".h5"):
+            name += ".h5"
+        if not os.path.isdir(
+                os.path.join(dirname, f"{group.file.filename}_KerasModelsSaveFiles")):
+            # create the directory if it does not exist
+            os.mkdir(os.path.join(dirname, f"{group.file.filename}_KerasModelsSaveFiles"))
+        subfile = os.path.join(dirname, f"{group.file.filename}_KerasModelsSaveFiles", name)
         try:
-            model_grp = group['KerasRCModel']
+            model_grp = group['KerasRCModel']  # just to check if it is there
         except KeyError:
-            # group does not exist yet, create it
-            model_grp = group.create_group("KerasRCModel")
+            # file/group does not exist yet, create a link for the external file
+            # model_grp = group.require_group("KerasRCModel")
+            ext_link = h5py.ExternalLink(subfile, "/")
+            group["KerasRCModel"] = ext_link
         else:
             if overwrite:
-                # remove everything so we can let keras recreate from scratch
-                model_grp.clear()
+                # remove the old file so we can let keras recreate from scratch
+                os.unlink(subfile)
             else:
                 raise RuntimeError(
-                            "KerasRCModel group exists but overwrite=False."
+                            "KerasRCModel file exists but overwrite=False."
                                    )
+        # create the external subfile and close it directly
+        f = h5py.File(subfile, mode="w")
+        f.close()
+        # open the link/external subfile
+        model_grp = group["KerasRCModel"]
         # save NN
         # NOTE: this is a dirty hack, tf checks if the file is a h5py.File
         #       but it uses only methods of the h5py.Group, so we set the
@@ -81,7 +98,7 @@ class KerasRCModel(RCModel):
         # and call supers object_for_pickle in case there is something left
         # in ret_obj.__dict__ that we can not pickle
         return super(KerasRCModel,
-                     ret_obj).object_for_pickle(group, overwrite=overwrite)
+                     ret_obj).object_for_pickle(group, overwrite=overwrite, **kwargs)
 
     def complete_from_h5py_group(self, group):
         model_grp = group["KerasRCModel"]

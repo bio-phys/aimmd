@@ -180,7 +180,7 @@ class PytorchRCModel(RCModel):
     #    return self.nnet.n_out
 
     # NOTE: NEW LOADING-SAVING API
-    def object_for_pickle(self, group, overwrite=True):
+    def object_for_pickle(self, group, overwrite=True, **kwargs):
         """
         Return pickleable object equivalent to self.
 
@@ -223,7 +223,7 @@ class PytorchRCModel(RCModel):
         # and call supers object_for_pickle in case there is something left
         # in ret_obj.__dict__ that we can not pickle
         return super(PytorchRCModel,
-                     ret_obj).object_for_pickle(group, overwrite=overwrite)
+                     ret_obj).object_for_pickle(group, overwrite=overwrite, **kwargs)
 
     def complete_from_h5py_group(self, group, device=None):
         """
@@ -461,7 +461,7 @@ class EnsemblePytorchRCModel(RCModel):
     #    return self.nnets[0].n_out
 
     # NOTE: NEW LOADING-SAVING API
-    def object_for_pickle(self, group, overwrite=True):
+    def object_for_pickle(self, group, overwrite=True, **kwargs):
         """
         Return pickleable object equivalent to self.
 
@@ -503,7 +503,7 @@ class EnsemblePytorchRCModel(RCModel):
         # and call supers object_for_pickle in case there is something left
         # in ret_obj.__dict__ that we can not pickle
         return super(EnsemblePytorchRCModel,
-                     ret_obj).object_for_pickle(group, overwrite=overwrite)
+                     ret_obj).object_for_pickle(group, overwrite=overwrite, **kwargs)
 
     def complete_from_h5py_group(self, group, devices=None):
         """
@@ -805,7 +805,7 @@ class MultiDomainPytorchRCModel(RCModel):
     #    return self.pnets[0].n_out
 
     # NOTE: NEW LOADING-SAVING API
-    def object_for_pickle(self, group, overwrite=True):
+    def object_for_pickle(self, group, overwrite=True, **kwargs):
         """
         Return pickleable object equivalent to self.
 
@@ -865,7 +865,7 @@ class MultiDomainPytorchRCModel(RCModel):
         # and call supers object_for_pickle in case there is something left
         # in ret_obj.__dict__ that we can not pickle
         return super(MultiDomainPytorchRCModel,
-                     ret_obj).object_for_pickle(group, overwrite=overwrite)
+                     ret_obj).object_for_pickle(group, overwrite=overwrite, **kwargs)
 
     def complete_from_h5py_group(self, group, pdevices=None, cdevice=None):
         """

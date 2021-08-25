@@ -410,7 +410,7 @@ class RCModelRack(collections.abc.MutableMapping):
         except KeyError:
             pass
         group = self._group.require_group(key)
-        AimmdObjectShelf(group).save(obj=value, overwrite=True)
+        AimmdObjectShelf(group).save(obj=value, overwrite=True, name=key)
 
     def __delitem__(self, key):
         del self._group[key]
@@ -471,6 +471,7 @@ class Storage:
         fexists = os.path.exists(fname)
         self.file = h5py.File(fname, mode=mode)
         self._store = self.file.require_group(self.h5py_path_dict["level0"])
+        dirname = os.path.dirname(os.path.abspath(os.path.join(os.getcwd(), fname)))
         if ("w" in mode) or ("a" in mode and not fexists):
             # first creation of file: write aimmd compatibility version string
             self._store.attrs["storage_version"] = np.string_(
@@ -479,6 +480,9 @@ class Storage:
             self._store.attrs["aimmd_version"] = np.string_(
                                                     __about__.__version__
                                                            )
+            # save the current (i.e. where the file is when we opened it) dirname to attrs
+            # we need this to be able to save tensorflow models properly
+            self._store.attrs["dirname"] = np.string_(dirname)
         else:
             store_version = parse_version(
                             self._store.attrs["storage_version"].decode("ASCII")
@@ -493,6 +497,20 @@ class Storage:
                         "The storage file was written with an older version of"
                         + " aimmd than the current one. Try installing aimmd "
                         + f"v{str(store_version)}" + " to open it.")
+            if dirname != self._store.attrs["dirname"].decode("ASCII"):
+                # check if dirname changed, i.e. if the file was copied/moved
+                if mode == "r":
+                    # no write intent, just check if dirname changed and warn if it did
+                    logger.error("The directory containing the storage changed, but we have "
+                                 + "no write intent on file, so we can not update it. "
+                                 + "KerasRCModel saving might/will not work as expected.")
+                else:
+                    # we can just change the path
+                    self._store.attrs["dirname"] = np.string_(dirname)
+                    # but we warn becasue the folder with the models must be copied
+                    # TODO/FIXME: automatically copy the folder from old to new location?
+                    logger.warn("The directory containing the storage changed, we updated it "
+                                + "Note that currently you need to copy the KerasRCModels folder yourself.")
 
         rcm_grp = self.file.require_group(self.h5py_path_dict["rcmodel_store"])
         self.rcmodels = RCModelRack(rcmodel_group=rcm_grp)

@@ -117,7 +117,7 @@ class RCModel(ABC):
     #   respectively, both will be called with a h5py group as argument which
     #   you can use use for saving and loading.
     #   Have a look at the pytorchRCModels code.
-    def object_for_pickle(self, group, overwrite=True):
+    def object_for_pickle(self, group, overwrite=True, **kwargs):
         state = self.__dict__.copy()  # shallow copy -> take care of lists etc!
         if isinstance(state['descriptor_transform'], CollectiveVariable):
             # replace OPS CVs by their name to reload from OPS storage
