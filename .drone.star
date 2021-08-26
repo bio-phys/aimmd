@@ -72,7 +72,7 @@ def make_pip_pipeline(os, arch, py_version, pytest_args=""):
           "pip list",
           # install ops pathsampling hooks branch
           #"pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
-          pip install openpathsampling,  # install ops from pypi
+          "pip install openpathsampling",  # install ops from pypi
           # install deep learning packages
           # TODO: this is hardcoded and not nice for maintenance
           #"pip install torch==1.4.0+cpu -f https://download.pytorch.org/whl/torch_stable.html",
@@ -121,7 +121,7 @@ def make_conda_pipeline(os, arch, py_version, pytest_args=""):
           "conda install -q numpy cython -y",  # install setup dependecies
           # install ops pathsampling hooks branch
           #"pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
-          conda install openpathsampling,  # install ops from conda-forge
+          "conda install openpathsampling",  # install ops from conda-forge
           "conda list",
           "python --version",
           "pip install .[test]",
