@@ -90,7 +90,7 @@ def get_all_file_parts(folder, deffnm, file_ending):
 
     content = os.listdir(folder)
     filtered = [f for f in content
-                if (f.endswith(file_ending) and f.startswith(deffnm))
+                if (f.endswith(file_ending) and f.startswith(f"{deffnm}.part"))
                 ]
     partnums = [int(f.lstrip(f"{deffnm}.part").rstrip(file_ending))
                 for f in filtered]

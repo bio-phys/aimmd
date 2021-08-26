@@ -426,13 +426,15 @@ class CommittorSimulation:
                 structure_file=self.starting_configurations[conf_num][0].structure_file
                                        )
             # get the number of times we crashed/reached max length before
-            dir_list = os.listdir(step_dir)
-            filtered = [d for d in dir_list
-                        if (os.path.isdir(os.path.join(step_dir, d))
-                            and d.startswith(f"{self.deffnm_engine_out}")
-                            and (d.endswith("max_len") or d.endswith("crash")))
-                        ]
-            n = len(filtered)
+            n = 0
+            while (os.path.isdir(os.path.join(
+                                        step_dir,
+                                        f"{self.deffnm_engine_out}_{n + 1}max_len"))
+                   or os.path.isdir(os.path.join(
+                                        step_dir,
+                                        f"{self.deffnm_engine_out}_{n + 1}crash"))
+                   ):
+                n += 1
         # and propagate
         round_one = True
         while True:
@@ -450,21 +452,24 @@ class CommittorSimulation:
             except (MaxStepsReachedError, EngineCrashedError) as e:
                 log_str = (f"MD engine for configuration {conf_num}, "
                            + f"shot {shot_num}, deffnm {self.deffnm_engine_out}"
-                           + f" crashed for the {n + 1}th time.")
+                           + f" failed for the {n + 1}th time.")
                 if n < self.max_retries_on_crash:
                     if isinstance(e, EngineCrashedError):
                         subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
                                                          + f"_{n + 1}crash"))
+                        log_str += " Reason: Engine Crashed."
                     elif isinstance(e, MaxStepsReachedError):
                         subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
                                                          + f"_{n + 1}max_len"))
+                        log_str += " Reason: Maximum number of steps."
                 else:
-                    logger.error(log_str + " Not retrying this time.")
+                    logger.error(log_str + " Not retrying anymore.")
                     # TODO: do we want to raise the error?!
                     #       I think this way is better as we can still finish
                     #       the simulation as expected (just with a shot less)
                     #raise e from None
                     return None  # no state reached!
+                # TODO/FIXME: the error handling here assumes gmx engines!
                 logger.warning(log_str + " Moving to subfolder and retrying.")
                 # we only end up here if there is cleanup/moving to do
                 os.mkdir(subdir)
@@ -524,13 +529,15 @@ class CommittorSimulation:
                 structure_file=self.starting_configurations[conf_num][0].structure_file
                                        )
             # get the number of times we crashed/reached max length before
-            dir_list = os.listdir(step_dir)
-            filtered = [d for d in dir_list
-                        if (os.path.isdir(os.path.join(step_dir, d))
-                            and d.startswith(f"{self.deffnm_engine_out}")
-                            and (d.endswith("max_len") or d.endswith("crash")))
-                        ]
-            n_fw = len(filtered)
+            n_fw = 0
+            while (os.path.isdir(os.path.join(
+                                        step_dir,
+                                        f"{self.deffnm_engine_out}_{n_fw + 1}max_len"))
+                   or os.path.isdir(os.path.join(
+                                        step_dir,
+                                        f"{self.deffnm_engine_out}_{n_fw + 1}crash"))
+                   ):
+                n_fw += 1
         # backwards starting configuration (forward with inverted velocities)
         start_conf_name_bw = os.path.join(step_dir,
                                           (f"{self.start_conf_name_prefix}"
@@ -559,13 +566,15 @@ class CommittorSimulation:
             n_bw = 0
         else:
             # get the number of times we crashed/reached max length before
-            dir_list = os.listdir(step_dir)
-            filtered = [d for d in dir_list
-                        if (os.path.isdir(os.path.join(step_dir, d))
-                            and d.startswith(f"{self.deffnm_engine_out_bw}")
-                            and (d.endswith("max_len") or d.endswith("crash")))
-                        ]
-            n_bw = len(filtered)
+            n_bw = 0
+            while (os.path.isdir(os.path.join(
+                                        step_dir,
+                                        f"{self.deffnm_engine_out_bw}_{n_bw + 1}max_len"))
+                   or os.path.isdir(os.path.join(
+                                        step_dir,
+                                        f"{self.deffnm_engine_out_bw}_{n_bw + 1}crash"))
+                   ):
+                n_bw += 1
         # and propagate
         ns = [n_fw, n_bw]
         starting_confs = [starting_conf_fw, starting_conf_bw]
@@ -596,7 +605,7 @@ class CommittorSimulation:
                                               MaxStepsReachedError)):
                     log_str = (f"MD engine for configuration {str(conf_num)}, "
                                + f"shot {str(shot_num)}, "
-                               + f"deffm {deffnms_engine_out[t_idx]} crashed "
+                               + f"deffm {deffnms_engine_out[t_idx]} failed "
                                + f"for the {ns[t_idx] + 1}th time.")
                     # catch error raised when gromacs crashes
                     if ns[t_idx] < self.max_retries_on_crash:
@@ -606,15 +615,18 @@ class CommittorSimulation:
                                                   (f"{deffnms_engine_out[t_idx]}"
                                                    + f"_{ns[t_idx] + 1}crash")
                                                   )
+                            log_str += " Reason: Engine crashed."
                         elif isinstance(t.exception(), MaxStepsReachedError):
                             subdir = os.path.join(step_dir,
                                                   (f"{deffnms_engine_out[t_idx]}"
                                                    + f"_{ns[t_idx] + 1}max_len")
                                                   )
+                            log_str += " Reason: Maximum number of steps."
                         else:
                             raise RuntimeError("This should never happen!")
                         logger.warning(log_str + " Moving to subdirectory and retrying.")
                         os.mkdir(subdir)
+                        # TODO/FIXME: the error handling here assumes gmx engines!
                         all_files = os.listdir(step_dir)
                         for f in all_files:
                             splits = f.split(".")
@@ -653,7 +665,7 @@ class CommittorSimulation:
                         # if we do we have set the result to (None, None)
                         if trials_done[t_idx] is None:
                             # reached maximum tries, raise the error and crash the sampling? :)
-                            logger.error(log_str + " Not retrying this time.")
+                            logger.error(log_str + " Not retrying anymore.")
                             # TODO: same as for oneway, do we want to raise?!
                             #       I (hejung) think not, since not raising enables
                             #       us to finish the simulation adn get a return

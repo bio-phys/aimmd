@@ -336,7 +336,12 @@ class TrajectoryPropagatorUntilAnyState:
         # check first if the starting configuration is in any state
         state_vals = await self._state_vals_for_traj(starting_configuration)
         if np.any(state_vals):
-            logger.error("Starting configuration already inside a state.")
+            states_reached, frame_nums = np.where(state_vals)
+            # gets the frame with the lowest idx where any state is True
+            min_idx = np.argmin(frame_nums)
+            first_state_reached = states_reached[min_idx]
+            logger.error(f"Starting configuration ({starting_configuration}) "
+                         + f"is already inside a state (idx {first_state_reached}).")
             # we just return the starting configuration/trajectory
             # state reached is calculated below (is the same for both branches)
             trajs = [starting_configuration]
