@@ -667,7 +667,7 @@ class CommittorSimulation:
                 else:
                     # no exception raised
                     # put the result into trials_done at the right idx
-                    t_idx = trials_pending.index(t)
+                    #t_idx = trials_pending.index(t)
                     trials_done[t_idx] = t.result()
         # check where they went: construct TP if possible, else concatenate
         (fw_trajs, fw_state), (bw_trajs, bw_state) = trials_done

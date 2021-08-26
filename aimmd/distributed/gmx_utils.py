@@ -60,9 +60,10 @@ def get_all_traj_parts(folder, deffnm, traj_type="TRR"):
     ending = "." + traj_type.lower()
     content = os.listdir(folder)
     filtered = [f for f in content
-                if (f.endswith(ending) and f.startswith(deffnm))
+                if (f.endswith(ending) and f.startswith(f"{deffnm}.part"))
                 ]
-    partnums = [int(f.lstrip(f"{deffnm}.part").rstrip(ending)) for f in filtered]
+    partnums = [int(f.lstrip(f"{deffnm}.part").rstrip(ending))
+                for f in filtered]
     max_num = np.max(partnums)
     trajs = [Trajectory(trajectory_file=os.path.join(folder,
                                                      (f"{deffnm}"
