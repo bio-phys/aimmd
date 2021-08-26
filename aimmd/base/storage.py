@@ -395,8 +395,10 @@ class AimmdObjectShelf(MutableObjectShelf):
 class RCModelRack(collections.abc.MutableMapping):
     """Dictionary like interface to RCModels stored in an aimmd storage file."""
 
-    def __init__(self, rcmodel_group):
+    def __init__(self, rcmodel_group, storage_directory):
         self._group = rcmodel_group
+        # should be an abspath!
+        self._storage_directory = storage_directory
 
     def __getitem__(self, key):
         return AimmdObjectShelf(self._group[key]).load()
@@ -410,7 +412,9 @@ class RCModelRack(collections.abc.MutableMapping):
         except KeyError:
             pass
         group = self._group.require_group(key)
-        AimmdObjectShelf(group).save(obj=value, overwrite=True, name=key)
+        AimmdObjectShelf(group).save(obj=value, overwrite=True,
+                                     name=key, storage_directory=self._storage_directory,
+                                     )
 
     def __delitem__(self, key):
         del self._group[key]
@@ -471,7 +475,7 @@ class Storage:
         fexists = os.path.exists(fname)
         self.file = h5py.File(fname, mode=mode)
         self._store = self.file.require_group(self.h5py_path_dict["level0"])
-        dirname = os.path.dirname(os.path.abspath(os.path.join(os.getcwd(), fname)))
+        self._dirname = os.path.dirname(os.path.abspath(os.path.join(os.getcwd(), fname)))
         if ("w" in mode) or ("a" in mode and not fexists):
             # first creation of file: write aimmd compatibility version string
             self._store.attrs["storage_version"] = np.string_(
@@ -482,7 +486,7 @@ class Storage:
                                                            )
             # save the current (i.e. where the file is when we opened it) dirname to attrs
             # we need this to be able to save tensorflow models properly
-            self._store.attrs["dirname"] = np.string_(dirname)
+            self._store.attrs["dirname"] = np.string_(self._dirname)
         else:
             store_version = parse_version(
                             self._store.attrs["storage_version"].decode("ASCII")
@@ -497,23 +501,42 @@ class Storage:
                         "The storage file was written with an older version of"
                         + " aimmd than the current one. Try installing aimmd "
                         + f"v{str(store_version)}" + " to open it.")
-            if dirname != self._store.attrs["dirname"].decode("ASCII"):
-                # check if dirname changed, i.e. if the file was copied/moved
-                if mode == "r":
-                    # no write intent, just check if dirname changed and warn if it did
-                    logger.error("The directory containing the storage changed, but we have "
-                                 + "no write intent on file, so we can not update it. "
-                                 + "KerasRCModel saving might/will not work as expected.")
+            try:
+                stored_dirname = self._store.attrs["dirname"].decode("ASCII")
+            except KeyError:
+                # make it possible to load 'old' storages without dirname attr set,
+                # i.e. try to not break backwards compatibility
+                if mode != "r":
+                    # storage open with write intent, so just add the attr for dirname
+                    self._store.attrs["dirname"] = np.string_(self._dirname)
+                    logger.debug("Converted 'old' storage to 'new' format by adding "
+                                 + "the 'dirname' attr.")
                 else:
-                    # we can just change the path
-                    self._store.attrs["dirname"] = np.string_(dirname)
-                    # but we warn becasue the folder with the models must be copied
-                    # TODO/FIXME: automatically copy the folder from old to new location?
-                    logger.warn("The directory containing the storage changed, we updated it "
-                                + "Note that currently you need to copy the KerasRCModels folder yourself.")
+                    logger.info("Opened an 'old' storage wihout dirname attribute without "
+                                + "write intent. Everything should work as expected, however "
+                                + "if you open the storage with write intent it will be "
+                                + "converted to the 'new' storage format.")
+            else:
+                # check if the stored dirname is the same as the current
+                # also (possibly) update the stored dirname
+                if self._dirname != stored_dirname:
+                    # check if dirname changed, i.e. if the file was copied/moved
+                    if mode == "r":
+                        # no write intent, just check if dirname changed and warn if it did
+                        logger.error("The directory containing the storage changed, but we have "
+                                     + "no write intent on file, so we can not update it. "
+                                     + "KerasRCModel saving might/will not work as expected "
+                                     + "if you did not copy the KerasRCmodel directory yourself.")
+                    else:
+                        # we can just change the path
+                        self._store.attrs["dirname"] = np.string_(self._dirname)
+                        # but we warn becasue the folder with the models must be copied
+                        # TODO/FIXME: automatically copy the folder from old to new location?
+                        logger.warn("The directory containing the storage changed, we updated it in the storage."
+                                    + "Note that currently you need to copy the KerasRCModels folder yourself.")
 
         rcm_grp = self.file.require_group(self.h5py_path_dict["rcmodel_store"])
-        self.rcmodels = RCModelRack(rcmodel_group=rcm_grp)
+        self.rcmodels = RCModelRack(rcmodel_group=rcm_grp, storage_directory=self._dirname)
         self._empty_cache()  # should be empty, but to be sure
 
     # make possible to use in with statements

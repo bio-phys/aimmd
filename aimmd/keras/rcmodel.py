@@ -52,37 +52,46 @@ class KerasRCModel(RCModel):
     #def n_out(self):
     #    return self.nnet.output_shape[1]
 
-    def object_for_pickle(self, group, overwrite=True, name=None, **kwargs):
-        dirname = group.file["/aimmd_data"].attrs["dirname"].decode("ASCII")
+    def object_for_pickle(self, group, overwrite=True,
+                          name=None, storage_directory=None, **kwargs):
+        def create_extlink_and_empty_subfile(fname, parent_group):
+            # fname is expected to be an abspath
+            ext_link = h5py.ExternalLink(fname, "/")
+            parent_group["KerasRCModel"] = ext_link
+            # create the external subfile and close it directly
+            f = h5py.File(fname, mode="w")
+            f.close()
+            # open the link/external subfile and return the group
+            return parent_group["KerasRCModel"]
+
         if name is None:
             raise ValueError("name must be given to deduce the filename.")
         if not name.lower().endswith(".h5"):
             name += ".h5"
+        # create the directory if it does not exist
         if not os.path.isdir(
-                os.path.join(dirname, f"{group.file.filename}_KerasModelsSaveFiles")):
-            # create the directory if it does not exist
-            os.mkdir(os.path.join(dirname, f"{group.file.filename}_KerasModelsSaveFiles"))
-        subfile = os.path.join(dirname, f"{group.file.filename}_KerasModelsSaveFiles", name)
+                os.path.join(storage_directory,
+                             f"{group.file.filename}_KerasModelsSaveFiles")):
+            os.mkdir(os.path.join(storage_directory,
+                                  f"{group.file.filename}_KerasModelsSaveFiles"))
+        subfile = os.path.join(storage_directory,
+                               f"{group.file.filename}_KerasModelsSaveFiles", name)
         try:
             model_grp = group['KerasRCModel']  # just to check if it is there
         except KeyError:
             # file/group does not exist yet, create a link for the external file
-            # model_grp = group.require_group("KerasRCModel")
-            ext_link = h5py.ExternalLink(subfile, "/")
-            group["KerasRCModel"] = ext_link
+            model_grp = create_extlink_and_empty_subfile(fname=subfile,
+                                                         parent_group=group)
         else:
             if overwrite:
                 # remove the old file so we can let keras recreate from scratch
                 os.unlink(subfile)
+                model_grp = create_extlink_and_empty_subfile(fname=subfile,
+                                                             parent_group=group)
             else:
                 raise RuntimeError(
                             "KerasRCModel file exists but overwrite=False."
                                    )
-        # create the external subfile and close it directly
-        f = h5py.File(subfile, mode="w")
-        f.close()
-        # open the link/external subfile
-        model_grp = group["KerasRCModel"]
         # save NN
         # NOTE: this is a dirty hack, tf checks if the file is a h5py.File
         #       but it uses only methods of the h5py.Group, so we set the
