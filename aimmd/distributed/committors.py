@@ -673,8 +673,10 @@ class CommittorSimulation:
                             # no trajs, no state reached
                             trials_done[t_idx] = (None, None)
                 elif t.exception() is not None:
-                    # any other exception
-                    # raise directly
+                    # any other exception: raise it
+                    # cancel the pending tasks before raising
+                    for task in pending:
+                        task.cancel()
                     raise t.exception() from None
                 else:
                     # no exception raised
