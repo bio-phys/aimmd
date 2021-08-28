@@ -4,7 +4,6 @@ State functions for alanine dipetide.
 
 Needs to be separate module/import to be able to use multiprocessing from the notebooks.
 """
-import os
 import argparse
 import numpy as np
 import MDAnalysis as mda
@@ -18,8 +17,14 @@ def alpha_R(traj, skip=1):
     #       file we just rebuild all offsets
     u = mda.Universe(traj.structure_file, traj.trajectory_file,
                      refresh_offsets=True, tpr_resid_from_one=False)
-    psi_ag = u.select_atoms("index 6 or index 8 or index 14 or index 16")
-    phi_ag = u.select_atoms("index 4 or index 6 or index 8 or index 14")
+    psi_ag = u.select_atoms("resname ALA and name N")
+    psi_ag += u.select_atoms("resname ALA and name CA")
+    psi_ag += u.select_atoms("resname ALA and name C")
+    psi_ag += u.select_atoms("resname NME and name N")
+    phi_ag = u.select_atoms("resname ACE and name C")
+    phi_ag += u.select_atoms("resname ALA and name N")
+    phi_ag += u.select_atoms("resname ALA and name CA")
+    phi_ag += u.select_atoms("resname ALA and name C")
     # empty arrays to fill
     state = np.full((len(u.trajectory[::skip]),), False, dtype=bool)
     phi = np.empty((len(u.trajectory[::skip]),), dtype=np.float64)
@@ -37,8 +42,14 @@ def alpha_R(traj, skip=1):
 def C7_eq(traj, skip=1):
     u = mda.Universe(traj.structure_file, traj.trajectory_file,
                      refresh_offsets=True, tpr_resid_from_one=False)
-    psi_ag = u.select_atoms("index 6 or index 8 or index 14 or index 16")
-    phi_ag = u.select_atoms("index 4 or index 6 or index 8 or index 14")
+    psi_ag = u.select_atoms("resname ALA and name N")
+    psi_ag += u.select_atoms("resname ALA and name CA")
+    psi_ag += u.select_atoms("resname ALA and name C")
+    psi_ag += u.select_atoms("resname NME and name N")
+    phi_ag = u.select_atoms("resname ACE and name C")
+    phi_ag += u.select_atoms("resname ALA and name N")
+    phi_ag += u.select_atoms("resname ALA and name CA")
+    phi_ag += u.select_atoms("resname ALA and name C")
     # empty arrays to fill
     state = np.full((len(u.trajectory[::skip]),), False, dtype=bool)
     phi = np.empty((len(u.trajectory[::skip]),), dtype=np.float64)
@@ -73,12 +84,13 @@ def generate_atomgroups_for_ic(molecule):
             bonds[i] += at
     for a in molecule.angles:
         for i, at in enumerate(a.atoms):
-             angles[i] += at
+            angles[i] += at
     for d in molecule.dihedrals:
         for i, at in enumerate(d.atoms):
             dihedrals[i] += at
 
     return bonds, angles, dihedrals
+
 
 def descriptor_func_ic(traj, molecule_selection="protein", skip=1, use_SI=True):
     """Calculate symmetry invariant internal coordinate representation for molecule_selection."""
@@ -119,7 +131,7 @@ def descriptor_func_psi_phi(traj, skip=1):
     for f, ts in enumerate(u.trajectory[::skip]):
         phi[f, 0] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimensions)
         psi[f, 0] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimensions)
-    
+
     return 1 + 0.5*np.concatenate([np.sin(psi), np.cos(psi), np.sin(phi), np.cos(phi)], axis=1)
 
 
