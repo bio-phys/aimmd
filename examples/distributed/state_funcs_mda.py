@@ -16,7 +16,7 @@ def alpha_R(traj, skip=1):
     #       to avoid reading a possibly corrupted/in the process of beeing created offsets
     #       file we just rebuild all offsets
     u = mda.Universe(traj.structure_file, traj.trajectory_file,
-                     refresh_offsets=True, tpr_resid_from_one=False)
+                     refresh_offsets=True, tpr_resid_from_one=True)
     psi_ag = u.select_atoms("resname ALA and name N")
     psi_ag += u.select_atoms("resname ALA and name CA")
     psi_ag += u.select_atoms("resname ALA and name C")
@@ -41,7 +41,7 @@ def alpha_R(traj, skip=1):
 
 def C7_eq(traj, skip=1):
     u = mda.Universe(traj.structure_file, traj.trajectory_file,
-                     refresh_offsets=True, tpr_resid_from_one=False)
+                     refresh_offsets=True, tpr_resid_from_one=True)
     psi_ag = u.select_atoms("resname ALA and name N")
     psi_ag += u.select_atoms("resname ALA and name CA")
     psi_ag += u.select_atoms("resname ALA and name C")
@@ -95,7 +95,7 @@ def generate_atomgroups_for_ic(molecule):
 def descriptor_func_ic(traj, molecule_selection="protein", skip=1, use_SI=True):
     """Calculate symmetry invariant internal coordinate representation for molecule_selection."""
     u = mda.Universe(traj.structure_file, traj.trajectory_file,
-                     refresh_offsets=True, tpr_resid_from_one=False)
+                     refresh_offsets=True, tpr_resid_from_one=True)
     molecule = u.select_atoms(molecule_selection)
     bonds, angles, dihedrals = generate_atomgroups_for_ic(molecule)
     bond_vals = np.empty((len(u.trajectory[::skip]), len(bonds[0])), dtype=np.float64)
@@ -122,7 +122,7 @@ def descriptor_func_ic(traj, molecule_selection="protein", skip=1, use_SI=True):
 def descriptor_func_psi_phi(traj, skip=1):
     """Only psi and phi angle as internal coords. Actually cos and sin for both of them."""
     u = mda.Universe(traj.structure_file, traj.trajectory_file,
-                     refresh_offsets=True, tpr_resid_from_one=False)
+                     refresh_offsets=True, tpr_resid_from_one=True)
     psi_ag = u.select_atoms("index 6 or index 8 or index 14 or index 16")
     phi_ag = u.select_atoms("index 4 or index 6 or index 8 or index 14")
     # empty arrays to fill

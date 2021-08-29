@@ -454,7 +454,7 @@ class Trajectory:
             return self._len
         # create/open a mdanalysis universe to get the number of frames
         u = mda.Universe(self.structure_file, self.trajectory_file,
-                         tpr_resid_from_one=False)
+                         tpr_resid_from_one=True)
         self._len = len(u.trajectory)
         return self._len
 
@@ -481,7 +481,7 @@ class Trajectory:
         """The integration step of the first frame."""
         if self._first_step is None:
             u = mda.Universe(self.structure_file, self.trajectory_file,
-                             tpr_resid_from_one=False)
+                             tpr_resid_from_one=True)
             ts = u.trajectory[0]
             # NOTE: works only(?) for trr and xtc
             self._first_step = ts.data["step"]
@@ -492,7 +492,7 @@ class Trajectory:
         """The integration step of the last frame."""
         if self._last_step is None:
             u = mda.Universe(self.structure_file, self.trajectory_file,
-                             tpr_resid_from_one=False)
+                             tpr_resid_from_one=True)
             ts = u.trajectory[-1]
             # NOTE: works only(?) for trr and xtc
             self._last_step = ts.data["step"]
@@ -503,7 +503,7 @@ class Trajectory:
         """The time intervall between subsequent *frames* (not steps) in ps."""
         if self._dt is None:
             u = mda.Universe(self.structure_file, self.trajectory_file,
-                             tpr_resid_from_one=False)
+                             tpr_resid_from_one=True)
             # any frame is fine (assuming they all have the same spacing)
             ts = u.trajectory[0]
             self._dt = ts.data["dt"]
@@ -514,7 +514,7 @@ class Trajectory:
         """The integration timestep of the first frame in ps."""
         if self._first_time is None:
             u = mda.Universe(self.structure_file, self.trajectory_file,
-                             tpr_resid_from_one=False)
+                             tpr_resid_from_one=True)
             ts = u.trajectory[0]
             self._first_time = ts.data["time"]
         return self._first_time
@@ -524,7 +524,7 @@ class Trajectory:
         """The integration timestep of the last frame in ps."""
         if self._last_time is None:
             u = mda.Universe(self.structure_file, self.trajectory_file,
-                             tpr_resid_from_one=False)
+                             tpr_resid_from_one=True)
             ts = u.trajectory[-1]
             self._last_time = ts.data["time"]
         return self._last_time
@@ -691,7 +691,7 @@ class TrajectoryConcatenator:
 
         # special treatment for traj0 because we need n_atoms for the writer
         u0 = mda.Universe(trajs[0].structure_file, trajs[0].trajectory_file,
-                          tpr_resid_from_one=False)
+                          tpr_resid_from_one=True)
         start0, stop0, step0 = slices[0]
         # if the file exists MDAnalysis will silently overwrite
         with mda.Writer(tra_out, n_atoms=u0.trajectory.n_atoms) as W:
@@ -705,7 +705,7 @@ class TrajectoryConcatenator:
             del u0  # should free up memory and does no harm?!
             for traj, sl in zip(trajs[1:], slices[1:]):
                 u = mda.Universe(traj.structure_file, traj.trajectory_file,
-                                 tpr_resid_from_one=False)
+                                 tpr_resid_from_one=True)
                 start, stop, step = sl
                 for ts in u.trajectory[start:stop:step]:
                     if remove_double_frames:
@@ -765,7 +765,7 @@ class FrameExtractor(abc.ABC):
             # existing traj, we still check to catch other unrelated issues :)
             raise ValueError(f"Output structure file must exist ({struct_out}).")
         u = mda.Universe(traj_in.structure_file, traj_in.trajectory_file,
-                         tpr_resid_from_one=False)
+                         tpr_resid_from_one=True)
         with mda.Writer(outfile, n_atoms=u.trajectory.n_atoms) as W:
             ts = u.trajectory[idx]
             self.apply_modification(u, ts)
