@@ -543,8 +543,10 @@ class ChainMemory(collections.abc.Sequence):
     # store a single TPS chain
     # should behave like a list of trials?!
     # and have an `accepts` and a `transitions` method?!
-    def __init__(self, root_grp):
+    def __init__(self, root_grp, chain_idx, storage):
         self._root_grp = root_grp
+        self._chain_idx = chain_idx
+        self._storage = storage
         self._h5py_paths = {"MCsteps": "MCsteps",  # the actual datasets
                             "MCstates": "MCstates",  # links to the current (accepted) MC states
                             "modelstore": "RCmodels",  # models used in this chain
@@ -558,7 +560,13 @@ class ChainMemory(collections.abc.Sequence):
         self._models_grp = self._root_grp.require_group(
                                                 self._h5py_paths["modelstore"]
                                                        )
-        self.modelstore = RCModelRack(rcmodel_group=self._models_grp)
+        keras_model_store_dir = os.path.join(self._storage._dirname,
+                                             (f"{self._root_grp.file.filename}"
+                                              + f"_chain{self._chain_idx}"
+                                              + "_KerasModelsSaveFiles")
+                                             )
+        self.modelstore = RCModelRack(rcmodel_group=self._models_grp,
+                                      storage_directory=keras_model_store_dir)
 
     def __len__(self):
         return len(self._mcsteps_grp.keys())
@@ -623,8 +631,9 @@ class ChainMemory(collections.abc.Sequence):
 class CentralMemory(collections.abc.Sequence):
     # store N (T)PS chains
     # should behave like a list of chains?!
-    def __init__(self, root_grp):
+    def __init__(self, root_grp, storage):
         self._root_grp = root_grp
+        self._storage = storage
         self._h5py_paths = {"chains": "PSchains"}
         self._chains_grp = self._root_grp.require_group(
                                                 self._h5py_paths["chains"]
@@ -655,12 +664,15 @@ class CentralMemory(collections.abc.Sequence):
         if isinstance(key, (int, np.int)):
             if key >= len(self):
                 raise IndexError(f"Key must be smaller than n_chains ({len(self)}).")
-            return ChainMemory(self._chains_grp[str(key)])
+            return ChainMemory(root_grp=self._chains_grp[str(key)],
+                               chain_idx=key, storage=self._storage)
         elif isinstance(key, slice):
             start, stop, step = key.indices(len(self))
             ret_val = []
             for idx in range(start, stop, step):
-                ret_val += [ChainMemory(self._chains_grp[str(idx)])]
+                ret_val += [ChainMemory(root_grp=self._chains_grp[str(idx)],
+                                        chain_idx=idx, storage=self._storage)
+                            ]
             return ret_val
         else:
             raise TypeError("Keys must be int or slice.")
@@ -783,7 +795,7 @@ class Storage:
         except KeyError:
             return None
         else:
-            self._central_memory = CentralMemory(cm_grp)
+            self._central_memory = CentralMemory(root_grp=cm_grp, storage=self)
             return self._central_memory
 
     def initialize_central_memory(self, n_chains):
@@ -791,7 +803,7 @@ class Storage:
         if self.central_memory is not None:
             raise ValueError("CentralMemory already initialized")
         cm_grp = self.file.require_group(_H5PY_PATH_DICT["distributed_cm"])
-        self._central_memory = CentralMemory(cm_grp)
+        self._central_memory = CentralMemory(root_grp=cm_grp, storage=self)
         self.central_memory.n_chains = n_chains
 
     # make possible to use in with statements
