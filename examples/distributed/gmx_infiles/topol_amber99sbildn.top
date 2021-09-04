@@ -2,7 +2,7 @@
 ;	File 'topol_amber99sbildn.top' was generated
 ;	By user: think (1000)
 ;	On host: Kruemel
-;	At date: Mon Aug 23 21:39:49 2021
+;	At date: Sun Aug 29 15:06:35 2021
 ;
 ;	This is a standalone topology file
 ;
@@ -11,7 +11,7 @@
 ;	
 ;	Executable:   /usr/local/gromacs-2020.4/bin/gmx
 ;	Data prefix:  /usr/local/gromacs-2020.4
-;	Working dir:  /home/think/Documents/sources/OPS/aimmd/examples/distributed/gmx_infiles
+;	Working dir:  /home/think/Documents/sources/OPS/aimmd/examples/distributed/gmx_infiles/new_from_scratch
 ;	Command line:
 ;	  gmx pdb2gmx -ignh -f AD_initial_frame.pdb -p topol_amber99sbildn.top
 ;	Force field was read from the standard GROMACS share directory.
@@ -230,7 +230,7 @@ Protein_chain_A     3
 
 [ system ]
 ; Name
-Protein
+MDANALYSIS FRAMES FROM 0, STEP 1: Created by PDBWriter
 
 [ molecules ]
 ; Compound        #mols

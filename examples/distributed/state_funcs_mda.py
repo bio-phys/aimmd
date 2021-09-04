@@ -35,7 +35,7 @@ def alpha_R(traj, skip=1):
     # phi: -pi -> 0
     # psi: > -50 but smaller 30 degree
     deg = 180/np.pi
-    state[(phi <= 0) & (-50/deg <= psi) & (psi <= 30/deg)] = True
+    state[(phi <= 0) & (-50/deg <= psi) & (psi <= 20/deg)] = True
     return state
 
 
@@ -132,7 +132,8 @@ def descriptor_func_psi_phi(traj, skip=1):
         phi[f, 0] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimensions)
         psi[f, 0] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimensions)
 
-    return 1 + 0.5*np.concatenate([np.sin(psi), np.cos(psi), np.sin(phi), np.cos(phi)], axis=1)
+    return psi, phi
+    #return 1 + 0.5*np.concatenate([np.sin(psi), np.cos(psi), np.sin(phi), np.cos(phi)], axis=1)
 
 
 if __name__ == "__main__":
