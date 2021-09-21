@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 def optimize_expression(expression, offsprings, max_gen, xt, yt, loss_function,
                         complexity_regularization=None,
                         weight_regularization=None,
-                        max_gen_sans_improvement=150,
+                        max_gen_sans_improvement=250,
                         newtonParams={'steps': 500},
                         keep_weights=False):
     """
@@ -122,6 +122,7 @@ dCGPy is GPL licensed.
             loss[i] = loss_functions['full'](expression, xt, yt, aw_list)
             chromosome[i] = expression.get()
             weights[i] = expression.get_weights()
+        improvement = False  # whether we see any improvement in the fitness for any offspring
         for i in range(offsprings):
             if not math.isnan(loss[i]) and loss[i] <= best_loss:
                 expression.set(chromosome[i])
@@ -141,11 +142,11 @@ dCGPy is GPL licensed.
                     best_chromosome = chromosome[i]
                     best_loss = loss[i]
                     best_weights = weights[i]
-                    gens_sans_improvement = 0
-                else:
-                    gens_sans_improvement += 1
-            else:
-                gens_sans_improvement += 1
+                    improvement = True
+        if improvement:
+            gens_sans_improvement = 0
+        else:
+            gens_sans_improvement += 1
         # check if we terminate because we have not seen any improvement for too long
         if gens_sans_improvement >= max_gen_sans_improvement:
             print("Terminating optimization because the fitness has not improved for "
