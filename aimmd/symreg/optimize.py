@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 def optimize_expression(expression, offsprings, max_gen, xt, yt, loss_function,
                         complexity_regularization=None,
                         weight_regularization=None,
+                        max_gen_sans_improvement=150,
                         newtonParams={'steps': 500},
                         keep_weights=False):
     """
@@ -86,9 +87,10 @@ dCGPy is GPL licensed.
         loss_functions['newton'] = lambda ex, x, y, aw: loss_function(ex, x, y)
 
     # The offsprings chromosome, loss and weights
-    chromosome = [1] * offsprings
-    loss = [1] * offsprings
-    weights = [1] * offsprings
+    chromosome = [None] * offsprings
+    loss = [None] * offsprings
+    weights = [None] * offsprings
+    gens_sans_improvement = 0
     # Init the best as the initial expression
     best_chromosome = expression.get()
     best_weights = expression.get_weights()
@@ -124,9 +126,31 @@ dCGPy is GPL licensed.
             if not math.isnan(loss[i]) and loss[i] <= best_loss:
                 expression.set(chromosome[i])
                 expression.set_weights(weights[i])
-                best_chromosome = chromosome[i]
-                best_loss = loss[i]
-                best_weights = weights[i]
+                # check if the old and new best chromosome are the same
+                # if yes we will +1 gens_sans_improvement
+                same_chromosome = True
+                for bc, c in zip(best_chromosome, chromosome[i]):
+                    if bc != c:
+                        same_chromosome = False
+                        break
+                for bw, w in zip(best_weights, weights[i]):
+                    if bw != w:
+                        same_chromosome = False
+                        break
+                if not same_chromosome:
+                    best_chromosome = chromosome[i]
+                    best_loss = loss[i]
+                    best_weights = weights[i]
+                    gens_sans_improvement = 0
+                else:
+                    gens_sans_improvement += 1
+            else:
+                gens_sans_improvement += 1
+        # check if we terminate because we have not seen any improvement for too long
+        if gens_sans_improvement >= max_gen_sans_improvement:
+            print("Terminating optimization because the fitness has not improved for "
+                  + f"{gens_sans_improvement} generations (>= {max_gen_sans_improvement}).")
+            break
 
     expression.set(best_chromosome)
     expression.set_weights(best_weights)
