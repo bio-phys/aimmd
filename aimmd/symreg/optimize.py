@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 def optimize_expression(expression, offsprings, max_gen, xt, yt, loss_function,
                         complexity_regularization=None,
                         weight_regularization=None,
-                        max_gen_sans_improvement=250,
+                        max_gen_sans_improvement=500,
                         newtonParams={'steps': 500},
                         keep_weights=False):
     """
