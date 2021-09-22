@@ -86,7 +86,7 @@ class ModuleStack(nn.Module):
 class FFNet(nn.Module):
     """Simple feedforward network with a variable number of hidden layers."""
 
-    def __init__(self, n_in, n_hidden, activation=F.elu):
+    def __init__(self, n_in, n_hidden, activation=nn.ELU(), dropout={}):
         """
         Initialize FFNet.
 
@@ -95,24 +95,36 @@ class FFNet(nn.Module):
         activation - activation function or list of activation functions,
                      if one function it is used for all hidden layers,
                      if a list the length must match the number of hidden layers
+        dropout - dict, {'idx': p_drop}, i.e.
+                  keys give the index of the hidden layer AFTER which
+                  Dropout is applied and the respective dropout, the dropout
+                  probabilities are given by the values
         """
         super().__init__()
         self.call_kwargs = {'n_in': n_in,
                             'n_hidden': n_hidden,
                             'activation': activation,
+                            'dropout': dropout,
                             }
         self.n_out = n_hidden[-1]
         if not isinstance(activation, list):
-            activation = [activation] * len(n_hidden)
-        self.activation = activation
+            activations = [activation] * len(n_hidden)
+        self.activations = nn.ModuleList(activations)
         n_units = [n_in] + list(n_hidden)
         self.hidden_layers = nn.ModuleList([nn.Linear(n_units[i], n_units[i+1])
                                             for i in range(len(n_units)-1)
                                             ])
+        dropout_list = [nn.Identity() for _ in range(len(self.hidden_layers))]
+        for key, val in dropout.items():
+            idx = int(key)
+            dropout_list[idx] = nn.Dropout(val)
+        self.dropout_layers = nn.ModuleList(dropout_list)
 
     def forward(self, x):
-        for act, lay in zip(self.activation, self.hidden_layers):
-            x = act(lay(x))
+        for drop, act, lay in zip(self.dropout_layers,
+                                  self.activation,
+                                  self.hidden_layers):
+            x = drop(act(lay(x)))
         return x
 
 
@@ -164,12 +176,16 @@ class SNN(nn.Module):
         return x
 
     def reset_parameters(self):
-        # properly initialize weights
-        # TODO? for the biases we keep the pytorch standard, i.e.
-        # uniform \in [-1/sqrt(N_in), + 1/sqrt(N_in)]
+        # properly initialize weights/biases
+        for lay in self.dropout_layers:
+            # reset the dropout layer params
+            lay.reset_parameters()
         # NOTE: I think we do not need to check:
         # we can only have nn.Linear layers in there
+        # TODO? for the biases we keep the pytorch standard, i.e.
+        # uniform \in [-1/sqrt(N_in), + 1/sqrt(N_in)]
         for lay in self.hidden_layers:
+            lay.reset_parameters()  # reset biases (and weights)
             fan_out = lay.out_features
             nn.init.normal_(lay.weight, mean=0., std=1./math.sqrt(fan_out))
 
