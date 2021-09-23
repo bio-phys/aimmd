@@ -122,7 +122,7 @@ class FFNet(nn.Module):
 
     def forward(self, x):
         for drop, act, lay in zip(self.dropout_layers,
-                                  self.activation,
+                                  self.activations,
                                   self.hidden_layers):
             x = drop(act(lay(x)))
         return x
