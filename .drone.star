@@ -121,7 +121,7 @@ def make_conda_pipeline(os, arch, py_version, pytest_args=""):
           "conda install -q numpy cython -y",  # install setup dependecies
           # install ops pathsampling hooks branch
           #"pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
-          "conda install openpathsampling",  # install ops from conda-forge
+          "conda install openpathsampling -y",  # install ops from conda-forge
           "conda list",
           "python --version",
           "pip install .[test]",
