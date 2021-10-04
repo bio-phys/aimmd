@@ -15,6 +15,7 @@ You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
+import asyncio
 import numpy as np
 from openpathsampling.engines.snapshot import BaseSnapshot as OPSBaseSnapshot
 from openpathsampling.engines.trajectory import Trajectory as OPSTrajectory
@@ -94,20 +95,11 @@ class RCModel(ABC):
         # should be in the same order as the trainset
         # will be added when selecting a shooting point
         self.expected_p = []
-        if isinstance(self, RCModelAsync):
-            # use the async version of the density collector
-            # if we have a coroutine as descriptor_transform
-            self.density_collector = TrajectoryDensityCollectorAsync(
-                                        n_dim=self.n_out,
-                                        bins=self.density_collection_n_bins,
-                                        cache_file=cache_file,
-                                                                     )
-        else:
-            self.density_collector = TrajectoryDensityCollector(
+        self.density_collector = TrajectoryDensityCollector(
                                         n_dim=self.n_out,
                                         bins=self.density_collection_n_bins,
                                         cache_file=cache_file
-                                                                )
+                                                            )
 
     @property
     def n_out(self):
@@ -342,7 +334,7 @@ class RCModel(ABC):
                 )
 
 
-class RCModelAsync(RCModel):
+class RCModelAsyncMixin:
     """
     RCModelAsync for coroutine descriptor transforms.
 
@@ -353,7 +345,17 @@ class RCModelAsync(RCModel):
     # NOTE: we "steal" the method docstrings from the RCModel as they are
     #       the same (except for async/non-async)
 
-    # FIXME/ makeme/ IMPLEMENT:!!
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # use the async version of the density collector
+        # we just overwrite what __init__ set before
+        self.density_collector = TrajectoryDensityCollectorAsync(
+                                        n_dim=self.n_out,
+                                        bins=self.density_collection_n_bins,
+                                        cache_file=self.density_collector.cache_file,
+                                                                 )
+
+    # FIXME/ makeme/ IMPLEMENT:!!??
     # TODO: how do we sort out the expected efficiency for the SPs in
     #       the distributed/async case?
     #       I think when we save p_B/the probs with the step when selecting
