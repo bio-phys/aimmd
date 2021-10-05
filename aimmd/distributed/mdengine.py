@@ -16,7 +16,9 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import os
 import abc
+import copy
 import shlex
+import shutil
 import asyncio
 import logging
 
@@ -42,6 +44,11 @@ class EngineCrashedError(EngineError):
 
 
 class MDEngine(abc.ABC):
+    @abc.abstractmethod
+    def apply_constraints(self, conf_in, conf_out_name):
+        # apply constraints to given conf_in, write conf_out_name and return it
+        raise NotImplementedError
+
     @abc.abstractmethod
     # TODO: should we expect (require?) run_config to be a subclass of MDConfig?!
     # TODO: think about the most general interface!
@@ -249,7 +256,8 @@ class GmxEngine(MDEngine):
             traj = Trajectory(
                     trajectory_file=os.path.join(
                                         self.workdir,
-                                        (f"{self._deffnm}{self._num_suffix()}"
+                                        (f"{self._deffnm}"
+                                         + f"{self._num_suffix(self._simulation_part)}"
                                          + f".{self.output_traj_type}")
                                                  ),
                     structure_file=os.path.join(self.workdir, self._tpr),
@@ -396,6 +404,63 @@ class GmxEngine(MDEngine):
         """
         return self._frames_done
 
+    async def apply_constraints(self, conf_in, conf_out_name,
+                                wdir="constraints_wdir"):
+        if self._run_config is None:
+            raise ValueError("Can apply constraints only with a known MDP, "
+                             + "i.e. after calling a prepare method.")
+        if not os.path.isabs(wdir):
+            wdir = os.path.join(self.workdir, wdir)
+        if not os.path.isabs(conf_out_name):
+            conf_out_name = os.path.join(self.workdir, conf_out_name)
+        os.mkdir(wdir)
+        constraints_mdp = copy.deepcopy(self._run_config)
+        constraints_mdp["continuation"] = "no"
+        constraints_mdp["nsteps"] = 0
+        await self._run_grompp(workdir=wdir, deffnm="constraints",
+                               trr_in=conf_in.trajectory_file,
+                               tpr_out="constraints.tpr",
+                               mdp_obj=constraints_mdp)
+        # TODO: this is a bit hacky, and should probably not be necessary?
+        #       we keep a ref to the 'old' self._proc to reset it after we are
+        #       done, because the gmx_mdrun method set self._proc to the running
+        #       constraints engine
+        #       and it is probably not necessary since no engine should be able
+        #       to be runing when/if we are able to call apply_constraints?
+        old_proc_val = self._proc
+        cmd_str = self._mdrun_cmd(tpr="constraints.tpr", deffnm="constraints")
+        logger.info(f"{cmd_str}")
+        await self._acquire_resources_gmx_mdrun()
+        try:  # this try is just to make sure we always call cleanup/release
+            await self._start_gmx_mdrun(cmd_str=cmd_str, workdir=wdir)
+            try:
+                # self._proc is set by _start_gmx_mdrun!
+                exit_code = await self._proc.wait()
+            except asyncio.CancelledError:
+                self._proc.kill()
+                raise  # reraise the error for encompassing coroutines
+            else:
+                if exit_code != 0:
+                    raise EngineCrashedError("Non-zero exit code from mdrun."
+                                             + f" Exit code was: {exit_code}.")
+                shutil.move(os.path.join(wdir, (f"constraints{self._num_suffix(1)}"
+                                                + f".{self.output_traj_type}")
+                                         ),
+                            conf_out_name)
+                shutil.rmtree(wdir)  # remove the whole directory we used as wdir
+                return Trajectory(
+                            trajectory_file=conf_out_name,
+                            # take the tpr of the main simulation because we
+                            # delete the other one with the folder
+                            structure_file=os.path.join(self.workdir, self._tpr),
+                            nstout=self.nstout,
+                              )
+        finally:
+            await self._cleanup_gmx_mdrun()
+            self._proc = old_proc_val
+
+    # TODO: move the run_config argument to __init__
+    #       this will make everything easier, from initialization to constraints
     async def prepare(self, starting_configuration, workdir, deffnm, run_config):
         """
         Prepare a fresh simulation (starting with part0001).
@@ -458,13 +523,29 @@ class GmxEngine(MDEngine):
                                      )
                 logger.warning(f"Starting value for 'simulation-part' > 1 (={sim_part}).")
             self._simulation_part = sim_part - 1
-        # NOTE: file paths from workdir and deffnm
-        mdp_in = os.path.join(self.workdir, deffnm + ".mdp")
-        # write the mdp file
-        self._run_config.write(mdp_in)
+
         tpr_out = os.path.join(self.workdir, deffnm + ".tpr")
-        self._tpr = tpr_out  # keep a ref to use as structure file for out trajs
-        mdp_out = os.path.join(self.workdir, deffnm + "_mdout.mdp")
+        self._tpr = tpr_out  # remember the path to use as structure file for out trajs
+        await self._run_grompp(workdir=self.workdir, deffnm=self._deffnm,
+                               trr_in=trr_in, tpr_out=tpr_out,
+                               mdp_obj=self._run_config)
+        if not os.path.isfile(self._tpr):
+            # better be save than sorry :)
+            raise RuntimeError("Something went wrong generating the tpr."
+                               + f"{self._tpr} does not seem to be a file.")
+        # make sure we can not mistake a previous Popen for current mdrun
+        self._proc = None
+        self._frames_done = 0  # (re-)set how many frames we did
+        self._steps_done = 0
+        self._time_done = 0.
+        self._prepared = True
+
+    async def _run_grompp(self, workdir, deffnm, trr_in, tpr_out, mdp_obj):
+        # NOTE: file paths from workdir and deffnm
+        mdp_in = os.path.join(workdir, deffnm + ".mdp")
+        # write the mdp file
+        mdp_obj.write(mdp_in)
+        mdp_out = os.path.join(workdir, deffnm + "_mdout.mdp")
         cmd_str = self._grompp_cmd(mdp_in=mdp_in, tpr_out=tpr_out,
                                    trr_in=trr_in, mdp_out=mdp_out)
         logger.info(f"{cmd_str}")
@@ -477,7 +558,7 @@ class GmxEngine(MDEngine):
                                                 *shlex.split(cmd_str),
                                                 stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE,
-                                                cwd=self.workdir,
+                                                cwd=workdir,
                                                                )
             stdout, stderr = await grompp_proc.communicate()
             logger.debug(f"grompp stdout: {stdout.decode()}.")
@@ -493,16 +574,6 @@ class GmxEngine(MDEngine):
         if return_code != 0:
             # this assumes POSIX
             raise RuntimeError(f"grompp had non-zero return code ({return_code}).")
-        if not os.path.isfile(self._tpr):
-            # better be save than sorry :)
-            raise RuntimeError("Something went wrong generating the tpr."
-                               + f"{self._tpr} does not seem to be a file.")
-        # make sure we can not mistake a previous Popen for current mdrun
-        self._proc = None
-        self._frames_done = 0  # (re-)set how many frames we did
-        self._steps_done = 0
-        self._time_done = 0.
-        self._prepared = True
 
     async def prepare_from_files(self, workdir, deffnm):
         """
@@ -539,12 +610,12 @@ class GmxEngine(MDEngine):
     # NOTE: this enables us to reuse run and prepare methods in SlurmGmxEngine,
     # i.e. we only need to overwite the next 3 functions to write out the slurm
     # submission script, submit the job and allocate/release different resources
-    async def _start_gmx_mdrun(self, cmd_str):
+    async def _start_gmx_mdrun(self, cmd_str, workdir):
         proc = await asyncio.create_subprocess_exec(
                                             *shlex.split(cmd_str),
                                             stdout=asyncio.subprocess.PIPE,
                                             stderr=asyncio.subprocess.PIPE,
-                                            cwd=self.workdir,
+                                            cwd=workdir,
                                                     )
         self._proc = proc
 
@@ -615,7 +686,7 @@ class GmxEngine(MDEngine):
         logger.info(f"{cmd_str}")
         await self._acquire_resources_gmx_mdrun()
         try:  # this try is just to make sure we always call cleanup/release
-            await self._start_gmx_mdrun(cmd_str=cmd_str)
+            await self._start_gmx_mdrun(cmd_str=cmd_str, workdir=self.workdir)
             try:
                 # self._proc is set by _start_gmx_mdrun!
                 exit_code = await self._proc.wait()
@@ -659,9 +730,9 @@ class GmxEngine(MDEngine):
         """
         return await self.run(walltime=walltime)
 
-    def _num_suffix(self):
+    def _num_suffix(self, sim_part):
         # construct gromacs num part suffix from simulation_part
-        num_suffix = str(self._simulation_part)
+        num_suffix = str(sim_part)
         while len(num_suffix) < 4:
             num_suffix = "0" + num_suffix
         num_suffix = ".part" + num_suffix
@@ -786,20 +857,20 @@ class SlurmGmxEngine(GmxEngine):
         self.sbatch_script = sbatch_script
         self.slurm_maxjob_semaphore = slurm_maxjob_semaphore
 
-    async def _start_gmx_mdrun(self, cmd_str):
+    async def _start_gmx_mdrun(self, cmd_str, workdir):
         # create a name from deffnm and partnum
-        name = self._deffnm + self._num_suffix()
+        name = self._deffnm + self._num_suffix(sim_part=self._simulation_part)
         # substitute placeholders in submit script
         script = self.sbatch_script.format(mdrun_cmd=cmd_str, jobname=name)
         # write it out
-        fname = os.path.join(self.workdir, name + ".slurm")
+        fname = os.path.join(workdir, name + ".slurm")
         if os.path.exists(fname):
             # TODO: should we raise an error?
             logger.error(f"Overwriting exisiting submission file ({fname}).")
         async with _SEM_MAX_FILES_OPEN:
             with open(fname, 'w') as f:
                 f.write(script)
-        self._proc = SlurmProcess(sbatch_script=fname, workdir=self.workdir,
+        self._proc = SlurmProcess(sbatch_script=fname, workdir=workdir,
                                   sacct_executable=self.sacct_executable,
                                   sbatch_executable=self.sbatch_executable,
                                   scancel_executable=self.scancel_executable,
