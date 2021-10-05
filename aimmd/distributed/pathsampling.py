@@ -23,7 +23,6 @@ import numpy as np
 
 from . import _SEM_BRAIN_MODEL
 from .. import TrainSet
-from ..base.rcmodel import RCModelAsync
 from .mdengine import EngineError, EngineCrashedError
 from .pathmovers import (MCstep, PathMover, ModelDependentPathMover)
 from .utils import accepted_trajs_from_aimmd_storage
@@ -39,13 +38,13 @@ class BrainTask(abc.ABC):
         self.interval = interval
 
     @abc.abstractmethod
-    def run(self, brain, chain_result):
+    def run(self, brain, mcstep: MCstep, chain_idx):
         # TODO: find a smart way to pass the chain result (if we even want to?)
         pass
 
 
 class SaveTask(BrainTask):
-    def __init__(self, storage, model: RCModelAsync, trainset: TrainSet,
+    def __init__(self, storage, model, trainset: TrainSet,
                  interval=100, name_prefix="Central_RCModel"):
         super().__init__(interval=interval)
         self.storage = storage
@@ -64,7 +63,7 @@ class SaveTask(BrainTask):
 
 class TrainingTask(BrainTask):
     # add stuff to trainset + call model trainhook
-    def __init__(self, model: RCModelAsync, trainset: TrainSet, interval=1):
+    def __init__(self, model, trainset: TrainSet, interval=1):
         super().__init__(interval=interval)
         self.trainset = trainset
         self.model = model
@@ -94,7 +93,7 @@ class TrainingTask(BrainTask):
 # TODO: DOCUMENT
 class DensityCollectionTask(BrainTask):
     # do density collection
-    def __init__(self, model: RCModelAsync, first_collection=100,
+    def __init__(self, model, first_collection=100,
                  recreate_interval=500, interval=10):
         super().__init__(interval=interval)
         self.model = model
