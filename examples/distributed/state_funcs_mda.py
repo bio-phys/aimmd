@@ -155,7 +155,8 @@ if __name__ == "__main__":
     #       the trajectory file, i.e. we can pass args instead of an
     #       aimmd.Trajectory to the functions above
     if args.function == "descriptors_ic":
-        vals = descriptor_func_ic(args, molecule_selection=args.molecule_selection, skip=args.skip)
+        vals = descriptor_func_ic(args, molecule_selection=args.molecule_selection,
+                                  skip=args.skip, use_SI=args.use_SI)
     elif args.function == "descriptors_psi_phi":
         vals = descriptor_func_psi_phi(args, skip=args.skip)
     elif args.function == "alphaR":
