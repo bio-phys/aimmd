@@ -198,10 +198,16 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
             self.store_model(model=model, stepnum=stepnum)
             sp_idx = await self.sp_selector.pick(instep.path, model=model)
         # release the Semaphore, we load the stored model for accept/reject later
+        fw_sp_name_uc = os.path.join(wdir, f"{self.forward_deffnm}_SP_unconstrained.trr")
         fw_sp_name = os.path.join(wdir, f"{self.forward_deffnm}_SP.trr")
-        fw_startconf = self.frame_extractors["fw"].extract(outfile=fw_sp_name,
-                                                           traj_in=instep.path,
-                                                           idx=sp_idx)
+        fw_startconf_uc = self.frame_extractors["fw"].extract(outfile=fw_sp_name_uc,
+                                                              traj_in=instep.path,
+                                                              idx=sp_idx)
+        constraint_engine = self.engine_cls(**self.engine_kwargs)
+        await constraint_engine.prepare(starting_configuration=None, workdir=wdir,
+                                        deffnm="None", run_config=self.engine_config)
+        fw_startconf = await constraint_engine.apply_constraints(conf_in=fw_startconf_uc,
+                                                                 conf_out_name=fw_sp_name)
         bw_sp_name = os.path.join(wdir, f"{self.backward_deffnm}_SP.trr")
         # we only invert the fw SP
         bw_startconf = self.frame_extractors["bw"].extract(outfile=bw_sp_name,
