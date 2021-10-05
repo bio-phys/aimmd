@@ -784,7 +784,7 @@ class InvertedVelocitiesFrameExtractor(FrameExtractor):
     """Extract a frame from a trajectory, write it out with inverted velocities."""
 
     def apply_modification(self, universe, ts):
-        ts.velocities *= -1
+        ts.velocities *= -1.
 
 
 class RandomVelocitiesFrameExtractor(FrameExtractor):
@@ -796,10 +796,14 @@ class RandomVelocitiesFrameExtractor(FrameExtractor):
         self._rng = np.random.default_rng()
 
     def apply_modification(self, universe, ts):
-        # MDAnalysis uses kJ/mol as energy unit,
-        # so we use kB * NA * 10**(-3) to get kB in kJ/(mol * K)
+        # m is in units of g / mol
+        # v should be in units of \AA / ps = 100 m / s
+        # which means m [10**-3 kg / mol] v**2 [10000 (m/s)**2]
+        # is in units of [ 10 kg m**s / (mol * s**2) ]
+        # so we use R = N_A * k_B [J / (mol * K) = kg m**2 / (s**2 * mol * K)]
+        # and add in a factor 10 to get 1/σ**2 = m / (k_B * T) in the right units
         scale = np.empty((ts.n_atoms, 3), dtype=np.float64)
-        s1d = np.sqrt((self.T*constants.k*constants.N_A*10**(-3))
+        s1d = np.sqrt((self.T * constants.R * 0.1)
                       / universe.atoms.masses
                       )
         # sigma is the same for all 3 cartesian dimensions
