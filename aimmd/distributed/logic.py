@@ -182,8 +182,8 @@ class TrajectoryPropagatorUntilAnyState:
     #       be inside of two states at the same time, it is the users
     #       responsibility to ensure that their states are sane
 
-    def __init__(self, states, engine_cls, engine_kwargs, run_config,
-                 walltime_per_part, max_steps=None, max_frames=None):
+    def __init__(self, states, engine_cls, engine_kwargs, walltime_per_part,
+                 max_steps=None, max_frames=None):
         """
         Initialize a TrajectoryPropagatorUntilAnyState.
 
@@ -195,8 +195,6 @@ class TrajectoryPropagatorUntilAnyState:
         engine_cls - class of the MD engine to use (uninitialized!)
         engine_kwargs - dictionary of key word arguments needed to initialize
                         the MD engine
-        run_config - `aimmd.distributed.MDConfig` containing the options for
-                     the MD engine, must match the engine, i.e. `MDP` for gromacs
         walltime_per_part - float, walltime per trajectory segment in hours
         max_steps - None or int, maximum number of integration steps to try
                     before stopping the simulation because it did not commit
@@ -209,7 +207,6 @@ class TrajectoryPropagatorUntilAnyState:
         # states - list of wrapped trajectory funcs
         # engine_cls - mdengine class
         # engine_kwargs - dict of kwargs for instantiation of the engine
-        # run_config - mdconfig object, e.g. a wrapped MDP
         # walltime_per_part - walltime (in h) per mdrun, i.e. traj part/segment
         # NOTE: max_steps takes precedence over max_frames if both are given
         # TODO: do we want max_frames as argument to propagate too? I.e. giving it there to overwrite?
@@ -221,7 +218,6 @@ class TrajectoryPropagatorUntilAnyState:
         self.states = states
         self.engine_cls = engine_cls
         self.engine_kwargs = engine_kwargs
-        self.run_config = run_config
         self.walltime_per_part = walltime_per_part
         # find out nstout
         # TODO: we are assuming GMX engines here...at some point we will write
@@ -233,7 +229,7 @@ class TrajectoryPropagatorUntilAnyState:
         except KeyError:
             # not in there so it will be the engine default
             traj_type = engine_cls.output_traj_type
-        nstout = nstout_from_mdp(self.run_config, traj_type=traj_type)
+        nstout = nstout_from_mdp(engine_kwargs["mdp"], traj_type=traj_type)
         # sort out if we use max-frames or max-steps
         if max_frames is not None and max_steps is not None:
             logger.warning("Both max_steps and max_frames given. Note that "
@@ -352,7 +348,6 @@ class TrajectoryPropagatorUntilAnyState:
                             starting_configuration=starting_configuration,
                             workdir=workdir,
                             deffnm=deffnm,
-                            run_config=self.run_config,
                                     )
                 any_state_reached = False
                 trajs = []

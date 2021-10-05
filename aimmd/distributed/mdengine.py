@@ -45,32 +45,33 @@ class EngineCrashedError(EngineError):
 
 class MDEngine(abc.ABC):
     @abc.abstractmethod
-    def apply_constraints(self, conf_in, conf_out_name):
+    async def apply_constraints(self, conf_in, conf_out_name):
         # apply constraints to given conf_in, write conf_out_name and return it
         raise NotImplementedError
 
     @abc.abstractmethod
-    # TODO: should we expect (require?) run_config to be a subclass of MDConfig?!
     # TODO: think about the most general interface!
     # NOTE: We assume that we do not change the system for/in one engine,
-    #       i.e. .top, .ndx, ...?! should go into __init__
-    def prepare(self, starting_configuration, workdir, deffnm, run_config):
+    #       i.e. .top, .ndx, mdp-object, ...?! should go into __init__
+    async def prepare(self, starting_configuration, workdir, deffnm):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def prepare_from_files(self, workdir, deffnm):
+    # TODO: should this be a classmethod?
+    #@classmethod
+    def prepare_from_files(cls, workdir, deffnm):
         # this should prepare the engine to continue a previously stopped simulation
         # starting with the last trajectory part in workdir that is compatible with deffnm
         raise NotImplementedError
 
     @abc.abstractmethod
-    def run_walltime(self, walltime):
+    async def run_walltime(self, walltime):
         # run for specified walltime
         # NOTE: must be possible to run this multiple times after preparing once!
         raise NotImplementedError
 
     @abc.abstractmethod
-    def run_steps(self, nsteps, steps_per_part=False):
+    async def run_steps(self, nsteps, steps_per_part=False):
         # run for specified number of steps
         # NOTE: not sure if we need it, but could be useful
         # NOTE: make sure we can run multiple times after preparing once!
@@ -145,12 +146,13 @@ class GmxEngine(MDEngine):
                               #       trajs will/can be written, we simply
                               #       ignore them
 
-    def __init__(self, gro_file, top_file, ndx_file=None, **kwargs):
+    def __init__(self, mdp, gro_file, top_file, ndx_file=None, **kwargs):
         """
         Initialize a `GmxEngine`.
 
         Parameters:
         -----------
+        mdp - `aimmd.distributed.MDP`, the molecular dynamics parameters
         gro_file - absolute or relative path to a gromacs structure file
         top_file - absolute or relative path to a gromacs topolgy (.top) file
         ndx_file - (optional) absolute or relative path to a gromacs index file
@@ -174,6 +176,14 @@ class GmxEngine(MDEngine):
                                     + f" Default type is {type(cval)}."
                                     )
         # NOTE: after the kwargs setting to be sure they are what we set/expect
+        if not isinstance(mdp, MDP):
+            raise TypeError(f"mdp must be of type {MDP}.")
+        if mdp["nsteps"] != -1:
+            logger.info(f"Changing nsteps from {mdp['nsteps']} to -1 "
+                        + "(infinte), run length is controlled via run args.")
+            mdp["nsteps"] = -1
+        # TODO: ensure that x-out and v-out/f-out are the same (if applicable)?
+        self._mdp = mdp
         # TODO: store a hash/the file contents for gro, top, ndx?
         #       to check against when we load from storage/restart?
         #       if we do this do it in the property!
@@ -194,13 +204,12 @@ class GmxEngine(MDEngine):
         self._steps_done = 0
         # integration time since last call to prepare in ps
         self._time_done = 0.
-        self._nstout = None
+        self._nstout = None  # get this from the mdp only when we need it
         # Popen handle for gmx mdrun, used to check if we are running
         self._proc = None
         # these are set by prepare() and used by run_XX()
         self._simulation_part = None
         self._deffnm = None
-        self._run_config = None
         # tpr for trajectory (part), will become the structure/topology file
         self._tpr = None
 
@@ -333,10 +342,7 @@ class GmxEngine(MDEngine):
     @property
     def dt(self):
         """Integration timestep in ps."""
-        if self._run_config is None:
-            raise ValueError("Can only determine dt with a given .mdp file,"
-                             " i.e. after calling any 'prepare' method.")
-        return self._run_config["dt"]
+        return self._mdp["dt"]
 
     @property
     def time_done(self):
@@ -345,10 +351,8 @@ class GmxEngine(MDEngine):
 
         Takes into account 'tinit' from the .mdp file if set.
         """
-        if self._run_config is None:
-            raise ValueError("Can only determine time_done after calling prepare.")
         try:
-            tinit = self._run_config["tinit"]
+            tinit = self._mdp["tinit"]
         except KeyError:
             tinit = 0.
         finally:
@@ -363,10 +367,7 @@ class GmxEngine(MDEngine):
         Smallest output frequency for current output_traj_type.
         """
         if self._nstout is None:
-            if self._run_config is None:
-                raise RuntimeError("Can determine nstout only after calling"
-                                   + " prepare, i.e. when the mdp is know.")
-            nstout = nstout_from_mdp(self._run_config,
+            nstout = nstout_from_mdp(self._mdp,
                                      traj_type=self.output_traj_type)
             self._nstout = nstout
         return self._nstout
@@ -404,18 +405,14 @@ class GmxEngine(MDEngine):
         """
         return self._frames_done
 
-    async def apply_constraints(self, conf_in, conf_out_name,
-                                wdir="constraints_wdir"):
-        if self._run_config is None:
-            raise ValueError("Can apply constraints only with a known MDP, "
-                             + "i.e. after calling a prepare method.")
-        if not os.path.isabs(wdir):
-            wdir = os.path.join(self.workdir, wdir)
+    async def apply_constraints(self, conf_in, conf_out_name, wdir="."):
         if not os.path.isabs(conf_out_name):
-            conf_out_name = os.path.join(self.workdir, conf_out_name)
+            conf_out_name = os.path.join(wdir, conf_out_name)
+        wdir = os.path.join(wdir, "constraints_wdir")  # work in a subdirectory
         os.mkdir(wdir)
-        constraints_mdp = copy.deepcopy(self._run_config)
+        constraints_mdp = copy.deepcopy(self._mdp)
         constraints_mdp["continuation"] = "no"
+        constraints_mdp["gen-vel"] = "no"
         constraints_mdp["nsteps"] = 0
         await self._run_grompp(workdir=wdir, deffnm="constraints",
                                trr_in=conf_in.trajectory_file,
@@ -450,18 +447,16 @@ class GmxEngine(MDEngine):
                 shutil.rmtree(wdir)  # remove the whole directory we used as wdir
                 return Trajectory(
                             trajectory_file=conf_out_name,
-                            # take the tpr of the main simulation because we
+                            # strurcutre file of the conf_in because we
                             # delete the other one with the folder
-                            structure_file=os.path.join(self.workdir, self._tpr),
+                            structure_file=conf_in.structure_file,
                             nstout=self.nstout,
                               )
         finally:
             await self._cleanup_gmx_mdrun()
             self._proc = old_proc_val
 
-    # TODO: move the run_config argument to __init__
-    #       this will make everything easier, from initialization to constraints
-    async def prepare(self, starting_configuration, workdir, deffnm, run_config):
+    async def prepare(self, starting_configuration, workdir, deffnm):
         """
         Prepare a fresh simulation (starting with part0001).
 
@@ -472,9 +467,7 @@ class GmxEngine(MDEngine):
                                  gro-file
         workdir - absolute or relative path to an exisiting directory
         deffnm - the name (prefix) to use for all files
-        run_config - `aimmd.distributed.MDP`, the molecular dynamics parameters
         """
-        # we require run_config to be a MDP (class)!
         # deffnm is the default name/prefix for all outfiles (as in gmx)
         self.workdir = workdir  # sets to abspath and check if it is a dir
         if starting_configuration is None:
@@ -485,18 +478,6 @@ class GmxEngine(MDEngine):
         else:
             raise TypeError("starting_configuration must be None or a wrapped "
                             + f"trr ({Trajectory}).")
-        if not isinstance(run_config, MDP):
-            raise TypeError(f"run_config must be of type {MDP}.")
-        if run_config["nsteps"] != -1:
-            logger.info(f"Changing nsteps from {run_config['nsteps']} to -1 "
-                        + "(infinte), run length is controlled via run args.")
-            run_config["nsteps"] = -1
-        self._run_config = run_config
-        self._nstout = None
-        # NOTE: the line above makes sure we read the possibly changed nstout
-        #       from the new mdp!
-        # TODO: maybe make run_config a property and take care of (re)setting
-        #       everything that we derive from it when it is set/accessed?
         self._deffnm = deffnm
         # check 'simulation-part' option in mdp file / MDP options
         # it decides at which .partXXXX the gmx numbering starts,
@@ -506,7 +487,7 @@ class GmxEngine(MDEngine):
         # if yes we set our internal simulation_part counter to the value from
         # the mdp - 1 (we increase *before* each simulation part)
         try:
-            sim_part = self._run_config["simulation-part"]
+            sim_part = self._mdp["simulation-part"]
         except KeyError:
             # the gmx mdp default is 1, it starts at part0001
             # we add one at the start of each run, i.e. the numberings match up
@@ -528,7 +509,7 @@ class GmxEngine(MDEngine):
         self._tpr = tpr_out  # remember the path to use as structure file for out trajs
         await self._run_grompp(workdir=self.workdir, deffnm=self._deffnm,
                                trr_in=trr_in, tpr_out=tpr_out,
-                               mdp_obj=self._run_config)
+                               mdp_obj=self._mdp)
         if not os.path.isfile(self._tpr):
             # better be save than sorry :)
             raise RuntimeError("Something went wrong generating the tpr."
@@ -591,7 +572,7 @@ class GmxEngine(MDEngine):
         previous_trajs = get_all_traj_parts(self.workdir, deffnm=deffnm,
                                             traj_type=self.output_traj_type)
         # load the 'old' mdp_in
-        self._run_config = MDP(os.path.join(self.workdir, f"{deffnm}.mdp"))
+        self._mdp = MDP(os.path.join(self.workdir, f"{deffnm}.mdp"))
         self._nstout = None  # as in prepare: make sure we (re)parse nstout
         self._deffnm = deffnm
         # Note the we dont need to explicitly check for the tpr existing,
@@ -819,13 +800,14 @@ class SlurmGmxEngine(GmxEngine):
     sbatch_executable = SlurmProcess.sbatch_executable
     scancel_executable = SlurmProcess.scancel_executable
 
-    def __init__(self, gro_file, top_file, sbatch_script, ndx_file=None,
+    def __init__(self, mdp, gro_file, top_file, sbatch_script, ndx_file=None,
                  slurm_maxjob_semaphore=None, **kwargs):
         """
         Initialize a `SlurmGmxEngine`.
 
         Parameters:
         -----------
+        mdp - `aimmd.distributed.MDP`, the molecular dynamics parameters
         gro_file - absolute or relative path to a gromacs structure file
         top_file - absolute or relative path to a gromacs topolgy (.top) file
         sbatch_script - absolute or relative path to a slurm sbatch script
@@ -844,7 +826,7 @@ class SlurmGmxEngine(GmxEngine):
         arguments with their name, e.g. mdrun_extra_args="-ntomp 2" to instruct
         gromacs to use 2 openMP threads.
         """
-        super().__init__(gro_file=gro_file, top_file=top_file,
+        super().__init__(mdp=mdp, gro_file=gro_file, top_file=top_file,
                          ndx_file=ndx_file, **kwargs)
         # we expect sbatch_script to be a str,
         # but it could be either the path to a submit script or the content of

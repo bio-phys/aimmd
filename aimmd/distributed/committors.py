@@ -87,7 +87,7 @@ class CommittorSimulation:
                               # i.e. setting to 1 means *retry* once on crash
 
     def __init__(self, workdir, starting_configurations, states, engine_cls,
-                 engine_kwargs, engine_run_config, T, walltime_per_part,
+                 engine_kwargs, T, walltime_per_part,
                  n_max_concurrent=10, two_way=False, max_steps=None, **kwargs):
         """
         Initialize a `CommittorSimulation`.
@@ -110,9 +110,6 @@ class CommittorSimulation:
                      dynamics engine to use
         engine_kwargs - a dictionary with keyword arguments that can be used
                         to instantiate the engine given in `engine_cls`
-        engine_run_config - a subclass of `aimmd.distributed.MDConfig`
-                            compatible with the given `engine_cls` describing
-                            the molecular dynamis parameters to use
         T - float, the temperature to use when generating Maxwell-Boltzmann
             velocities
         walltime_per_part - float, walltime per trajectory segment in hours,
@@ -135,16 +132,15 @@ class CommittorSimulation:
 
         Note, that the `CommittorSimulation` allows the simulation of different
         physical ensembles for every starting configuration. This is achieved
-        by allowing the parameters `engine_cls`, `engine_kwargs`,
-        `engine_run_config`, `T` and `twoway` to be either singletons (then
-        they aer the same for the whole committor simulation) or a list with of
-        same length as `starting_configurations`, i.e. one value per starting
-        configuration.
+        by allowing the parameters `engine_cls`, `engine_kwargs`, `T` and
+        `twoway` to be either singletons (then they are the same for the whole
+        committor simulation) or a list with of same length as
+        `starting_configurations`, i.e. one value per starting configuration.
         This means you can simulate systems differing in the number of
         molecules (by changing the topology used in the engine), at different
         pressures (by changing the molecular dynamics parameters passed with
-        `engine_run_config`), at different temperatures (by changing `T` and
-        the parameters in the `engine_run_config`) and even perform two way
+        `engine_kwargs`), at different temperatures (by changing `T` and
+        the parameters in the `engine_kwargs`) and even perform two way
         shots only for a selected subset of starting configurations (e.g. the
         ones you expect to be a transition state).
         """
@@ -173,23 +169,14 @@ class CommittorSimulation:
                                    length=len(starting_configurations),
                                    name="two_way")
         # TODO: we assume gmx engines here!
-        if isinstance(engine_run_config, list):
-            for i in range(len(engine_run_config)):
-                engine_run_config[i] = ensure_mdp_options(
-                               engine_run_config[i],
+        for i in range(len(starting_configurations)):
+            self.engine_kwargs[i]["mdp"] = ensure_mdp_options(
+                               self.engine_kwargs[i]["mdp"],
                                # dont generate velocities, we do that ourself
                                genvel="no",
                                # dont apply constraints at start of simulation
                                continuation="yes",
-                                                          )
-        else:
-            engine_run_config = ensure_mdp_options(engine_run_config,
-                                                   genvel="no",
-                                                   continuation="yes",
-                                                   )
-        self.engine_run_config = ensure_list(val=engine_run_config,
-                                             length=len(starting_configurations),
-                                             name="engine_run_config")
+                                                              )
         self.walltime_per_part = walltime_per_part
         self.n_max_concurrent = n_max_concurrent
         self.max_steps = max_steps
@@ -403,7 +390,6 @@ class CommittorSimulation:
                                     states=self.states,
                                     engine_cls=self.engine_cls[conf_num],
                                     engine_kwargs=self.engine_kwargs[conf_num],
-                                    run_config=self.engine_run_config[conf_num],
                                     walltime_per_part=self.walltime_per_part,
                                     max_steps=self.max_steps,
                                                        )
@@ -504,7 +490,6 @@ class CommittorSimulation:
                                     states=self.states,
                                     engine_cls=self.engine_cls[conf_num],
                                     engine_kwargs=self.engine_kwargs[conf_num],
-                                    run_config=self.engine_run_config[conf_num],
                                     walltime_per_part=self.walltime_per_part,
                                     max_steps=self.max_steps,
                                                          )

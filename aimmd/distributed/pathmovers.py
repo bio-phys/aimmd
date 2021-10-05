@@ -118,15 +118,14 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
     backward_deffnm = "backward"  # same for backward shot
     transition_filename = "transition.trr"  # filename for produced transitions
 
-    def __init__(self, states, engine_cls, engine_kwargs, engine_config,
-                 walltime_per_part, T, sp_selector=None):
+    def __init__(self, states, engine_cls, engine_kwargs, walltime_per_part, T,
+                 sp_selector=None):
         """
         states - list of state functions, passed to Propagator
         descriptor_transform - coroutine function used to calculate descriptors
         engine_cls - the class of the molecular dynamcis engine to use
         engine_kwargs - a dict with keyword arguments to initialize the given
                         molecular dynamics engine
-        engine_config - MDConfig subclass [used in prepare() method of engines]
         walltime_per_part - simulation walltime per trajectory part
         T - temperature in degree K (used for velocity randomization)
         sp_selector - `aimmd.distributed.pathmovers.RCModelSPSelector` or None,
@@ -144,13 +143,12 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         self.states = states
         self.engine_cls = engine_cls
         self.engine_kwargs = engine_kwargs
-        self.engine_config = engine_config
         # TODO: we assume gmx engines here!
         #       at some point we will need to write a general function working
         #       on any MDConfig (possibly delegating to our current gmx helper
         #       functions)
-        self.engine_config = ensure_mdp_options(
-                                self.engine_config,
+        self.engine_kwargs["mdp"] = ensure_mdp_options(
+                                self.engine_kwargs["mdp"],
                                 # dont generate velocities, we do that ourself
                                 genvel="no",
                                 # dont apply constraints at start of simulation
@@ -172,7 +170,6 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                                     states=self.states,
                                     engine_cls=self.engine_cls,
                                     engine_kwargs=self.engine_kwargs,
-                                    run_config=self.engine_config,
                                     walltime_per_part=self.walltime_per_part
                                                               )
                             for _ in range(2)
@@ -203,11 +200,12 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         fw_startconf_uc = self.frame_extractors["fw"].extract(outfile=fw_sp_name_uc,
                                                               traj_in=instep.path,
                                                               idx=sp_idx)
+        # TODO: this is still a bit hacky, do we have a better solution for the
+        #       constraints? do we even need them?
         constraint_engine = self.engine_cls(**self.engine_kwargs)
-        await constraint_engine.prepare(starting_configuration=None, workdir=wdir,
-                                        deffnm="None", run_config=self.engine_config)
         fw_startconf = await constraint_engine.apply_constraints(conf_in=fw_startconf_uc,
-                                                                 conf_out_name=fw_sp_name)
+                                                                 conf_out_name=fw_sp_name,
+                                                                 wdir=wdir)
         bw_sp_name = os.path.join(wdir, f"{self.backward_deffnm}_SP.trr")
         # we only invert the fw SP
         bw_startconf = self.frame_extractors["bw"].extract(outfile=bw_sp_name,

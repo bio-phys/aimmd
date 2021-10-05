@@ -35,10 +35,16 @@ def nstout_from_mdp(mdp, traj_type="TRR"):
     vals = []
     for k in keys:
         try:
-            vals += [mdp[k]]
+            # need to check for 0 (== no output!) in case somone puts the
+            # defaults (or reads an mdout.mdp where gmx lists all the defaults)
+            v = mdp[k]
+            if v == 0:
+                v = float("inf")
+            vals += [v]
         except KeyError:
-            # not set, defaults to "0" (== no output!)
+            # not set, defaults to 0, so we ignore it
             pass
+
     nstout = min(vals, default=None)
     if nstout is None:
         raise ValueError("The MDP you passed results in no trajectory output.")
@@ -64,7 +70,10 @@ def get_all_traj_parts(folder, deffnm, traj_type="TRR"):
                 ]
     partnums = [int(f.lstrip(f"{deffnm}.part").rstrip(ending))
                 for f in filtered]
-    max_num = np.max(partnums)
+    if len(partnums) > 0:
+        max_num = np.max(partnums)
+    else:
+        max_num = 0  # will result in us returning an empty list
     trajs = [Trajectory(trajectory_file=os.path.join(folder,
                                                      (f"{deffnm}"
                                                       + f"{partnum_suffix(num)}"
