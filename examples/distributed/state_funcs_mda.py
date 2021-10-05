@@ -35,7 +35,7 @@ def alpha_R(traj, skip=1):
     # phi: -pi -> 0
     # psi: > -50 but smaller 30 degree
     deg = 180/np.pi
-    state[(phi <= 0) & (-50/deg <= psi) & (psi <= 20/deg)] = True
+    state[(phi <= 0) & (-50/deg <= psi) & (psi <= 30/deg)] = True
     return state
 
 
