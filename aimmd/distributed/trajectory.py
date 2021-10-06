@@ -559,7 +559,13 @@ class Trajectory:
                 # not in there
                 # send function application to seperate process and wait for it
                 vals = await wrapped_func.get_values_for_trajectory(self)
-                self._h5py_cache.append(func_id, vals)
+                # we set ignore_existing to not err if another thread was
+                # faster than us in calculating the values for the traj
+                # this happens when we call the function twice on the same
+                # trajectory and the second call is while the first one calculates
+                # the CVs, then the cache is still empty when the second thread
+                # starts but the values are in there when it finishes
+                self._h5py_cache.append(func_id, vals, ignore_existing=True)
                 return vals
         # only 'local' cache, i.e. this trajectory has no file associated (yet)
         try:
@@ -570,9 +576,19 @@ class Trajectory:
             # if not calculate, store and return
             # send function application to seperate process and wait for it
             vals = await wrapped_func.get_values_for_trajectory(self)
-            self._func_id_to_idx[func_id] = len(self._func_id_to_idx)
-            self._func_values.append(vals)
-            return vals
+            # check again to make sure it is not been added in the meantime
+            # see above why/when this can happen
+            try:
+                idx = self._func_id_to_idx[func_id]
+            except KeyError:
+                # not in there so set it
+                self._func_id_to_idx[func_id] = len(self._func_id_to_idx)
+                self._func_values.append(vals)
+            else:
+                # someone was faster, do nothing
+                pass
+            finally:
+                return vals
 
     def __getstate__(self):
         # enable pickling of Trajecory without call to ready_for_pickle
@@ -654,12 +670,14 @@ class TrajectoryFunctionValueCache(collections.abc.Mapping):
         # if we got until here the key is not in there
         raise KeyError("Key not found.")
 
-    def append(self, func_id, vals):
+    def append(self, func_id, vals, ignore_existing=False):
         if not isinstance(func_id, str):
             raise TypeError("Keys (func_id) must be of type str.")
-        if func_id in self:
+        if (func_id in self) and (not ignore_existing):
             raise ValueError(f"There are already values stored for func_id {func_id}."
                              + " Changing the stored values is not supported.")
+        elif (func_id in self) and ignore_existing:
+            return
         # TODO: do we also want to check vals for type?
         name = str(len(self))
         _ = self._ids_grp.create_dataset(name, data=func_id)
