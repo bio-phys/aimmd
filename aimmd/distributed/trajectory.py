@@ -182,7 +182,7 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
 
     The execution of the job is submited to the queueing system with the
     given sbatch script (template).
-    The executable will be called with the following postitional arguments:
+    The executable will be called with the following positional arguments:
         - full filepath of the structure file associated with the trajectory
         - full filepath of the trajectory to calculate values for
         - full filepath of the file the results should be written to without
@@ -193,7 +193,13 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
         - any additional arguments from call_kwargs are added as
           `" {key} {value}" for key, value in call_kwargs.items()`
     See also the examples for a reference (python) implementation of multiple
-    different functions for use with this class.
+    different functions/executables for use with this class.
+
+    Notable attributes:
+    -------------------
+    slurm_jobname - Used as name for the job in slurm and also as part of the
+                    filename for the submission script that will be written
+                    (and deleted if everything goes well) for every trajectory.
     """
     # make it possible to set values for slurm executables from this class
     # but keep the defaults in one central location (the `SlurmProcess`)
@@ -236,6 +242,8 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
         Note that all attributes can be set via __init__ by passing them as
         keyword arguments.
         """
+        # property defaults before everything else to be resettable via kwargs
+        self._slurm_jobname = None
         super().__init__(**kwargs)
         self._executable = None
         # we expect sbatch_script to be a str,
@@ -252,6 +260,16 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
         self.call_kwargs = call_kwargs
         self.load_results_func = load_results_func
         self.slurm_maxjob_semaphore = slurm_maxjob_semaphore
+
+    @property
+    def slurm_jobname(self):
+        if self._slurm_jobname is None:
+            return f"CVfunc_id_{self.id}"
+        return self._slurm_jobname
+
+    @slurm_jobname.setter
+    def slurm_jobname(self, val):
+        self._slurm_jobname = val
 
     def __repr__(self) -> str:
         return (f"SlurmTrajectoryFunctionWrapper(executable={self._executable}, "
@@ -294,7 +312,7 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
         # the results to be written
         tra_dir, tra_name = os.path.split(traj.trajectory_file)
         result_file = os.path.join(tra_dir,
-                                   f"{tra_name}_cvs_funcid_{self.id}")
+                                   f"{tra_name}_CVfunc_id_{self.id}")
         # we expect executable to take 3 postional args:
         # struct traj outfile
         cmd_str = f"{self.executable} {traj.structure_file}"
@@ -306,12 +324,12 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
         # TODO: do we want the traj name in the jobname here?!
         #       I think rather not, becasue then we can cancel all jobs for one
         #       trajfunc in one `scancel` (i.e. independant of the traj)
-        jobname = f"cvs_funcid_{self.id}"  # + f"_{traj.trajectory_file}"
         # now prepare the sbatch script
-        script = self.sbatch_script.format(cmd_str=cmd_str, jobname=jobname)
+        script = self.sbatch_script.format(cmd_str=cmd_str,
+                                           jobname=self.slurm_jobname)
         # write it out
         sbatch_fname = os.path.join(tra_dir,
-                                    tra_name + "_" + jobname + ".slurm")
+                                    tra_name + "_" + self.slurm_jobname + ".slurm")
         if os.path.exists(sbatch_fname):
             # TODO: should we raise an error?
             logger.error(f"Overwriting exisiting submission file ({sbatch_fname}).")
@@ -359,11 +377,13 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                     # (try to) remove slurm output files
                     os.remove(
                         os.path.join(tra_dir,
-                                     f"{jobname}.out.{slurm_proc.slurm_jobid}")
+                                     f"{self.slurm_jobname}.out.{slurm_proc.slurm_jobid}",
+                                     )
                               )
                     os.remove(
                         os.path.join(tra_dir,
-                                     f"{jobname}.err.{slurm_proc.slurm_jobid}")
+                                     f"{self.slurm_jobname}.err.{slurm_proc.slurm_jobid}",
+                                     )
                               )
                 except FileNotFoundError:
                     # probably just a naming issue, so lets warn our users
