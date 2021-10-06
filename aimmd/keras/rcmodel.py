@@ -22,7 +22,7 @@ import numpy as np
 from abc import abstractmethod
 from tensorflow.keras import backend as K
 from ..base import Properties
-from ..base.rcmodel import RCModel, RCModelAsync
+from ..base.rcmodel import RCModel, RCModelAsyncMixin
 from ..base.rcmodel_train_decision import (_train_decision_funcs,
                                            _train_decision_defaults,
                                            _train_decision_docs)
@@ -112,8 +112,7 @@ class KerasRCModel(RCModel):
         ret_obj.__dict__.update(state)
         # and call supers object_for_pickle in case there is something left
         # in ret_obj.__dict__ that we can not pickle
-        return super(KerasRCModel,
-                     ret_obj).object_for_pickle(group, overwrite=overwrite, **kwargs)
+        return super().object_for_pickle(group, overwrite=overwrite, **kwargs)
 
     def complete_from_h5py_group(self, group):
         model_grp = group["KerasRCModel"]
@@ -122,7 +121,7 @@ class KerasRCModel(RCModel):
         self.nnet = load_keras_model(model_grp)
         model_grp.__class__ = h5py.Group
         # see if there is something left to do for super
-        return super(KerasRCModel, self).complete_from_h5py_group(group)
+        return super().complete_from_h5py_group(group)
 
     def _log_prob(self, descriptors, batch_size):
         if batch_size is None:
@@ -196,14 +195,12 @@ class KerasRCModel(RCModel):
                              )
 
 
-# the async version is the same, it just uses the async base class
-KerasRCModelAsync = type("KerasRCModelAsync",
-                         (RCModelAsync,),
-                         dict(KerasRCModel.__dict__)
-                         )
+# the async version is the same, it just uses the async mixin class
+class KerasRCModelAsync(RCModelAsyncMixin, KerasRCModel):
+    pass
 
 
-class EEScaleKerasRCModel(KerasRCModel):
+class EEScaleKerasRCModelMixin:
     """Expected efficiency scale KerasRCModel."""
     __doc__ += _train_decision_docs['EEscale']
 
@@ -220,15 +217,15 @@ class EEScaleKerasRCModel(KerasRCModel):
     train_decision = _train_decision_funcs['EEscale']
 
 
-# inject the async RCModels at the right point in bases to get the correct MRO
-#  Method Resolution Order (class resolution order)
-EEScaleKerasRCModelAsync = type("EEScaleKerasRCModelAsync",
-                                (KerasRCModelAsync, RCModelAsync),
-                                dict(EEScaleKerasRCModel.__dict__)
-                                )
+class EEScaleKerasRCModel(EEScaleKerasRCModelMixin, KerasRCModel):
+    pass
 
 
-class EERandKerasRCModel(KerasRCModel):
+class EEScaleKerasRCModelAsync(EEScaleKerasRCModelMixin, KerasRCModelAsync):
+    pass
+
+
+class EERandKerasRCModelMixin:
     """Expected efficiency randomized KerasRCModel."""
     __doc__ += _train_decision_docs['EErand']
 
@@ -246,7 +243,9 @@ class EERandKerasRCModel(KerasRCModel):
     train_decision = _train_decision_funcs['EErand']
 
 
-EERandKerasRCModelAsync = type("EERandKerasRCModelAsync",
-                               (KerasRCModelAsync, RCModelAsync),
-                               dict(EERandKerasRCModel.__dict__)
-                               )
+class EERandKerasRCModel(EERandKerasRCModelMixin, KerasRCModel):
+    pass
+
+
+class EERandKerasRCModelAsync(EERandKerasRCModelMixin, KerasRCModelAsync):
+    pass
