@@ -75,6 +75,7 @@ class ModelDependentPathMover(PathMover):
     # saved model
     # TODO: make it possible to use without an arcd.Storage?!
     savename_prefix = "model_at_step"
+    delete_cached_model = True  # wheter to delete the model after accept/reject
 
     def __init__(self, modelstore=None):
         # NOTE: modelstore - aimmd.storage.RCModelRack
@@ -106,8 +107,39 @@ class ModelDependentPathMover(PathMover):
             raise RuntimeError("self.modelstore must be set to load a model.")
         return self.modelstore[f"{self.savename_prefix}{stepnum}"]
 
-    @abc.abstractmethod
+    def delete_model(self, stepnum):
+        if self.modelstore is None:
+            raise RuntimeError("self.modelstore must be set to delete a model.")
+        del self.modelstore[f"{self.savename_prefix}{stepnum}"]
+
     async def move(self, instep, stepnum, wdir, model, **kwargs):
+        # this enables us to reuse the save/delete logic for every
+        # modeldependant pathmover
+        await self._pre_move(instep=instep, stepnum=stepnum, wdir=wdir,
+                             model=model, **kwargs)
+        outstep = await self._move(instep=instep, stepnum=stepnum, wdir=wdir,
+                                   model=model, **kwargs)
+        await self._post_move(instep=instep, stepnum=stepnum, wdir=wdir,
+                              model=model, **kwargs)
+        return outstep
+
+    async def _pre_move(self, instep, stepnum, wdir, model, **kwargs):
+        # NOTE: need to select (and later register) the SP with the passed model
+        # (this is the 'main' model and if it knows about the SPs we can use the
+        #  prediction accuracy in the close past to decide if we want to train)
+        # [registering the sp with the model is done by the trainingtask, to
+        #  this end we save the predicted committors for the sp with the MCStep]
+        async with _SEM_BRAIN_MODEL:
+            self.store_model(model=model, stepnum=stepnum)
+        # release the Semaphore, we load the stored model for accept/reject later
+
+    async def _post_move(self, instep, stepnum, wdir, model, **kwargs):
+        if self.delete_cached_model:
+            self.delete_model(stepnum=stepnum)
+
+    # NOTE: the actual move! to be implemented by the subclasses
+    @abc.abstractmethod
+    async def _move(self, instep, stepnum, wdir, model, **kwargs):
         raise NotImplementedError
 
 
@@ -185,16 +217,11 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         self.__dict__.update(state)
         self._build_extracts_and_propas()
 
-    async def move(self, instep, stepnum, wdir, model, **kwargs):
+    async def _move(self, instep, stepnum, wdir, model, **kwargs):
         # NOTE/FIXME: we assume wdir is an absolute path
         #             (or at least that it is relative to cwd)
-        # NOTE: need to select (and later register) the SP with the passed model
-        # (this is the 'main' model and if it knows about the SPs we can use the
-        #  prediction accuracy in the close past to decide if we want to train)
-        async with _SEM_BRAIN_MODEL:
-            self.store_model(model=model, stepnum=stepnum)
-            sp_idx = await self.sp_selector.pick(instep.path, model=model)
-        # release the Semaphore, we load the stored model for accept/reject later
+        model = self.get_model(stepnum=stepnum)
+        sp_idx = await self.sp_selector.pick(instep.path, model=model)
         fw_sp_name_uc = os.path.join(wdir, f"{self.forward_deffnm}_SP_unconstrained.trr")
         fw_sp_name = os.path.join(wdir, f"{self.forward_deffnm}_SP.trr")
         fw_startconf_uc = self.frame_extractors["fw"].extract(outfile=fw_sp_name_uc,
@@ -247,8 +274,10 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         states_reached = np.array([0. for _ in range(len(self.states))])
         states_reached[fw_state] += 1
         states_reached[bw_state] += 1
+        # NOTE: this is actually not necessary as we alreay load our own
+        # private copy of the model at the beginning of this move
         # load the selecting model for accept/reject
-        model = self.get_model(stepnum=stepnum)
+        #model = self.get_model(stepnum=stepnum)
         # use selecting model to predict the commitment probabilities for the SP
         predicted_committors_sp = (await model(fw_startconf))[0]
         # check if they end in different states

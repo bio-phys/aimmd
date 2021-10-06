@@ -564,7 +564,7 @@ class GmxEngine(MDEngine):
 
         Parameters:
         -----------
-        workdir - absolute or relative path to an exisiting directory
+        workdir - absolute or relative path to an existing directory
         deffnm - the name (prefix) to use for all files, must be the same as
                  for the previous run
         """
@@ -573,7 +573,6 @@ class GmxEngine(MDEngine):
                                             traj_type=self.output_traj_type)
         # load the 'old' mdp_in
         self._mdp = MDP(os.path.join(self.workdir, f"{deffnm}.mdp"))
-        self._nstout = None  # as in prepare: make sure we (re)parse nstout
         self._deffnm = deffnm
         # Note the we dont need to explicitly check for the tpr existing,
         # if it does not exist we will err when getting the traj lengths
