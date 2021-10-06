@@ -112,7 +112,9 @@ class KerasRCModel(RCModel):
         ret_obj.__dict__.update(state)
         # and call supers object_for_pickle in case there is something left
         # in ret_obj.__dict__ that we can not pickle
-        return super().object_for_pickle(group, overwrite=overwrite, **kwargs)
+        return super(__class__, ret_obj).object_for_pickle(group,
+                                                           overwrite=overwrite,
+                                                           **kwargs)
 
     def complete_from_h5py_group(self, group):
         model_grp = group["KerasRCModel"]
