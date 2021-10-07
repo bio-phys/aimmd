@@ -42,6 +42,15 @@ logger = logging.getLogger(__name__)
 class TrajectoryFunctionWrapper:
     """ABC to define the API and some common methods."""
     def __init__(self, **kwargs) -> None:
+        # NOTE: in principal we should set these after the stuff set via kwargs
+        #       (otherwise users could overwrite them by passing _id="blub" to
+        #        init), but since the subclasses sets call_kwargs again and
+        #       have to calculate the id according to their own recipe anyway
+        #       we can savely set them here (this enables us to use the id
+        #        property at initialization time as e.g. in the slurm_jobname
+        #        of the SlurmTrajectoryFunctionWrapper)
+        self._id = None
+        self._call_kwargs = {}  # init to empty dict such that iteration works
         # make it possible to set any attribute via kwargs
         # check the type for attributes with default values
         dval = object()
@@ -56,8 +65,6 @@ class TrajectoryFunctionWrapper:
                                     + f"mismatching type ({type(value)}). "
                                     + f" Default type is {type(cval)}."
                                     )
-        self._id = None
-        self._call_kwargs = {}  # init to empty dict such that iteration works
 
     @property
     def id(self) -> str:
@@ -242,7 +249,7 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
         Note that all attributes can be set via __init__ by passing them as
         keyword arguments.
         """
-        # property defaults before everything else to be resettable via kwargs
+        # property defaults before superclass init to be resettable via kwargs
         self._slurm_jobname = None
         super().__init__(**kwargs)
         self._executable = None
