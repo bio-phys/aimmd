@@ -63,6 +63,16 @@ def accepted_trajs_from_aimmd_storage(storage, per_chain=True, starts=None):
     Each entry in the list corresponds to the chain with the same index.
     """
     def accepted_trajs_from_chainstore(chainstore, start):
+        if start == len(chainstore):
+            # this happens when we run the density collection twice without
+            # adding/producing a new MCStep into the chain,
+            # i.e. always when the Densitycollection runs more often than we
+            # have PathSampling chains (when interval > n_chains)
+            return [], []
+        elif start > len(chainstore):
+            # this should never happen
+            raise ValueError(f"start [{start}] can not be > len(chainstore) "
+                             f"[{len(chainstore)}].")
         # find the last accepted TP to be able to add it again
         # instead of the rejects we could find
         last_accept = start
