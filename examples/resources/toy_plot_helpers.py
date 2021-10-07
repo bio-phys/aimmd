@@ -28,9 +28,11 @@ class CallableVolume(object):
         return 1.0 if self.vol(snapshot) else 0.0
 
 class ToyPlot(object):
-    def __init__(self):
-        range_x = np.arange(-1.1, 1.1, 0.01)
-        range_y = np.arange(-1.1, 1.1, 0.01)
+    def __init__(self, range_x=None, range_y=None):
+        if range_x is None:
+            range_x = np.arange(-1.1, 1.1, 0.01)
+        if range_y is None:
+            range_y = np.arange(-1.1, 1.1, 0.01)
         self.extent = [range_x[0], range_x[-1], range_y[0], range_y[-1]]
         self.X, self.Y = np.meshgrid(range_x, range_y)
         pylab.rcParams['figure.figsize'] = 9, 6
