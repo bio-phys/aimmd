@@ -436,9 +436,10 @@ class MCstepMemory(collections.abc.Sequence):
     # stores one MCstep
     # contains a sequence of trial trajectories (2 for TwoWayShooting)
     # *can* contain a path/transition
-    def __init__(self, root_grp, modelstore, mcstep=None):
+    def __init__(self, root_grp, modelstore, chain_idx, mcstep=None):
         self._root_grp = root_grp
         self._modelstore = modelstore
+        self._chain_idx = chain_idx
         self._h5py_paths = {"path": "path",
                             "trials": "trial_trajectories",
                             "py_data": "obj_shelf_pickle_data",
@@ -467,6 +468,10 @@ class MCstepMemory(collections.abc.Sequence):
             if mover_modelstore._group != self._modelstore._group:
                 logger.error("saving a mcstep with a 'foreign' modelstore")
             mcstep.mover.modelstore = None
+            if mover.chain_idx != self._chain_idx:
+                logger.error("saving a mcstep from a mover with a different "
+                             + f"chain idx than we have ({mover.chain_idx} != "
+                             + f"{self._chain_idx}).")
         MutableObjectShelf(py_grp).save(obj=mcstep, overwrite=True)
         if isinstance(mover, ModelDependentPathMover):
             # reset the modelstore of the mc.mover in case we use it somewhere else
@@ -484,6 +489,8 @@ class MCstepMemory(collections.abc.Sequence):
         mcstep.path = self.path
         if isinstance(mcstep.mover, ModelDependentPathMover):
             mcstep.mover.modelstore = self._modelstore
+            # TODO: do we want to set the chain_idx here?
+            mcstep.mover.chain_idx = self._chain_idx
         return mcstep
 
     @property
@@ -545,11 +552,10 @@ class ChainMemory(collections.abc.Sequence):
     # and have an `accepts` and a `transitions` method?!
     def __init__(self, root_grp, chain_idx, storage):
         self._root_grp = root_grp
-        self._chain_idx = chain_idx
+        self.chain_idx = chain_idx
         self._storage = storage
         self._h5py_paths = {"MCsteps": "MCsteps",  # the actual datasets
                             "MCstates": "MCstates",  # links to the current (accepted) MC states
-                            "modelstore": "RCmodels",  # models used in this chain
                             }
         self._mcsteps_grp = self._root_grp.require_group(
                                                 self._h5py_paths["MCsteps"]
@@ -557,16 +563,7 @@ class ChainMemory(collections.abc.Sequence):
         self._mcstates_grp = self._root_grp.require_group(
                                                 self._h5py_paths["MCstates"]
                                                          )
-        self._models_grp = self._root_grp.require_group(
-                                                self._h5py_paths["modelstore"]
-                                                       )
-        keras_model_store_dir = os.path.join(self._storage._dirname,
-                                             (f"{self._root_grp.file.filename}"
-                                              + f"_chain{self._chain_idx}"
-                                              + "_KerasModelsSaveFiles")
-                                             )
-        self.modelstore = RCModelRack(rcmodel_group=self._models_grp,
-                                      storage_directory=keras_model_store_dir)
+        self.modelstore = self._storage.rcmodels
 
     def __len__(self):
         return len(self._mcsteps_grp.keys())
@@ -577,7 +574,8 @@ class ChainMemory(collections.abc.Sequence):
                 raise IndexError(f"Index (was {key}) must be < len(self).")
             else:
                 return MCstepMemory(self._mcsteps_grp[str(key)],
-                                    modelstore=self.modelstore).load()
+                                    modelstore=self.modelstore,
+                                    chain_idx=self.chain_idx).load()
         elif isinstance(key, slice):
             start, stop, step = key.indices(len(self))
             # TODO: do we want the generator (i.e. yield)?
@@ -592,7 +590,8 @@ class ChainMemory(collections.abc.Sequence):
                 #yield MCstepMemory(self._mcsteps_grp[str(idx)],
                 #                   modelstore=self.modelstore).load()
                 ret_val += [MCstepMemory(self._mcsteps_grp[str(idx)],
-                                         modelstore=self.modelstore).load()]
+                                         modelstore=self.modelstore,
+                                         chain_idx=self.chain_idx).load()]
             return ret_val
         else:
             raise TypeError("Keys must be int or slice.")
@@ -603,6 +602,7 @@ class ChainMemory(collections.abc.Sequence):
         single_step_grp = self._mcsteps_grp.require_group(str(n))
         _ = MCstepMemory(single_step_grp,
                          modelstore=self.modelstore,
+                         chain_idx=self.chain_idx,
                          mcstep=mcstep)
         if mcstep.accepted:
             # add it as active mcstate too
@@ -615,7 +615,8 @@ class ChainMemory(collections.abc.Sequence):
         """Return a generator over all active Markov Chain states."""
         for idx in range(len(self._mcstates_grp.keys())):
             yield MCstepMemory(self._mcstates_grp[str(idx)],
-                               modelstore=self.modelstore).load()
+                               modelstore=self.modelstore,
+                               chain_idx=self.chain_idx).load()
 
     def mcstate(self, idx):
         """Return the active Markov Chain state at trial with given idx."""
@@ -623,7 +624,8 @@ class ChainMemory(collections.abc.Sequence):
             if idx >= len(self._mcstates_grp.keys()):
                 raise IndexError(f"No Markov Chain state with index {idx}.")
             return MCstepMemory(self._mcstates_grp[str(idx)],
-                                modelstore=self.modelstore).load()
+                                modelstore=self.modelstore,
+                                chain_idx=self.chain_idx).load()
         else:
             raise ValueError("Markov chain state index must be an integer.")
 

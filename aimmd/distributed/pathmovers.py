@@ -74,17 +74,20 @@ class ModelDependentPathMover(PathMover):
     # this enables us to do the accept/reject (at the end) with the initially
     # saved model
     # TODO: make it possible to use without an arcd.Storage?!
-    savename_prefix = "model_at_step"
+    savename_prefix = "RCModel_"
     delete_cached_model = True  # wheter to delete the model after accept/reject
 
-    def __init__(self, modelstore=None):
+    def __init__(self, modelstore=None, chain_idx=None):
         # NOTE: modelstore - aimmd.storage.RCModelRack
         #       this should enable us to use the same arcd.Storage for multiple
         #       MC chains at the same time, if we have/create multiple RCModelRacks (in Brain?)
         # NOTE : we set it to None by default because it will be set through
         #        PathSamplingChain.__init__ for all movers it owns to the
         #        rcmodel-store associated with the chainstore
+        # NOTE: same for chain_idx (which is used to create a unique savename
+        #       for the saved models)
         self.modelstore = modelstore
+        self.chain_idx = chain_idx
         self._rng = np.random.default_rng()  # numpy newstyle RNG, one per Mover
 
     # NOTE: we take care of the modelstore in storage to
@@ -97,20 +100,26 @@ class ModelDependentPathMover(PathMover):
     #        and __setstate__ to create their runtime attributes
     #        (see the TwoWayShooting for an example)
 
+    def _model_name(self, stepnum):
+        return f"{self.savename_prefix}_in_chain{self.chain_idx}_at_step{stepnum}"
+
     def store_model(self, model, stepnum):
         if self.modelstore is None:
             raise RuntimeError("self.modelstore must be set to store a model.")
-        self.modelstore[f"{self.savename_prefix}{stepnum}"] = model
+        model_name = self._model_name(stepnum=stepnum)
+        self.modelstore[model_name] = model
 
     def get_model(self, stepnum):
         if self.modelstore is None:
             raise RuntimeError("self.modelstore must be set to load a model.")
-        return self.modelstore[f"{self.savename_prefix}{stepnum}"]
+        model_name = self._model_name(stepnum=stepnum)
+        return self.modelstore[model_name]
 
     def delete_model(self, stepnum):
         if self.modelstore is None:
             raise RuntimeError("self.modelstore must be set to delete a model.")
-        del self.modelstore[f"{self.savename_prefix}{stepnum}"]
+        model_name = self._model_name(stepnum=stepnum)
+        del self.modelstore[model_name]
 
     async def move(self, instep, stepnum, wdir, model, **kwargs):
         # this enables us to reuse the save/delete logic for every
@@ -171,7 +180,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         # we implicitly pass None here, it will be set by
         # `PathSamplingChain.__init__()` to the rcmodel-store associated with
         # the chainstore of the chain this sampler will be used with
-        super().__init__() #modelstore=None)
+        super().__init__() #modelstore=None, chain_idx=None)
         self.states = states
         self.engine_cls = engine_cls
         self.engine_kwargs = engine_kwargs

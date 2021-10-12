@@ -425,12 +425,14 @@ class PathSamplingChain:
     def __init__(self, workdir, chainstore, movers, mover_weights=None):
         self.workdir = os.path.abspath(workdir)
         self.chainstore = chainstore
+        self.chain_idx = self.chainstore.chain_idx
         self.movers = movers
         for mover in self.movers:
             # set the store for all ModelDependentpathMovers
-            # this way we can initialzie them without a store
+            # this way we can initialize them without a store
             if isinstance(mover, ModelDependentPathMover):
                 mover.modelstore = self.chainstore.modelstore
+                mover.chain_idx = self.chain_idx
         if mover_weights is None:
             self.mover_weights = [1/len(movers) for _ in range(len(movers))]
         else:
@@ -471,8 +473,8 @@ class PathSamplingChain:
         self._stepnum += 1
         done = False
         n = 0
+        mover = self._rng.choice(self.movers, p=self.mover_weights)
         while not done:
-            mover = self._rng.choice(self.movers, p=self.mover_weights)
             step_dir = os.path.join(self.workdir,
                                     f"{self.mcstep_foldername_prefix}"
                                     + f"{self._stepnum}"
