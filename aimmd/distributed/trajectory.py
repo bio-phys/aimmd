@@ -521,6 +521,7 @@ class Trajectory:
             u = mda.Universe(self.structure_file, self.trajectory_file,
                              tpr_resid_from_one=True)
             ts = u.trajectory[-1]
+            # TODO/FIXME:
             # NOTE: works only(?) for trr and xtc
             self._last_step = ts.data["step"]
         return self._last_step

@@ -476,6 +476,8 @@ class CommittorSimulation:
             else:
                 # no error, return and get out of here
                 tra_out, state_reached = out
+                logger.info(f"Forward trajectory reached state {state_reached}"
+                            + f" for configuration {conf_num} shot {shot_num}.")
                 return state_reached
             finally:
                 n += 1
@@ -648,6 +650,8 @@ class CommittorSimulation:
                     else:
                         # check if we already know that this trial crashed
                         # if we do we have set the result to (None, None)
+                        # if we dont know yet the 'result' is still the initial
+                        # value, i.e. None
                         if trials_done[t_idx] is None:
                             # reached maximum tries, raise the error and crash the sampling? :)
                             logger.error(log_str + " Not retrying anymore.")
@@ -678,11 +682,13 @@ class CommittorSimulation:
             #       should be approached with scrutiny and not just taken as is
             return None
         if fw_state == bw_state:
-            logger.info(f"Both trials reached state {fw_state}.")
+            logger.info(f"Both trials reached state {fw_state} for "
+                        + f"configuration {conf_num} shot {shot_num}.")
         else:
             # we can form a TP, so do it (low idx state to high idx state)
             logger.info(f"Forward trajectory reached state {fw_state}, "
-                        + f"backward trajectory reached state {bw_state}.")
+                        + f"backward trajectory reached state {bw_state} for "
+                        + f"configuration {conf_num} shot {shot_num}.")
             if fw_state > bw_state:
                 minus_trajs, minus_state = bw_trajs, bw_state
                 plus_trajs, plus_state = fw_trajs, fw_state
@@ -698,7 +704,8 @@ class CommittorSimulation:
                             state_funcs=self.states, tra_out=tra_out,
                             struct_out=None, overwrite=overwrite,
                                                                              )
-            logger.info(f"TP from state {minus_state} to {plus_state} was generated.")
+            logger.info(f"TP from state {minus_state} to {plus_state} was generated"
+                        + f" for configuration {conf_num} shot {shot_num}.")
         # TODO: do we want to concatenate the trials to states in any way?
         # i.e. independent of if we can form a TP? or only for no TP cases?
         # NOTE: (answer to todo?!)
@@ -749,7 +756,9 @@ class CommittorSimulation:
                                                     continuation=continuation,
                                                     overwrite=overwrite,
                                                             )
-
+        if state_reached is None:
+            logger.info(f"No result due to uncommitted or crashed trajectories "
+                        + f"in trial for configuration {conf_num} shot {shot_num}.")
         return state_reached
 
     async def _run(self, n_per_struct, continuation, overwrite):
