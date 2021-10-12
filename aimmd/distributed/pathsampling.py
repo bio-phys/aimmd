@@ -99,7 +99,7 @@ class DensityCollectionTask(BrainTask):
         self.model = model
         self.first_collection = first_collection
         self.recreate_interval = recreate_interval
-        self._last_collection = None  # start step values for collections
+        self._last_collection = None  # starting step values for collections
 
     async def run(self, brain, mcstep: MCstep, chain_idx):
         if brain.storage is None:
@@ -228,6 +228,10 @@ class Brain:
                        in zip(cwdirs, self.storage.central_memory,
                               movers_per_chain, mover_weights_per_chain)
                        ]
+
+    @classmethod
+    def from_storage(cls, storage, model, tasks):
+        return storage.central_memory.load_brain(model=model, tasks=tasks)
 
     # TODO: DOCUMENT!
     @classmethod
@@ -358,6 +362,8 @@ class Brain:
             await self._run_tasks(mcstep=mcstep,
                                   chain_idx=chain_idx,
                                   )
+        # save self at the end
+        self.storage.central_memory.save_brain(self)
 
     async def run_for_n_steps(self, n_steps):
         # run for n_steps total in all chains combined
@@ -397,6 +403,8 @@ class Brain:
             await self._run_tasks(mcstep=mcstep,
                                   chain_idx=chain_idx,
                                   )
+        # save self at the end
+        self.storage.central_memory.save_brain(self)
 
     async def _run_tasks(self, mcstep, chain_idx):
         for t in self.tasks:
@@ -441,6 +449,10 @@ class PathSamplingChain:
         self._accepts = []  # list of zeros and ones, one entry per trial
         self._current_step = None
         self._stepnum = 0
+
+    @classmethod
+    def from_chainstore(cls, chainstore):
+        return chainstore.load_pathsampling_object()
 
     @property
     def current_step(self):

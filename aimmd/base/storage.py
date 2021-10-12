@@ -490,6 +490,7 @@ class MCstepMemory(collections.abc.Sequence):
         if isinstance(mcstep.mover, ModelDependentPathMover):
             mcstep.mover.modelstore = self._modelstore
             # TODO: do we want to set the chain_idx here?
+            #       I think we should to be consistent with the modelstore...
             mcstep.mover.chain_idx = self._chain_idx
         return mcstep
 
@@ -556,6 +557,7 @@ class ChainMemory(collections.abc.Sequence):
         self._storage = storage
         self._h5py_paths = {"MCsteps": "MCsteps",  # the actual datasets
                             "MCstates": "MCstates",  # links to the current (accepted) MC states
+                            "PSObject": "PSChainObject",  # the PathSamplingChain obj that generated/generates the steps
                             }
         self._mcsteps_grp = self._root_grp.require_group(
                                                 self._h5py_paths["MCsteps"]
@@ -563,7 +565,49 @@ class ChainMemory(collections.abc.Sequence):
         self._mcstates_grp = self._root_grp.require_group(
                                                 self._h5py_paths["MCstates"]
                                                          )
+        self._pschain_grp = self._root_grp.require_group(
+                                                self._h5py_paths["PSObject"]
+                                                         )
         self.modelstore = self._storage.rcmodels
+
+    def save_pathsampling_object(self, pathsampling_object):
+        # set the stuff we cannot save to None after keeping a reference
+        if pathsampling_object.chainstore is not self:
+            logger.error("Saving a PathSamplingChain from a different ChainMemory.")
+        psc_chainstore = pathsampling_object.chainstore
+        pathsampling_object.chainstore = None
+        mover_modelstores = []
+        for mover in pathsampling_object.movers:
+            if isinstance(mover, ModelDependentPathMover):
+                if mover.modelstore._group != self.modelstore._group:
+                    logger.error("Saving a mover in the PathSamplingChain with"
+                                 + " a different modelstore.")
+                mover_modelstores += [mover.modelstore]
+                mover.modelstore = None
+            else:
+                mover_modelstores += [None]
+        psc_cur_step = pathsampling_object.current_step
+        # TODO/FIXME: ensure that the step is the current step in this chain?!
+        pathsampling_object.current_step = None
+        # save the stripped down saveable object
+        MutableObjectShelf(self._pschain_grp).save(obj=pathsampling_object,
+                                                   overwrite=True)
+        # and rebuild the object with the non-saveable objects
+        pathsampling_object.chainstore = psc_chainstore
+        for mover, mover_ms in zip(pathsampling_object.movers, mover_modelstores):
+            if isinstance(mover, ModelDependentPathMover):
+                mover.modelstore = mover_ms
+        pathsampling_object.current_step = psc_cur_step
+
+    def load_pathsampling_object(self):
+        psc_object = MutableObjectShelf(self._pschain_grp).load()
+        psc_object.chainstore = self
+        # set the current to the last accepted mcstep, i.e. last mcstate
+        psc_object.current_step = self.mcstate(len(self) - 1)
+        for mover in psc_object.movers:
+            if isinstance(mover, ModelDependentPathMover):
+                mover.modelstore = self.modelstore
+        return psc_object
 
     def __len__(self):
         return len(self._mcsteps_grp.keys())
@@ -636,10 +680,43 @@ class CentralMemory(collections.abc.Sequence):
     def __init__(self, root_grp, storage):
         self._root_grp = root_grp
         self._storage = storage
-        self._h5py_paths = {"chains": "PSchains"}
+        self._h5py_paths = {"chains": "PSchains",
+                            "brain": "Brain"}
         self._chains_grp = self._root_grp.require_group(
                                                 self._h5py_paths["chains"]
                                                         )
+        self._brain_grp = self._root_grp.require_group(
+                                                self._h5py_paths["brain"]
+                                                        )
+
+    def save_brain(self, brain):
+        storage = brain.storage
+        if storage is not self._storage:
+            logger.error("Saving a brain from a different storage!")
+        brain.storage = None
+        model = brain.model
+        brain.model = None
+        tasks = brain.tasks
+        brain.tasks = None
+        chains = brain.chains
+        for cstore, chain in zip(self, chains):
+            cstore.save_pathsampling_object(chain)
+        brain.chains = None
+        # save the stripped down brain
+        MutableObjectShelf(self._brain_grp).save(obj=brain, overwrite=True)
+        # and rebuild the brain to working state
+        brain.storage = storage
+        brain.model = model
+        brain.tasks = tasks
+        brain.chains = chains
+
+    def load_brain(self, model, tasks):
+        brain = MutableObjectShelf(self._brain_grp).load()
+        brain.storage = self._storage
+        brain.model = model
+        brain.tasks = tasks
+        brain.chains = [c.load_pathsampling_object() for c in self]
+        return brain
 
     @property
     def n_chains(self):
