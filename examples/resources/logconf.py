@@ -52,11 +52,12 @@ LOGCONFIG = {'version': 1,
                               },
                          'aimmd': {
                                    'level': 'INFO',
-                                   'handlers': ['stdf', 'warnout'],
+                                   # this will **add** the handlers to the ones
+                                   # inherited from the root-logger!
+                                   #'handlers': ['stdf', 'warnout'],
                                    },
                          'openpathsampling': {
                                               'level': 'INFO',
-                                              'handlers': ['stdf', 'warnout'],
                                               },
                          'openpathsampling.initialization': {
                                 'level': 'INFO',
