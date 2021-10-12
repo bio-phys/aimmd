@@ -47,9 +47,17 @@ LOGCONFIG = {'version': 1,
              # need to name root logger '' to update the default root logger
              # at least inside an ipython notebook
              'loggers': {'': {
-                              'level': 'INFO',
-                              'handlers': ['stdf', 'warnout']
+                              'level': 'WARN',
+                              'handlers': ['stdf', 'warnout'],
                               },
+                         'aimmd': {
+                                   'level': 'INFO',
+                                   'handlers': ['stdf', 'warnout'],
+                                   },
+                         'openpathsampling': {
+                                              'level': 'INFO',
+                                              'handlers': ['stdf', 'warnout'],
+                                              },
                          'openpathsampling.initialization': {
                                 'level': 'INFO',
                                 'handlers': ['initf'],

@@ -399,12 +399,23 @@ class CommittorSimulation:
                                        )
         if not continuation:
             # get starting configuration and write it out with random velocities
+            start_conf_name_uc = os.path.join(step_dir,
+                                              (f"{self.start_conf_name_prefix}"
+                                               + "unconstrained_"
+                                               + f"{self.deffnm_engine_out}.trr"),
+                                              )
             extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
-            starting_conf = extractor_fw.extract(
-                                outfile=start_conf_name,
+            starting_conf_uc = extractor_fw.extract(
+                                outfile=start_conf_name_uc,
                                 traj_in=self.starting_configurations[conf_num][0],
                                 idx=self.starting_configurations[conf_num][1],
-                                                 )
+                                                   )
+            constraints_engine = self.engine_cls[conf_num](**self.engine_kwargs[conf_num])
+            starting_conf = await constraints_engine.apply_constraints(
+                                                conf_in=starting_conf_uc,
+                                                conf_out_name=start_conf_name,
+                                                wdir=step_dir,
+                                                                       )
             n = 0
         else:
             starting_conf = Trajectory(
@@ -503,12 +514,23 @@ class CommittorSimulation:
                                           )
         continuation_fw = continuation
         if not continuation_fw:
+            start_conf_name_fw_uc = os.path.join(step_dir,
+                                                 (f"{self.start_conf_name_prefix}"
+                                                  + "unconstrained_"
+                                                  + f"{self.deffnm_engine_out}.trr"),
+                                                 )
             extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
-            starting_conf_fw = extractor_fw.extract(
-                                  outfile=start_conf_name_fw,
-                                  traj_in=self.starting_configurations[conf_num][0],
-                                  idx=self.starting_configurations[conf_num][1],
+            starting_conf_fw_uc = extractor_fw.extract(
+                                   outfile=start_conf_name_fw_uc,
+                                   traj_in=self.starting_configurations[conf_num][0],
+                                   idx=self.starting_configurations[conf_num][1],
                                                    )
+            constraints_engine = self.engine_cls[conf_num](**self.engine_kwargs[conf_num])
+            starting_conf_fw = await constraints_engine.apply_constraints(
+                                                conf_in=starting_conf_fw_uc,
+                                                conf_out_name=start_conf_name_fw,
+                                                wdir=step_dir,
+                                                                       )
             n_fw = 0
         else:
             starting_conf_fw = Trajectory(

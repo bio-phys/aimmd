@@ -450,8 +450,9 @@ class GmxEngine(MDEngine):
         constraints_mdp = copy.deepcopy(self._mdp)
         constraints_mdp["continuation"] = "no" if constraints else "yes"
         constraints_mdp["gen-vel"] = "yes" if generate_velocities else "no"
-        # make sure we have draw a new/different random number for gen-vel
-        constraints_mdp["gen-seed"] = -1
+        if generate_velocities:
+            # make sure we have draw a new/different random number for gen-vel
+            constraints_mdp["gen-seed"] = -1
         constraints_mdp["nsteps"] = 0
         await self._run_grompp(workdir=swdir, deffnm=run_name,
                                trr_in=conf_in.trajectory_file,
