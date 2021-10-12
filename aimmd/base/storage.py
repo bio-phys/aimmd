@@ -572,7 +572,7 @@ class ChainMemory(collections.abc.Sequence):
 
     def save_pathsampling_object(self, pathsampling_object):
         # set the stuff we cannot save to None after keeping a reference
-        if pathsampling_object.chainstore is not self:
+        if pathsampling_object.chainstore._root_grp != self._root_grp:
             logger.error("Saving a PathSamplingChain from a different ChainMemory.")
         psc_chainstore = pathsampling_object.chainstore
         pathsampling_object.chainstore = None
