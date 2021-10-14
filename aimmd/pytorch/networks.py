@@ -201,11 +201,6 @@ class SNN(nn.Module):
             reset_func = getattr(lay, "reset_parameters", None)
             if reset_func is not None:
                 lay.reset_parameters()
-        for lay in self.activations:
-            # try resetting the params of the activation (if learnable)
-            reset_func = getattr(lay, "reset_parameters", None)
-            if reset_func is not None:
-                lay.reset_parameters()
         # NOTE: I think we do not need to check:
         # we can only have nn.Linear layers in there
         # TODO? for the biases we keep the pytorch standard, i.e.

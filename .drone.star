@@ -111,20 +111,21 @@ def make_conda_pipeline(os, arch, py_version, pytest_args=""):
           "conda config --append channels omnia",
           "conda update -n base conda -q -y -c defaults",
           "conda --version",
-          "conda create -n test_env -q -y python={0} compilers".format(py_version),
+          # install openpathsampling directly with the env
+          "conda create -n test_env -q -y python={0} compilers openpathsampling".format(py_version),
           "source activate test_env",
           "conda info -e",
           # install deep learning packages
           # tensorflow from conda-forge seems to break quite often?!
-          # the one from defaults is usually some versions behind
-          #"conda install -c defaults 'tensorflow>=2' -y -q",
-          "pip install tensorflow",  # ...so lets use the one from pypi
+          # the one from defaults can be some versions behind but usually works
+          "conda install -c defaults 'tensorflow>=2' -y -q",
+          #"pip install tensorflow",  # ...so lets use the one from pypi
           # TODO: this is CPUonly hardcoded...
           "conda install -q torchvision cpuonly -c pytorch -y",
           "conda install -q numpy cython -y",  # install setup dependecies
           # install ops pathsampling hooks branch
           #"pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
-          "conda install openpathsampling -y",  # install ops from conda-forge
+          #"conda install openpathsampling -y",  # install ops from conda-forge
           "conda list",
           "python --version",
           "pip install .[test]",
