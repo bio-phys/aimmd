@@ -127,6 +127,24 @@ class FFNet(nn.Module):
             x = drop(act(lay(x)))
         return x
 
+    def reset_parameters(self):
+        # initialize/reset parameters
+        for lay in self.dropout_layers:
+            # reset the dropout layer params (if any)
+            # check if it has a reset-parameters function first
+            reset_func = getattr(lay, "reset_parameters", None)
+            if reset_func is not None:
+                lay.reset_parameters()
+        for lay in self.activations:
+            # try resetting the params of the activation (if learnable)
+            reset_func = getattr(lay, "reset_parameters", None)
+            if reset_func is not None:
+                lay.reset_parameters()
+        # NOTE: I think we do not need to check:
+        # we can only have nn.Linear layers in there
+        for lay in self.hidden_layers:
+            lay.reset_parameters()  # reset biases and weights
+
 
 class SNN(nn.Module):
     """
@@ -178,8 +196,16 @@ class SNN(nn.Module):
     def reset_parameters(self):
         # properly initialize weights/biases
         for lay in self.dropout_layers:
-            # reset the dropout layer params
-            lay.reset_parameters()
+            # reset the dropout layer params (if any)
+            # check if it has a reset-parameters function first
+            reset_func = getattr(lay, "reset_parameters", None)
+            if reset_func is not None:
+                lay.reset_parameters()
+        for lay in self.activations:
+            # try resetting the params of the activation (if learnable)
+            reset_func = getattr(lay, "reset_parameters", None)
+            if reset_func is not None:
+                lay.reset_parameters()
         # NOTE: I think we do not need to check:
         # we can only have nn.Linear layers in there
         # TODO? for the biases we keep the pytorch standard, i.e.
