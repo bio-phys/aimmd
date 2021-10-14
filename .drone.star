@@ -116,16 +116,14 @@ def make_conda_pipeline(os, arch, py_version, pytest_args=""):
           "source activate test_env",
           "conda info -e",
           # install deep learning packages
-          # tensorflow from conda-forge seems to break quite often?!
-          # the one from defaults can be some versions behind but usually works
-          "conda install -c defaults 'tensorflow>=2' -y -q",
-          #"pip install tensorflow",  # ...so lets use the one from pypi
           # TODO: this is CPUonly hardcoded...
           "conda install -q torchvision cpuonly -c pytorch -y",
           "conda install -q numpy cython -y",  # install setup dependecies
-          # install ops pathsampling hooks branch
-          #"pip install git+https://github.com/hejung/openpathsampling.git@PathSampling_Hooks",
-          #"conda install openpathsampling -y",  # install ops from conda-forge
+          # tensorflow from conda-forge seems to break quite often?!
+          # the one from defaults can be some versions behind but usually works
+          # (since it is behind we run into the issue with h5py>3 and tf <=2.4 for python3.7)
+          #"conda install -c defaults 'tensorflow>=2' -y -q",
+          "pip install tensorflow",  # ...so lets use the one from pypi
           "conda list",
           "python --version",
           "pip install .[test]",
