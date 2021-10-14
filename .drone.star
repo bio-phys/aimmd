@@ -115,7 +115,7 @@ def make_conda_pipeline(os, arch, py_version, pytest_args=""):
           "source activate test_env",
           "conda info -e",
           # install deep learning packages
-          "conda install 'tensorflow>=2' -y -q",
+          "conda install -c defaults 'tensorflow>=2' -y -q",
           # TODO: this is CPUonly hardcoded...
           "conda install -q torchvision cpuonly -c pytorch -y",
           "conda install -q numpy cython -y",  # install setup dependecies
