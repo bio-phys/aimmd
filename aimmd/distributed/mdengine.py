@@ -467,10 +467,14 @@ class GmxEngine(MDEngine):
         old_proc_val = self._proc
         cmd_str = self._mdrun_cmd(tpr=f"{run_name}.tpr", deffnm=run_name)
         logger.info(f"{cmd_str}")
-        await self._acquire_resources_gmx_mdrun(local_mdrun=local_mdrun)
+        await self._acquire_resources_gmx_mdrun(local_mdrun=local_mdrun,
+                                                deffnm=run_name,
+                                                )
         try:  # this try is just to make sure we always call cleanup/release
             await self._start_gmx_mdrun(cmd_str=cmd_str, workdir=swdir,
-                                        local_mdrun=local_mdrun)
+                                        local_mdrun=local_mdrun,
+                                        deffnm=run_name,
+                                        )
             try:
                 # self._proc is set by _start_gmx_mdrun!
                 exit_code = await self._proc.wait()
@@ -495,7 +499,9 @@ class GmxEngine(MDEngine):
                                   nstout=self.nstout,
                                   )
         finally:
-            await self._cleanup_gmx_mdrun(local_mdrun=local_mdrun)
+            await self._cleanup_gmx_mdrun(local_mdrun=local_mdrun,
+                                          deffnm=run_name
+                                          )
             self._proc = old_proc_val
 
     async def prepare(self, starting_configuration, workdir, deffnm):
@@ -903,14 +909,18 @@ class SlurmGmxEngine(GmxEngine):
                                     generate_velocities=True,
                                     local_mdrun=self.constraints_md_sans_slurm)
 
-    async def _start_gmx_mdrun(self, cmd_str, workdir, local_mdrun=False):
+    async def _start_gmx_mdrun(self, cmd_str, workdir,
+                               local_mdrun=False, deffnm=None):
         if local_mdrun:
             # run locally using supers start method
             # (used for 0step MDs: gen-vel and constraints)
             return await super()._start_gmx_mdrun(cmd_str=cmd_str,
                                                   workdir=workdir)
         # create a name from deffnm and partnum
-        name = self._deffnm + self._num_suffix(sim_part=self._simulation_part)
+        if deffnm is not None:
+            name = deffnm + self._num_suffix(sim_part=1)
+        else:
+            name = self._deffnm + self._num_suffix(sim_part=self._simulation_part)
         # substitute placeholders in submit script
         script = self.sbatch_script.format(mdrun_cmd=cmd_str, jobname=name)
         # write it out
