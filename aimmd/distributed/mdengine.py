@@ -467,9 +467,7 @@ class GmxEngine(MDEngine):
         old_proc_val = self._proc
         cmd_str = self._mdrun_cmd(tpr=f"{run_name}.tpr", deffnm=run_name)
         logger.info(f"{cmd_str}")
-        await self._acquire_resources_gmx_mdrun(local_mdrun=local_mdrun,
-                                                deffnm=run_name,
-                                                )
+        await self._acquire_resources_gmx_mdrun(local_mdrun=local_mdrun)
         try:  # this try is just to make sure we always call cleanup/release
             await self._start_gmx_mdrun(cmd_str=cmd_str, workdir=swdir,
                                         local_mdrun=local_mdrun,
@@ -499,9 +497,7 @@ class GmxEngine(MDEngine):
                                   nstout=self.nstout,
                                   )
         finally:
-            await self._cleanup_gmx_mdrun(local_mdrun=local_mdrun,
-                                          deffnm=run_name
-                                          )
+            await self._cleanup_gmx_mdrun(local_mdrun=local_mdrun)
             self._proc = old_proc_val
 
     async def prepare(self, starting_configuration, workdir, deffnm):
@@ -910,7 +906,7 @@ class SlurmGmxEngine(GmxEngine):
                                     local_mdrun=self.constraints_md_sans_slurm)
 
     async def _start_gmx_mdrun(self, cmd_str, workdir,
-                               local_mdrun=False, deffnm=None):
+                               local_mdrun=False, deffnm=None, **kwargs):
         if local_mdrun:
             # run locally using supers start method
             # (used for 0step MDs: gen-vel and constraints)
@@ -938,7 +934,7 @@ class SlurmGmxEngine(GmxEngine):
                                   )
         await self._proc.submit()
 
-    async def _acquire_resources_gmx_mdrun(self, local_mdrun=False):
+    async def _acquire_resources_gmx_mdrun(self, local_mdrun=False, **kwargs):
         if local_mdrun:
             # running locally: use supers acquire method
             # (used for 0step MDs: gen-vel and constraints)
@@ -946,7 +942,7 @@ class SlurmGmxEngine(GmxEngine):
         if self.slurm_maxjob_semaphore is not None:
             await self.slurm_maxjob_semaphore.acquire()
 
-    async def _cleanup_gmx_mdrun(self, local_mdrun=False):
+    async def _cleanup_gmx_mdrun(self, local_mdrun=False, **kwargs):
         if local_mdrun:
             # running locally: use supers cleanup method
             # (used for 0step MDs: gen-vel and constraints)
