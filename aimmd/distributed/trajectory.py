@@ -594,6 +594,8 @@ class Trajectory:
                 self._func_values.append(vals)
             else:
                 # someone was faster, do nothing
+                logger.debug(f"Local cache values already present for function with id {func_id}."
+                             + "Ignoring the newly calculated values.")
                 pass
             finally:
                 return vals
@@ -685,6 +687,8 @@ class TrajectoryFunctionValueCache(collections.abc.Mapping):
             raise ValueError(f"There are already values stored for func_id {func_id}."
                              + " Changing the stored values is not supported.")
         elif (func_id in self) and ignore_existing:
+            logger.debug(f"File cached values already present for function with id {func_id}."
+                         + "Not adding the new values because ignore_existing=False.")
             return
         # TODO: do we also want to check vals for type?
         name = str(len(self))

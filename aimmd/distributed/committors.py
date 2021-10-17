@@ -450,16 +450,15 @@ class CommittorSimulation:
                 log_str = (f"MD engine for configuration {conf_num}, "
                            + f"shot {shot_num}, deffnm {self.deffnm_engine_out}"
                            + f" failed for the {n + 1}th time.")
-                if n < self.max_retries_on_crash:
-                    if isinstance(e, EngineCrashedError):
-                        subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
-                                                         + f"_{n + 1}crash"))
-                        log_str += " Reason: Engine Crashed."
-                    elif isinstance(e, MaxStepsReachedError):
-                        subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
-                                                         + f"_{n + 1}max_len"))
-                        log_str += " Reason: Maximum number of steps."
-                else:
+                if isinstance(e, EngineCrashedError):
+                    subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
+                                                     + f"_{n + 1}crash"))
+                    log_str += " Reason: Engine Crashed."
+                elif isinstance(e, MaxStepsReachedError):
+                    subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
+                                                     + f"_{n + 1}max_len"))
+                    log_str += " Reason: Maximum number of steps."
+                if not (n < self.max_retries_on_crash):
                     logger.error(log_str + " Not retrying anymore.")
                     # TODO: do we want to raise the error?!
                     #       I think this way is better as we can still finish
@@ -616,23 +615,24 @@ class CommittorSimulation:
                                + f"shot {str(shot_num)}, "
                                + f"deffm {deffnms_engine_out[t_idx]} failed "
                                + f"for the {ns[t_idx] + 1}th time.")
-                    # catch error raised when gromacs crashes
+                    # catch errors raised when gromacs crashes
+                    # modify the message/subdirname to be specific
+                    if isinstance(t.exception(), EngineCrashedError):
+                        subdir = os.path.join(step_dir,
+                                              (f"{deffnms_engine_out[t_idx]}"
+                                               + f"_{ns[t_idx] + 1}crash")
+                                              )
+                        log_str += " Reason: Engine crashed."
+                    elif isinstance(t.exception(), MaxStepsReachedError):
+                        subdir = os.path.join(step_dir,
+                                              (f"{deffnms_engine_out[t_idx]}"
+                                               + f"_{ns[t_idx] + 1}max_len")
+                                              )
+                        log_str += " Reason: Maximum number of steps."
+                    else:
+                        raise RuntimeError("This should never happen!")
                     if ns[t_idx] < self.max_retries_on_crash:
                         # move the files to a subdirectory
-                        if isinstance(t.exception(), EngineCrashedError):
-                            subdir = os.path.join(step_dir,
-                                                  (f"{deffnms_engine_out[t_idx]}"
-                                                   + f"_{ns[t_idx] + 1}crash")
-                                                  )
-                            log_str += " Reason: Engine crashed."
-                        elif isinstance(t.exception(), MaxStepsReachedError):
-                            subdir = os.path.join(step_dir,
-                                                  (f"{deffnms_engine_out[t_idx]}"
-                                                   + f"_{ns[t_idx] + 1}max_len")
-                                                  )
-                            log_str += " Reason: Maximum number of steps."
-                        else:
-                            raise RuntimeError("This should never happen!")
                         logger.warning(log_str + " Moving to subdirectory and retrying.")
                         os.mkdir(subdir)
                         # TODO/FIXME: the error handling here assumes gmx engines!
