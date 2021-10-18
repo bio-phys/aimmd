@@ -210,7 +210,7 @@ class Brain:
                                     )
         # and we do all setup of counters etc after to make sure they are what
         # we expect
-        self.total_steps = 0
+        self._chain_idxs_for_steps = []  # one chain idx for each step done in the order they have finished
         # chain-setup
         cwdirs = [os.path.join(self.workdir, f"{self.chain_directory_prefix}{i}")
                   for i in range(len(movers_per_chain))]
@@ -228,6 +228,24 @@ class Brain:
                        in zip(cwdirs, self.storage.central_memory,
                               movers_per_chain, mover_weights_per_chain)
                        ]
+
+    @property
+    def total_steps(self):
+        return len(self._chain_idxs_for_steps)
+
+    @property
+    def accepts(self):
+        """
+        List of 1 (accept) and 0 (reject) of length total_steps.
+
+        Accepts are over all chains in the order the steps finished.
+        """
+        counters = [0 for _ in range(self.chains)]
+        accepts_per_chain = [c.accepts for c in self.chains]
+        accepts = []
+        for cidx in self._chain_idxs_for_steps:
+            accepts += [accepts_per_chain[counters[cidx]]]
+            counters[cidx] += 1
 
     @classmethod
     def from_storage(cls, storage, model, tasks):
@@ -335,7 +353,7 @@ class Brain:
                 # raised by the task and suppressed so fair, i.e. check for
                 # `result.exception() is None` and raise if not
                 mcstep = await result
-                self.total_steps += 1
+                self._chain_idxs_for_steps += [chain_idx]
                 if mcstep.accepted:
                     acc += 1
                 # run tasks/hooks
@@ -355,7 +373,7 @@ class Brain:
         for result in done:
             chain_idx = chain_tasks.index(result)
             mcstep = await result
-            self.total_steps += 1
+            self._chain_idxs_for_steps += [chain_idx]
             if mcstep.accepted:
                 acc += 1
             # run tasks/hooks
@@ -378,7 +396,7 @@ class Brain:
                 # done sometimes?
                 chain_idx = chain_tasks.index(result)
                 mcstep = await result
-                self.total_steps += 1
+                self._chain_idxs_for_steps += [chain_idx]
                 # run tasks/hooks
                 await self._run_tasks(mcstep=mcstep,
                                       chain_idx=chain_idx,
@@ -398,7 +416,7 @@ class Brain:
         for result in done:
             chain_idx = chain_tasks.index(result)
             mcstep = await result
-            self.total_steps += 1
+            self._chain_idxs_for_steps += [chain_idx]
             # run tasks/hooks
             await self._run_tasks(mcstep=mcstep,
                                   chain_idx=chain_idx,
