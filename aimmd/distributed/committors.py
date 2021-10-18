@@ -447,7 +447,7 @@ class CommittorSimulation:
                                     overwrite=overwrite,
                                                                  )
             except (MaxStepsReachedError, EngineCrashedError) as e:
-                log_str = (f"MD engine for configuration {conf_num}, "
+                log_str = (f"MD engine for configuration {self._conf_dirs[conf_num]}, "
                            + f"shot {shot_num}, deffnm {self.deffnm_engine_out}"
                            + f" failed for the {n + 1}th time.")
                 if isinstance(e, EngineCrashedError):
@@ -487,7 +487,7 @@ class CommittorSimulation:
                 # no error, return and get out of here
                 tra_out, state_reached = out
                 logger.info(f"Forward trajectory reached state {state_reached}"
-                            + f" for configuration {conf_num} shot {shot_num}.")
+                            + f" for configuration {self._conf_dirs[conf_num]} shot {shot_num}.")
                 return state_reached
             finally:
                 n += 1
@@ -611,7 +611,7 @@ class CommittorSimulation:
                 t_idx = trials_pending.index(t)
                 if isinstance(t.exception(), (EngineCrashedError,
                                               MaxStepsReachedError)):
-                    log_str = (f"MD engine for configuration {str(conf_num)}, "
+                    log_str = (f"MD engine for configuration {self._conf_dirs[conf_num]}, "
                                + f"shot {str(shot_num)}, "
                                + f"deffm {deffnms_engine_out[t_idx]} failed "
                                + f"for the {ns[t_idx] + 1}th time.")
@@ -705,12 +705,12 @@ class CommittorSimulation:
             return None
         if fw_state == bw_state:
             logger.info(f"Both trials reached state {fw_state} for "
-                        + f"configuration {conf_num} shot {shot_num}.")
+                        + f"configuration {self._conf_dirs[conf_num]} shot {shot_num}.")
         else:
             # we can form a TP, so do it (low idx state to high idx state)
             logger.info(f"Forward trajectory reached state {fw_state}, "
                         + f"backward trajectory reached state {bw_state} for "
-                        + f"configuration {conf_num} shot {shot_num}.")
+                        + f"configuration {self._conf_dirs[conf_num]} shot {shot_num}.")
             if fw_state > bw_state:
                 minus_trajs, minus_state = bw_trajs, bw_state
                 plus_trajs, plus_state = fw_trajs, fw_state
@@ -727,7 +727,7 @@ class CommittorSimulation:
                             struct_out=None, overwrite=overwrite,
                                                                              )
             logger.info(f"TP from state {minus_state} to {plus_state} was generated"
-                        + f" for configuration {conf_num} shot {shot_num}.")
+                        + f" for configuration {self._conf_dirs[conf_num]} shot {shot_num}.")
         # TODO: do we want to concatenate the trials to states in any way?
         # i.e. independent of if we can form a TP? or only for no TP cases?
         # NOTE: (answer to todo?!)
@@ -780,7 +780,7 @@ class CommittorSimulation:
                                                             )
         if state_reached is None:
             logger.info(f"No result due to uncommitted or crashed trajectories "
-                        + f"in trial for configuration {conf_num} shot {shot_num}.")
+                        + f"in trial for configuration {self._conf_dirs[conf_num]} shot {shot_num}.")
         return state_reached
 
     async def _run(self, n_per_struct, continuation, overwrite):
