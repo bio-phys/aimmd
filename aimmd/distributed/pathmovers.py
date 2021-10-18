@@ -311,6 +311,8 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                 # can only be the other way round
                 minus_trajs, minus_state = fw_trajs, fw_state
                 plus_trajs, plus_state = bw_trajs, bw_state
+            logger.info(f"Forward trial reached state {fw_state}, "
+                        + f"backward trial reached state {bw_state}.")
             tra_out = os.path.join(wdir, f"{self.transition_filename}")
             path_traj = await construct_TP_from_plus_and_minus_traj_segments(
                             minus_trajs=minus_trajs, minus_state=minus_state,
@@ -333,9 +335,12 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
             # and configuration is the same in old and new, i.e. for positions
             # we cancel old with new
             p_acc = p_sel_new / p_sel_old
+            log_str = f"Acceptance probability for generated trial is {round(p_acc, 6)}."
             accepted = False
             if (p_acc >= 1) or (p_acc > self._rng.random()):
                 accepted = True
+                log_str += " Trial was accepted."
+            logger.info(log_str)
             return MCstep(mover=self,
                           stepnum=stepnum,
                           directory=wdir,
@@ -402,7 +407,7 @@ class RCModelSPSelector:
             density_fact = model.density_collector.get_correction(
                                                             committor_probs
                                                                   )
-            ret *= density_fact
+            ret *= float(density_fact)
         if ret == 0.:
             if await self.sum_bias(trajectory) == 0.:
                 logger.error("All SP weights are 0. Using equal probabilities.")

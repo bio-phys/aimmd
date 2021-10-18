@@ -240,12 +240,13 @@ class Brain:
 
         Accepts are over all chains in the order the steps finished.
         """
-        counters = [0 for _ in range(self.chains)]
+        counters = [0 for _ in self.chains]
         accepts_per_chain = [c.accepts for c in self.chains]
         accepts = []
         for cidx in self._chain_idxs_for_steps:
-            accepts += [accepts_per_chain[counters[cidx]]]
+            accepts += [accepts_per_chain[cidx][counters[cidx]]]
             counters[cidx] += 1
+        return accepts
 
     @classmethod
     def from_storage(cls, storage, model, tasks):
