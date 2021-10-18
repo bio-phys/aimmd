@@ -841,8 +841,10 @@ class SlurmGmxEngine(GmxEngine):
 
     _mdrun_executable = "gmx_mpi mdrun"  # MPI as default for clusters
     # whether we run the 0step MDruns (velocity generation and constraints)
-    # without slurm, i.e. locally (on the login node)
-    constraints_md_sans_slurm = True
+    # without/sans slurm, i.e. locally (on the login node)
+    # TODO/FIXME: running sans slurm is not possible using gmx_mpi!
+    #             and we will probably also need the option to pass other mdrun_extra_args?!
+    constraints_md_sans_slurm = False
     # make slurm executable setable from user-facing code but keep defaults
     # at central location in the `SlurmProcess`
     sacct_executable = SlurmProcess.sacct_executable
