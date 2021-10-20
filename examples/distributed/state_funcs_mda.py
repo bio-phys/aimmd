@@ -132,7 +132,7 @@ def descriptor_func_psi_phi(traj, skip=1):
         phi[f, 0] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimensions)
         psi[f, 0] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimensions)
 
-    return psi, phi
+    return np.concatenate((psi, phi), axis=1)
     #return 1 + 0.5*np.concatenate([np.sin(psi), np.cos(psi), np.sin(phi), np.cos(phi)], axis=1)
 
 
