@@ -55,7 +55,8 @@ class KerasRCModel(RCModel):
     def object_for_pickle(self, group, overwrite=True,
                           name=None, storage_directory=None, **kwargs):
         def create_extlink_and_empty_subfile(fname, parent_group):
-            # fname is expected to be an abspath
+            # fname is expected to be a relative path starting at storage dir
+            # also we expect that current directory is the storage directory
             ext_link = h5py.ExternalLink(fname, "/")
             parent_group["KerasRCModel"] = ext_link
             # create the external subfile and close it directly
@@ -74,8 +75,10 @@ class KerasRCModel(RCModel):
                              f"{group.file.filename}_KerasModelsSaveFiles")):
             os.mkdir(os.path.join(storage_directory,
                                   f"{group.file.filename}_KerasModelsSaveFiles"))
-        subfile = os.path.join(storage_directory,
-                               f"{group.file.filename}_KerasModelsSaveFiles", name)
+        # change to the storage directory to use relative paths for the extlinks
+        old_dir = os.path.abspath(os.getcwd())  # remember current directory
+        os.chdir(storage_directory)
+        subfile = os.path.join(f"{group.file.filename}_KerasModelsSaveFiles", name)
         try:
             model_grp = group['KerasRCModel']  # just to check if it is there
         except KeyError:
@@ -92,6 +95,8 @@ class KerasRCModel(RCModel):
                 raise RuntimeError(
                             "KerasRCModel file exists but overwrite=False."
                                    )
+        # back to the old current directory
+        os.chdir(old_dir)
         # save NN
         # NOTE: this is a dirty hack, tf checks if the file is a h5py.File
         #       but it uses only methods of the h5py.Group, so we set the
