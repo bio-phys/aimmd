@@ -544,7 +544,7 @@ class Storage:
         return self
 
     # and automagically close when exiting the with
-    def __exit__(self):
+    def __exit__(self, exeception_type, exception_value, exception_traceback):
         self.close()
 
     def close(self):
