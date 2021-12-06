@@ -616,8 +616,8 @@ class Trajectory:
         state = self.__dict__.copy()
         state["_h5py_cache"] = None
         state["_h5py_grp"] = None
-        state["_func_values"] = []
-        state["_func_id_to_idx"] = {}
+        #state["_func_values"] = []
+        #state["_func_id_to_idx"] = {}
         return state
 
     def object_for_pickle(self, group, overwrite):
