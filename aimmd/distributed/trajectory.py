@@ -245,6 +245,9 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                             array containing the loaded values
         slurm_maxjob_semaphore - None or `asyncio.Semaphore`, can be used to
                                  bound the maximum number of submitted jobs
+                                 NOTE: The semaphore will be lost upon
+                                       unpickling, i.e. also when saving this
+                                       to an aimmd.Storage
 
         Note that all attributes can be set via __init__ by passing them as
         keyword arguments.
@@ -412,6 +415,11 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
             raise ValueError("SlurmTrajectoryFunctionWrapper must be called"
                              + " with an `aimmd.distributed.Trajectory` "
                              + f"but was called with {type(value)}.")
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["slurm_maxjob_semaphore"] = None
+        return state
 
 
 class Trajectory:
