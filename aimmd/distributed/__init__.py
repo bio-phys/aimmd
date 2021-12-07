@@ -65,6 +65,10 @@ _SEM_MAX_FILES_OPEN = asyncio.BoundedSemaphore(resource.getrlimit(
                                                                   )[0] - 30)
 
 
+# slurm max job semaphore, if the user sets it it will be used?
+_SEM_SLURM_MAX_JOB = None
+
+
 # make stuff from submodules available (after defining the semaphores)
 from .trajectory import (Trajectory, PyTrajectoryFunctionWrapper,
                          SlurmTrajectoryFunctionWrapper)

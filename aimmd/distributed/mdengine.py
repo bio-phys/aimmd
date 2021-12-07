@@ -24,7 +24,7 @@ import shutil
 import asyncio
 import logging
 
-from . import _SEM_MAX_FILES_OPEN
+from . import _SEM_MAX_FILES_OPEN, _SEM_SLURM_MAX_JOB
 from .trajectory import Trajectory
 from .slurm import SlurmProcess
 from .mdconfig import MDP
@@ -941,16 +941,24 @@ class SlurmGmxEngine(GmxEngine):
             # running locally: use supers acquire method
             # (used for 0step MDs: gen-vel and constraints)
             return await super()._acquire_resources_gmx_mdrun()
-        if self.slurm_maxjob_semaphore is not None:
-            await self.slurm_maxjob_semaphore.acquire()
+        #if self.slurm_maxjob_semaphore is not None:
+        #    await self.slurm_maxjob_semaphore.acquire()
+        if _SEM_SLURM_MAX_JOB is not None:
+            logger.debug(f"SlurmGmxEngine: SLURM_MAX_JOB semaphore is {_SEM_SLURM_MAX_JOB}"
+                         + " before acquiring.")
+            await _SEM_SLURM_MAX_JOB.acquire()
+        else:
+            logger.debug(f"SlurmGmxEngine: SLURM_MAX_JOB semaphore is None")
 
     async def _cleanup_gmx_mdrun(self, local_mdrun=False, **kwargs):
         if local_mdrun:
             # running locally: use supers cleanup method
             # (used for 0step MDs: gen-vel and constraints)
             return await super()._cleanup_gmx_mdrun()
-        if self.slurm_maxjob_semaphore is not None:
-            self.slurm_maxjob_semaphore.release()
+        #if self.slurm_maxjob_semaphore is not None:
+        #    self.slurm_maxjob_semaphore.release()
+        if _SEM_SLURM_MAX_JOB is not None:
+            await _SEM_SLURM_MAX_JOB.release()
 
     # TODO: do we even need/want that?
     @property
