@@ -628,19 +628,26 @@ class Trajectory:
         state = self.__dict__.copy()
         if self._h5py_grp is not None:
             # we already have a file?
-            # lets try to copy?
-            group.copy(self._h5py_grp, group)
+            # lets try to link the two groups?
+            group = self._h5py_grp
+            # or should we copy? how to make sure we update both caches?
+            # do we even want that? I (hejung) think a link is what you would
+            # expect, i.e. both stored copies of the traj will have all cached
+            # values available
+            #group.copy(self._h5py_grp, group)
             state["_h5py_grp"] = None
             state["_h5py_cache"] = None
-        # (re) set h5py group such that we use the cache from now on
-        self._h5py_grp = group
-        self._h5py_cache = TrajectoryFunctionValueCache(self._h5py_grp)
-        for func_id, idx in self._func_id_to_idx.items():
-            self._h5py_cache.append(func_id, self._func_values[idx])
-        # clear the 'local' cache and empty state, such that we initialize
-        # to empty, next time we will get it all from file directly
-        self._func_values = state["_func_values"] = []
-        self._func_id_to_idx = state["_func_id_to_idx"] = {}
+        else:
+            # set h5py group such that we use the cache from now on
+            self._h5py_grp = group
+            self._h5py_cache = TrajectoryFunctionValueCache(self._h5py_grp)
+            for func_id, idx in self._func_id_to_idx.items():
+                self._h5py_cache.append(func_id, self._func_values[idx])
+            # clear the 'local' cache and empty state, such that we initialize
+            # to empty, next time we will get it all from file directly
+            self._func_values = state["_func_values"] = []
+            self._func_id_to_idx = state["_func_id_to_idx"] = {}
+        # make the return object
         ret_obj = self.__class__.__new__(self.__class__)
         ret_obj.__dict__.update(state)
         return ret_obj
