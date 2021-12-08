@@ -17,6 +17,7 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 import os
 import abc
 import collections
+import copy
 import asyncio
 import inspect
 import logging
@@ -90,11 +91,17 @@ class TrajectoryFunctionWrapper:
 
     @abc.abstractmethod
     async def get_values_for_trajectory(self, traj):
+        # will be called by trajectory._apply_wrapped_func()
+        # is expected to return a numpy array, shape=(n_frames, n_dim_function)
         pass
 
-    @abc.abstractmethod
-    async def __call__(self, val):
-        pass
+    async def __call__(self, value):
+        if isinstance(value, Trajectory) and self.id is not None:
+            return await value._apply_wrapped_func(self.id, self)
+        else:
+            raise ValueError(f"{type(self)} must be called"
+                             + " with an `aimmd.distributed.Trajectory` "
+                             + f"but was called with {type(value)}.")
 
 
 class PyTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
@@ -401,14 +408,6 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
             if _SEMAPHORES["SLURM_MAX_JOB"] is not None:
                 _SEMAPHORES["SLURM_MAX_JOB"].release()
 
-    async def __call__(self, value):
-        if isinstance(value, Trajectory) and self.id is not None:
-            return await value._apply_wrapped_func(self.id, self)
-        else:
-            raise ValueError("SlurmTrajectoryFunctionWrapper must be called"
-                             + " with an `aimmd.distributed.Trajectory` "
-                             + f"but was called with {type(value)}.")
-
 
 class Trajectory:
     """
@@ -469,8 +468,10 @@ class Trajectory:
         # stuff for caching of functions applied to this traj
         self._func_id_to_idx = {}
         self._func_values = []
-        self._h5py_grp = None
         self._h5py_cache = None
+        self._semaphores_by_func_id = collections.defaultdict(
+                                                    asyncio.BoundedSemaphore
+                                                              )
 
     def __len__(self):
         if self._len is not None:
@@ -554,47 +555,31 @@ class Trajectory:
         return self._last_time
 
     async def _apply_wrapped_func(self, func_id, wrapped_func):
-        if self._h5py_grp is not None:
-            # first check if we are loaded and possibly get it from there
-            # trajectories are immutable once stored, so no need to check len
-            try:
-                return self._h5py_cache[func_id]
-            except KeyError:
-                # not in there
-                # send function application to seperate process and wait for it
-                vals = await wrapped_func.get_values_for_trajectory(self)
-                # we set ignore_existing to not err if another thread was
-                # faster than us in calculating the values for the traj
-                # this happens when we call the function twice on the same
-                # trajectory and the second call is while the first one calculates
-                # the CVs, then the cache is still empty when the second thread
-                # starts but the values are in there when it finishes
-                self._h5py_cache.append(func_id, vals, ignore_existing=True)
-                return vals
-        # only 'local' cache, i.e. this trajectory has no file associated (yet)
-        try:
-            # see if it is in cache
-            idx = self._func_id_to_idx[func_id]
-            return self._func_values[idx]
-        except KeyError:
-            # if not calculate, store and return
-            # send function application to seperate process and wait for it
-            vals = await wrapped_func.get_values_for_trajectory(self)
-            # check again to make sure it is not been added in the meantime
-            # see above why/when this can happen
-            try:
-                idx = self._func_id_to_idx[func_id]
-            except KeyError:
-                # not in there so set it
-                self._func_id_to_idx[func_id] = len(self._func_id_to_idx)
-                self._func_values.append(vals)
+        with await self._semaphores_by_func_id[func_id]:
+            if self._h5py_cache is not None:
+                # first check if we are loaded and possibly get it from there
+                # trajectories are immutable once stored, so no need to check len
+                try:
+                    return copy.copy(self._h5py_cache[func_id])
+                except KeyError:
+                    # not in there
+                    # send function application to seperate process and wait for it
+                    vals = await wrapped_func.get_values_for_trajectory(self)
+                    self._h5py_cache.append(func_id, vals)
+                    return vals
             else:
-                # someone was faster, do nothing
-                logger.debug(f"Local cache values already present for function with id {func_id}."
-                             + "Ignoring the newly calculated values.")
-                pass
-            finally:
-                return vals
+                # only 'local' cache, i.e. this trajectory has no file associated (yet)
+                try:
+                    # see if it is in cache
+                    idx = self._func_id_to_idx[func_id]
+                    return copy.copy(self._func_values[idx])
+                except KeyError:
+                    # if not calculate, store and return
+                    # send function application to seperate process and wait for it
+                    vals = await wrapped_func.get_values_for_trajectory(self)
+                    self._func_id_to_idx[func_id] = len(self._func_id_to_idx)
+                    self._func_values.append(vals)
+                    return vals
 
     def __getstate__(self):
         # enable pickling of Trajecory without call to ready_for_pickle
@@ -603,9 +588,11 @@ class Trajectory:
         # NOTE: this removes everything except the filepaths
         state = self.__dict__.copy()
         state["_h5py_cache"] = None
-        state["_h5py_grp"] = None
         #state["_func_values"] = []
         #state["_func_id_to_idx"] = {}
+        state["_semaphores_by_func_id"] = collections.defaultdict(
+                                                    asyncio.BoundedSemaphore
+                                                                  )
         return state
 
     def object_for_pickle(self, group, overwrite):
@@ -614,21 +601,19 @@ class Trajectory:
         # currently overwrite will always be false and we can just ignore it?!
         # and then we can/do also expect group to be empty...?
         state = self.__dict__.copy()
-        if self._h5py_grp is not None:
+        if self._h5py_cache is not None:
             # we already have a file?
             # lets try to link the two groups?
-            group = self._h5py_grp
+            group = self._h5py_cache.root_grp
             # or should we copy? how to make sure we update both caches?
             # do we even want that? I (hejung) think a link is what you would
             # expect, i.e. both stored copies of the traj will have all cached
             # values available
-            #group.copy(self._h5py_grp, group)
-            state["_h5py_grp"] = None
+            #group.copy(self._h5py_cache.root_grp, group)
             state["_h5py_cache"] = None
         else:
             # set h5py group such that we use the cache from now on
-            self._h5py_grp = group
-            self._h5py_cache = TrajectoryFunctionValueCache(self._h5py_grp)
+            self._h5py_cache = TrajectoryFunctionValueCache(group)
             for func_id, idx in self._func_id_to_idx.items():
                 self._h5py_cache.append(func_id, self._func_values[idx])
             # clear the 'local' cache and empty state, such that we initialize
@@ -647,7 +632,6 @@ class Trajectory:
         # can then add the stuff in there
         # (loading is as easy as adding the file-cache because we store
         #  everything that was in 'local' cache in the file when we save)
-        self._h5py_grp = group
         self._h5py_cache = TrajectoryFunctionValueCache(group)
         return self
 
@@ -660,12 +644,12 @@ class TrajectoryFunctionValueCache(collections.abc.Mapping):
     #       i.e. it is not extended after first storing it
 
     def __init__(self, root_grp):
-        self._root_grp = root_grp
+        self.root_grp = root_grp
         self._h5py_paths = {"ids": "FunctionIDs",
                             "vals": "FunctionValues"
                             }
-        self._ids_grp = self._root_grp.require_group(self._h5py_paths["ids"])
-        self._vals_grp = self._root_grp.require_group(self._h5py_paths["vals"])
+        self._ids_grp = self.root_grp.require_group(self._h5py_paths["ids"])
+        self._vals_grp = self.root_grp.require_group(self._h5py_paths["vals"])
 
     def __len__(self):
         return len(self._ids_grp.keys())

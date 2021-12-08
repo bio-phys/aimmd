@@ -660,9 +660,9 @@ class GmxEngine(MDEngine):
         logger.debug(f"gmx mdrun stdout: {stdout.decode()}")
         logger.debug(f"gmx mdrun stderr: {stderr.decode()}")
         # release the semaphore for the 3 file descriptors
-        await _SEMAPHORES["MAX_FILES_OPEN"].release()
-        await _SEMAPHORES["MAX_FILES_OPEN"].release()
-        await _SEMAPHORES["MAX_FILES_OPEN"].release()
+        _SEMAPHORES["MAX_FILES_OPEN"].release()
+        _SEMAPHORES["MAX_FILES_OPEN"].release()
+        _SEMAPHORES["MAX_FILES_OPEN"].release()
 
     async def run(self, nsteps=None, walltime=None, steps_per_part=False):
         """
