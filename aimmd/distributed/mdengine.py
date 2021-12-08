@@ -944,11 +944,11 @@ class SlurmGmxEngine(GmxEngine):
         #if self.slurm_maxjob_semaphore is not None:
         #    await self.slurm_maxjob_semaphore.acquire()
         if _SEMAPHORES["SLURM_MAX_JOB"] is not None:
-            logger.debug(f"SlurmGmxEngine: SLURM_MAX_JOB semaphore is {_SEMAPHORES["SLURM_MAX_JOB"]}"
+            logger.debug(f"SlurmGmxEngine: SLURM_MAX_JOB semaphore is {_SEMAPHORES['SLURM_MAX_JOB']}"
                          + " before acquiring.")
             await _SEMAPHORES["SLURM_MAX_JOB"].acquire()
         else:
-            logger.debug(f"SlurmGmxEngine: SLURM_MAX_JOB semaphore is None")
+            logger.debug("SlurmGmxEngine: SLURM_MAX_JOB semaphore is None")
 
     async def _cleanup_gmx_mdrun(self, local_mdrun=False, **kwargs):
         if local_mdrun:
