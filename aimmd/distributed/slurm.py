@@ -22,7 +22,7 @@ import subprocess
 import logging
 
 
-from . import _SEM_MAX_FILES_OPEN
+from . import _SEMAPHORES
 from .utils import ensure_executable_available
 
 
@@ -114,9 +114,9 @@ class SlurmProcess:
     async def submit(self):
         sbatch_cmd = f"{self.sbatch_executable} --parsable {self.sbatch_script}"
         # 3 file descriptors: stdin,stdout,stderr
-        await _SEM_MAX_FILES_OPEN.acquire()
-        await _SEM_MAX_FILES_OPEN.acquire()
-        await _SEM_MAX_FILES_OPEN.acquire()
+        await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
+        await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
+        await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
         try:
             sbatch_proc = await asyncio.subprocess.create_subprocess_exec(
                                                 *shlex.split(sbatch_cmd),
@@ -129,9 +129,9 @@ class SlurmProcess:
             sbatch_return = stdout.decode()
         finally:
             # and put the three back into the semaphore
-            _SEM_MAX_FILES_OPEN.release()
-            _SEM_MAX_FILES_OPEN.release()
-            _SEM_MAX_FILES_OPEN.release()
+            _SEMAPHORES["MAX_FILES_OPEN"].release()
+            _SEMAPHORES["MAX_FILES_OPEN"].release()
+            _SEMAPHORES["MAX_FILES_OPEN"].release()
         # only jobid (and possibly clustername) returned, semikolon to separate
         logger.debug(f"sbatch returned {sbatch_return}.")
         jobid = sbatch_return.split(";")[0].strip()
