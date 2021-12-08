@@ -22,7 +22,7 @@ import asyncio
 import logging
 import numpy as np
 
-from . import _SEM_BRAIN_MODEL
+from . import _SEMAPHORES
 from .trajectory import (RandomVelocitiesFrameExtractor,
                          InvertedVelocitiesFrameExtractor,
                          )
@@ -138,7 +138,7 @@ class ModelDependentPathMover(PathMover):
         #  prediction accuracy in the close past to decide if we want to train)
         # [registering the sp with the model is done by the trainingtask, to
         #  this end we save the predicted committors for the sp with the MCStep]
-        async with _SEM_BRAIN_MODEL:
+        async with _SEMAPHORES["BRAIN_MODEL"]:
             self.store_model(model=model, stepnum=stepnum)
         # release the Semaphore, we load the stored model for accept/reject later
 

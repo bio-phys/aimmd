@@ -22,7 +22,7 @@ import functools
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
 
-from . import _SEM_MAX_PROCESS
+from . import _SEMAPHORES
 from .trajectory import TrajectoryConcatenator
 from .gmx_utils import get_all_traj_parts, nstout_from_mdp
 
@@ -147,7 +147,7 @@ async def construct_TP_from_plus_and_minus_traj_segments(minus_trajs, minus_stat
                                struct_out=struct_out,
                                overwrite=overwrite)
     loop = asyncio.get_running_loop()
-    async with _SEM_MAX_PROCESS:
+    async with _SEMAPHORES["MAX_PROCESS"]:
         # NOTE: make sure we do not fork! (not save with multithreading)
         # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
         ctx = multiprocessing.get_context("forkserver")
@@ -461,7 +461,7 @@ class TrajectoryPropagatorUntilAnyState:
                                    tra_out=tra_out, struct_out=None,
                                    overwrite=overwrite)
         loop = asyncio.get_running_loop()
-        async with _SEM_MAX_PROCESS:
+        async with _SEMAPHORES["MAX_PROCESS"]:
             # NOTE: make sure we do not fork! (not save with multithreading)
             # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
             ctx = multiprocessing.get_context("forkserver")

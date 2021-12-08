@@ -24,7 +24,7 @@ import shutil
 import asyncio
 import logging
 
-from . import _SEM_MAX_FILES_OPEN, _SEM_SLURM_MAX_JOB
+from . import _SEMAPHORES
 from .trajectory import Trajectory
 from .slurm import SlurmProcess
 from .mdconfig import MDP
@@ -575,9 +575,9 @@ class GmxEngine(MDEngine):
                                    trr_in=trr_in, mdp_out=mdp_out)
         logger.info(f"{cmd_str}")
         # 3 file descriptors: stdin, stdout, stderr
-        await _SEM_MAX_FILES_OPEN.acquire()
-        await _SEM_MAX_FILES_OPEN.acquire()
-        await _SEM_MAX_FILES_OPEN.acquire()
+        await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
+        await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
+        await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
         try:
             grompp_proc = await asyncio.create_subprocess_exec(
                                                 *shlex.split(cmd_str),
@@ -593,9 +593,9 @@ class GmxEngine(MDEngine):
             logger.info(f"grompp command returned {return_code}.")
         finally:
             # release the semaphore(s)
-            _SEM_MAX_FILES_OPEN.release()
-            _SEM_MAX_FILES_OPEN.release()
-            _SEM_MAX_FILES_OPEN.release()
+            _SEMAPHORES["MAX_FILES_OPEN"].release()
+            _SEMAPHORES["MAX_FILES_OPEN"].release()
+            _SEMAPHORES["MAX_FILES_OPEN"].release()
         if return_code != 0:
             # this assumes POSIX
             raise RuntimeError(f"grompp had non-zero return code ({return_code}).")
@@ -649,9 +649,9 @@ class GmxEngine(MDEngine):
     async def _acquire_resources_gmx_mdrun(self, **kwargs):
         # *always* called before any gmx_mdrun, use to get Semaphores for resources
         # for local gmx we need 3 file descriptors: stdin, stdout, stderr
-        await _SEM_MAX_FILES_OPEN.acquire()
-        await _SEM_MAX_FILES_OPEN.acquire()
-        await _SEM_MAX_FILES_OPEN.acquire()
+        await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
+        await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
+        await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
 
     async def _cleanup_gmx_mdrun(self, **kwargs):
         # *always* called after any gmx_mdrun, use to release Semaphores and friends
@@ -660,9 +660,9 @@ class GmxEngine(MDEngine):
         logger.debug(f"gmx mdrun stdout: {stdout.decode()}")
         logger.debug(f"gmx mdrun stderr: {stderr.decode()}")
         # release the semaphore for the 3 file descriptors
-        _SEM_MAX_FILES_OPEN.release()
-        _SEM_MAX_FILES_OPEN.release()
-        _SEM_MAX_FILES_OPEN.release()
+        await _SEMAPHORES["MAX_FILES_OPEN"].release()
+        await _SEMAPHORES["MAX_FILES_OPEN"].release()
+        await _SEMAPHORES["MAX_FILES_OPEN"].release()
 
     async def run(self, nsteps=None, walltime=None, steps_per_part=False):
         """
@@ -926,7 +926,7 @@ class SlurmGmxEngine(GmxEngine):
         if os.path.exists(fname):
             # TODO: should we raise an error?
             logger.error(f"Overwriting existing submission file ({fname}).")
-        async with _SEM_MAX_FILES_OPEN:
+        async with _SEMAPHORES["MAX_FILES_OPEN"]:
             with open(fname, 'w') as f:
                 f.write(script)
         self._proc = SlurmProcess(sbatch_script=fname, workdir=workdir,
@@ -943,10 +943,10 @@ class SlurmGmxEngine(GmxEngine):
             return await super()._acquire_resources_gmx_mdrun()
         #if self.slurm_maxjob_semaphore is not None:
         #    await self.slurm_maxjob_semaphore.acquire()
-        if _SEM_SLURM_MAX_JOB is not None:
-            logger.debug(f"SlurmGmxEngine: SLURM_MAX_JOB semaphore is {_SEM_SLURM_MAX_JOB}"
+        if _SEMAPHORES["SLURM_MAX_JOB"] is not None:
+            logger.debug(f"SlurmGmxEngine: SLURM_MAX_JOB semaphore is {_SEMAPHORES["SLURM_MAX_JOB"]}"
                          + " before acquiring.")
-            await _SEM_SLURM_MAX_JOB.acquire()
+            await _SEMAPHORES["SLURM_MAX_JOB"].acquire()
         else:
             logger.debug(f"SlurmGmxEngine: SLURM_MAX_JOB semaphore is None")
 
@@ -957,8 +957,8 @@ class SlurmGmxEngine(GmxEngine):
             return await super()._cleanup_gmx_mdrun()
         #if self.slurm_maxjob_semaphore is not None:
         #    self.slurm_maxjob_semaphore.release()
-        if _SEM_SLURM_MAX_JOB is not None:
-            await _SEM_SLURM_MAX_JOB.release()
+        if _SEMAPHORES["SLURM_MAX_JOB"] is not None:
+            await _SEMAPHORES["SLURM_MAX_JOB"].release()
 
     # TODO: do we even need/want that?
     @property

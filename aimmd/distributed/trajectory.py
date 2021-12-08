@@ -31,7 +31,7 @@ from scipy import constants
 
 from .slurm import SlurmProcess
 from .utils import ensure_executable_available
-from . import _SEM_MAX_PROCESS, _SEM_MAX_FILES_OPEN
+from . import _SEMAPHORES
 
 
 logger = logging.getLogger(__name__)
@@ -153,7 +153,7 @@ class PyTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
 
     async def get_values_for_trajectory(self, traj):
         loop = asyncio.get_running_loop()
-        async with _SEM_MAX_PROCESS:
+        async with _SEMAPHORES["MAX_PROCESS"]:
             # NOTE: make sure we do not fork! (not save with multithreading)
             # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
             ctx = multiprocessing.get_context("forkserver")
@@ -343,7 +343,7 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
         if os.path.exists(sbatch_fname):
             # TODO: should we raise an error?
             logger.error(f"Overwriting exisiting submission file ({sbatch_fname}).")
-        async with _SEM_MAX_FILES_OPEN:
+        async with _SEMAPHORES["MAX_FILES_OPEN"]:
             with open(sbatch_fname, 'w') as f:
                 f.write(script)
         # and submit it

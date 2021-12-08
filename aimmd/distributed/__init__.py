@@ -23,6 +23,9 @@ import asyncio
 import resource
 
 
+_SEMAPHORES = {}
+
+
 def set_max_process(num=None, max_num=None):
     """
     Set the maximum number of concurrent python processes.
@@ -30,7 +33,7 @@ def set_max_process(num=None, max_num=None):
     """
     # TODO: I think we should use less as default, maybe 0.25*cpu_count()?
     # and limit to 30-40?, i.e never higher even if we have 1111 cores?
-    global _SEM_MAX_PROCESS
+    global _SEMAPHORES
     if num is None:
         logical_cpu_count = os.cpu_count()
         if logical_cpu_count is not None:
@@ -42,7 +45,7 @@ def set_max_process(num=None, max_num=None):
             num = 2
     if max_num is not None:
         num = min((num, max_num))
-    _SEM_MAX_PROCESS = asyncio.Semaphore(num)
+    _SEMAPHORES["MAX_PROCESS"] = asyncio.Semaphore(num)
 
 
 # TODO/FIXME: calling this function again does not change the semaphore?!
@@ -51,8 +54,10 @@ def set_max_process(num=None, max_num=None):
 #             the sampling simulation?
 set_max_process()
 
+
 # ensure that only one Chain can access the central model at a time
-_SEM_BRAIN_MODEL = asyncio.Semaphore(1)
+_SEMAPHORES["BRAIN_MODEL"] = asyncio.Semaphore(1)
+
 
 # ensure that we do not open too many files
 # resource.getrlimit returns a tuple (soft, hard); we take the soft-limit
@@ -60,13 +65,14 @@ _SEM_BRAIN_MODEL = asyncio.Semaphore(1)
 # from non-async code, but sometimes use the sync subprocess.run and
 # subprocess.check_call [which also need files/pipes to work])
 # also maybe we need other open files like a storage :)
-_SEM_MAX_FILES_OPEN = asyncio.BoundedSemaphore(resource.getrlimit(
-                                                        resource.RLIMIT_NOFILE
-                                                                  )[0] - 30)
+_SEMAPHORES["MAX_FILES_OPEN"] = asyncio.BoundedSemaphore(resource.getrlimit(
+                                                         resource.RLIMIT_NOFILE
+                                                                   )[0] - 30
+                                                         )
 
 
 # slurm max job semaphore, if the user sets it it will be used?
-_SEM_SLURM_MAX_JOB = None
+_SEMAPHORES["SLURM_MAX_JOB"] = None
 
 
 # make stuff from submodules available (after defining the semaphores)

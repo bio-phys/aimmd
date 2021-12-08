@@ -21,7 +21,7 @@ import asyncio
 import logging
 import numpy as np
 
-from . import _SEM_BRAIN_MODEL
+from . import _SEMAPHORES
 from .. import TrainSet
 from .mdengine import EngineError, EngineCrashedError
 from .pathmovers import (MCstep, PathMover, ModelDependentPathMover)
@@ -55,7 +55,7 @@ class SaveTask(BrainTask):
     async def run(self, brain, mcstep: MCstep, chain_idx):
         # this only runs when total_steps % interval == 0
         # i.e. we can just save when we run
-        async with _SEM_BRAIN_MODEL:
+        async with _SEMAPHORES["BRAIN_MODEL"]:
             self.storage.save_trainset(self.trainset)
             savename = f"{self.name_prefix}_after_step{brain.total_steps}"
             self.storage.rcmodels[savename] = self.model
@@ -78,7 +78,7 @@ class TrainingTask(BrainTask):
             logger.warning("Tried to add a step that was no shooting snapshot")
         else:
             descriptors = await self.model.descriptor_transform(shooting_snap)
-            async with _SEM_BRAIN_MODEL:
+            async with _SEMAPHORES["BRAIN_MODEL"]:
                 # descriptors is 2d but append_point expects 1d
                 self.trainset.append_point(descriptors=descriptors[0],
                                            shot_results=states_reached)
@@ -116,7 +116,7 @@ class DensityCollectionTask(BrainTask):
                                                 per_chain=False,
                                                 starts=None,
                                                                   )
-                async with _SEM_BRAIN_MODEL:
+                async with _SEMAPHORES["BRAIN_MODEL"]:
                     await dc.add_density_for_trajectories(model=self.model,
                                                           trajectories=trajs,
                                                           counts=counts,
@@ -132,7 +132,7 @@ class DensityCollectionTask(BrainTask):
                                                 per_chain=False,
                                                 starts=self._last_collection,
                                                                   )
-                async with _SEM_BRAIN_MODEL:
+                async with _SEMAPHORES["BRAIN_MODEL"]:
                     await dc.add_density_for_trajectories(model=self.model,
                                                           trajectories=trajs,
                                                           counts=counts,
@@ -145,7 +145,7 @@ class DensityCollectionTask(BrainTask):
             # independent of adding new TPs in the same MCStep
             if brain.total_steps % self.recreate_interval == 0:
                 # reevaluation time
-                async with _SEM_BRAIN_MODEL:
+                async with _SEMAPHORES["BRAIN_MODEL"]:
                     await dc.reevaluate_density(model=self.model)
 
 
