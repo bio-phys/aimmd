@@ -852,7 +852,7 @@ class SlurmGmxEngine(GmxEngine):
     scancel_executable = SlurmProcess.scancel_executable
 
     def __init__(self, mdp, gro_file, top_file, sbatch_script, ndx_file=None,
-                 slurm_maxjob_semaphore=None, **kwargs):
+                 **kwargs):
         """
         Initialize a `SlurmGmxEngine`.
 
@@ -870,8 +870,6 @@ class SlurmGmxEngine(GmxEngine):
                             {jobname} - will be replaced by the name of the job
                                         containing the deffnm of the mdrun
         ndx_file - (optional) absolute or relative path to a gromacs index file
-        slurm_maxjob_semaphore - (optional) `asyncio.Semaphore`, can be used to
-                                 bound the maximum number of submitted jobs
 
         Note that all attributes can be set at intialization by passing keyword
         arguments with their name, e.g. mdrun_extra_args="-ntomp 2" to instruct
@@ -888,7 +886,6 @@ class SlurmGmxEngine(GmxEngine):
             with open(sbatch_script, 'r') as f:
                 sbatch_script = f.read()
         self.sbatch_script = sbatch_script
-        self.slurm_maxjob_semaphore = slurm_maxjob_semaphore
 
     async def apply_constraints(self, conf_in, conf_out_name, wdir="."):
         return await self._0step_md(conf_in=conf_in,
@@ -941,24 +938,20 @@ class SlurmGmxEngine(GmxEngine):
             # running locally: use supers acquire method
             # (used for 0step MDs: gen-vel and constraints)
             return await super()._acquire_resources_gmx_mdrun()
-        #if self.slurm_maxjob_semaphore is not None:
-        #    await self.slurm_maxjob_semaphore.acquire()
         if _SEMAPHORES["SLURM_MAX_JOB"] is not None:
-            logger.debug(f"SlurmGmxEngine: SLURM_MAX_JOB semaphore is {_SEMAPHORES['SLURM_MAX_JOB']}"
+            logger.debug(f"SLURM_MAX_JOB semaphore is {_SEMAPHORES['SLURM_MAX_JOB']}"
                          + " before acquiring.")
             await _SEMAPHORES["SLURM_MAX_JOB"].acquire()
         else:
-            logger.debug("SlurmGmxEngine: SLURM_MAX_JOB semaphore is None")
+            logger.debug("SLURM_MAX_JOB semaphore is None")
 
     async def _cleanup_gmx_mdrun(self, local_mdrun=False, **kwargs):
         if local_mdrun:
             # running locally: use supers cleanup method
             # (used for 0step MDs: gen-vel and constraints)
             return await super()._cleanup_gmx_mdrun()
-        #if self.slurm_maxjob_semaphore is not None:
-        #    self.slurm_maxjob_semaphore.release()
         if _SEMAPHORES["SLURM_MAX_JOB"] is not None:
-            await _SEMAPHORES["SLURM_MAX_JOB"].release()
+            _SEMAPHORES["SLURM_MAX_JOB"].release()
 
     # TODO: do we even need/want that?
     @property

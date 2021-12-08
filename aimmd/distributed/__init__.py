@@ -26,6 +26,7 @@ import resource
 _SEMAPHORES = {}
 
 
+# can be called by the user to (re) set maximum number of processes used
 def set_max_process(num=None, max_num=None):
     """
     Set the maximum number of concurrent python processes.
@@ -45,18 +46,14 @@ def set_max_process(num=None, max_num=None):
             num = 2
     if max_num is not None:
         num = min((num, max_num))
-    _SEMAPHORES["MAX_PROCESS"] = asyncio.Semaphore(num)
+    _SEMAPHORES["MAX_PROCESS"] = asyncio.BoundedSemaphore(num)
 
 
-# TODO/FIXME: calling this function again does not change the semaphore?!
-#             i.e. we can only set max_processes when intitially importing?!
-#             since this really sux we should think about passing the/a semaphore to
-#             the sampling simulation?
 set_max_process()
 
 
 # ensure that only one Chain can access the central model at a time
-_SEMAPHORES["BRAIN_MODEL"] = asyncio.Semaphore(1)
+_SEMAPHORES["BRAIN_MODEL"] = asyncio.BoundedSemaphore(1)
 
 
 # ensure that we do not open too many files
@@ -71,8 +68,13 @@ _SEMAPHORES["MAX_FILES_OPEN"] = asyncio.BoundedSemaphore(resource.getrlimit(
                                                          )
 
 
-# slurm max job semaphore, if the user sets it it will be used?
+# slurm max job semaphore, if the user sets it it will be used
 _SEMAPHORES["SLURM_MAX_JOB"] = None
+
+
+def set_max_slurm_jobs(num):
+    global _SEMAPHORES
+    _SEMAPHORES["SLURM_MAX_JOB"] = asyncio.BoundedSemaphore(num)
 
 
 # make stuff from submodules available (after defining the semaphores)

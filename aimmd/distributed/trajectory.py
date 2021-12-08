@@ -215,8 +215,7 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
     scancel_executable = SlurmProcess.scancel_executable
 
     def __init__(self, executable, sbatch_script, call_kwargs={},
-                 load_results_func=None, slurm_maxjob_semaphore=None, **kwargs,
-                 ):
+                 load_results_func=None, **kwargs):
         """
         Initialize `SlurmTrajectoryFunctionWrapper`.
 
@@ -243,11 +242,6 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                             with the full path to the results file (as in the
                             call to the executable) and should return a numpy
                             array containing the loaded values
-        slurm_maxjob_semaphore - None or `asyncio.Semaphore`, can be used to
-                                 bound the maximum number of submitted jobs
-                                 NOTE: The semaphore will be lost upon
-                                       unpickling, i.e. also when saving this
-                                       to an aimmd.Storage
 
         Note that all attributes can be set via __init__ by passing them as
         keyword arguments.
@@ -269,7 +263,6 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
         self.executable = executable
         self.call_kwargs = call_kwargs
         self.load_results_func = load_results_func
-        self.slurm_maxjob_semaphore = slurm_maxjob_semaphore
 
     @property
     def slurm_jobname(self):
@@ -353,8 +346,8 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                                   scancel_executable=self.scancel_executable,
                                   sleep_time=15,  # sleep 15 s between checking
                                   )
-        if self.slurm_maxjob_semaphore is not None:
-            await self.slurm_maxjob_semaphore.acquire()
+        if _SEMAPHORES["SLURM_MAX_JOB"] is not None:
+            await _SEMAPHORES["SLURM_MAX_JOB"].acquire()
         try:  # this try is just to make sure we always release the semaphore
             await slurm_proc.submit()
             # wait for the slurm job to finish
@@ -405,8 +398,8 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                             + "submission script.")
                 return vals
         finally:
-            if self.slurm_maxjob_semaphore is not None:
-                self.slurm_maxjob_semaphore.release()
+            if _SEMAPHORES["SLURM_MAX_JOB"] is not None:
+                _SEMAPHORES["SLURM_MAX_JOB"].release()
 
     async def __call__(self, value):
         if isinstance(value, Trajectory) and self.id is not None:
@@ -415,11 +408,6 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
             raise ValueError("SlurmTrajectoryFunctionWrapper must be called"
                              + " with an `aimmd.distributed.Trajectory` "
                              + f"but was called with {type(value)}.")
-
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        state["slurm_maxjob_semaphore"] = None
-        return state
 
 
 class Trajectory:

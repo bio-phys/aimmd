@@ -11,7 +11,7 @@ LOGCONFIG = {'version': 1,
              'disable_existing_loggers': False,
              'formatters': {'standardFormatter': {
                                'class': 'logging.Formatter',
-                               'format': '(%(levelname)s)%(name)s: %(message)s'
+                               'format': '(%(levelname)s)%(name)s%(funcName)s: %(message)s'
                                                   },
                             'msgOnly': {
                                   'class': 'logging.Formatter',
