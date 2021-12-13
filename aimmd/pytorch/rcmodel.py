@@ -335,17 +335,45 @@ class PytorchRCModel(RCModel):
                                    * trainset.weights
                                    )
 
-    def _log_prob(self, descriptors):
+    def _log_prob(self, descriptors, batch_size):
+        if batch_size is None:
+            try:
+                batch_size = self.ee_params["batch_size"]
+            except (KeyError, AttributeError):
+                # either ee_params not seet or no batch_size in there
+                # so lets keep the None value
+                pass
+            else:
+                raise
+        if batch_size is None:
+            # do it in one batch
+            batch_size = descriptors.shape[0]
+        # make sure we can not go tooo large even with a None value
+        # the below results in an 4 MB descriptors tensor
+        # if we have 64 bit floats and 1D descriptors
+        # since we expect descriptors to be dim 100 - 1000
+        # it is more like 400 - 4000 MB descriptors
+        # (or half of that for 32 bit floats)
+        max_size = 4096  # = 1024 * 4
+        if batch_size > max_size:
+            logger.warning(f"Using batch size {max_size} instead of {batch_size}"
+                           + " to make sure we can fit everything in memory."
+                           )
+            batch_size = max_size
+        predictions = []
         self.nnet.eval()  # put model in evaluation mode
         # no gradient accumulation for predictions!
         with torch.no_grad():
-            # we do this to create the descriptors array on same GPU/CPU where the model lives
-            descriptors = torch.as_tensor(descriptors, device=self._device,
-                                          dtype=self._dtype)
-            # move the prediction tensor to cpu (if not there already) than convert to numpy
-            pred = self.nnet(descriptors).cpu().numpy()
+            for descript_part in np.array_split(descriptors, batch_size):
+                # we do this to create the descriptors array on same
+                # devive (GPU/CPU) where the model lives
+                descript_part = torch.as_tensor(descript_part, device=self._device,
+                                                dtype=self._dtype)
+                # move the prediction tensor to cpu (if not there already) than convert to numpy
+                pred = self.nnet(descript_part).cpu().numpy()
+                predictions.append(pred)
         self.nnet.train()  # make model trainable again
-        return pred
+        return np.concatenate(predictions, axis=0)
 
 
 class EEScalePytorchRCModel(PytorchRCModel):

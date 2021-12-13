@@ -123,8 +123,36 @@ class KerasRCModel(RCModel):
         # see if there is something left to do for super
         return super(KerasRCModel, self).complete_from_h5py_group(group)
 
-    def _log_prob(self, descriptors):
-        return self.nnet.predict(descriptors)
+    def _log_prob(self, descriptors, batch_size):
+        if batch_size is None:
+            try:
+                batch_size = self.ee_params["batch_size"]
+            except (KeyError, AttributeError):
+                # either ee_params not seet or no batch_size in there
+                # so lets keep the None value
+                pass
+            else:
+                raise
+        if batch_size is None:
+            # do it in one batch
+            batch_size = descriptors.shape[0]
+        # make sure we can not go tooo large even with a None value
+        # the below results in an 4 MB descriptors tensor
+        # if we have 64 bit floats and 1D descriptors
+        # since we expect descriptors to be dim 100 - 1000
+        # it is more like 400 - 4000 MB descriptors
+        # (or half of that for 32 bit floats)
+        max_size = 4096  # = 1024 * 4
+        if batch_size > max_size:
+            logger.warning(f"Using batch size {max_size} instead of {batch_size}"
+                           + " to make sure we can fit everything in memory."
+                           )
+            batch_size = max_size
+        predictions = []
+        for descript_part in np.array_split(descriptors, batch_size):
+            pred = self.nnet.predict(descript_part, batch_size=batch_size)
+            predictions.append(pred)
+        return np.concatenate(predictions, axis=0)
 
     def train_hook(self, trainset):
         self._count_train_hook += 1

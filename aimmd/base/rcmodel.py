@@ -164,7 +164,7 @@ class RCModel(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _log_prob(self, descriptors):
+    def _log_prob(self, descriptors, batch_size):
         # returns the unnormalized log probabilities for given descriptors
         # descriptors is a numpy array with shape (n_points, n_descriptors)
         # the output is expected to be an array of shape (n_points, n_out)
@@ -223,29 +223,38 @@ class RCModel(ABC):
             descriptors = self.descriptor_transform(descriptors)
         return descriptors
 
-    def log_prob(self, descriptors, use_transform=True):
+    def log_prob(self, descriptors, use_transform=True, batch_size=None):
         """
         Return the unnormalized log probabilities for given descriptors.
 
         For n_out=1 only the log probability to reach state B is returned.
+        If batch_size is None we will try to get a default value from the
+        models training parameters.
         """
         # if self.descriptor_transform is defined we use it before prediction
         # otherwise we just apply the model to descriptors
         if use_transform:
             descriptors = self._apply_descriptor_transform(descriptors)
-        return self._log_prob(descriptors)
+        return self._log_prob(descriptors, batch_size=batch_size)
 
-    def q(self, descriptors, use_transform=True):
+    def q(self, descriptors, use_transform=True, batch_size=None):
         """
         Return the reaction coordinate value(s) for given descriptors.
 
         For n_out=1 the RC towards state B is returned,
         otherwise the RC towards the state is returned for each state.
+        If batch_size is None we will try to get a default value from the
+        models training parameters.
         """
         if self.n_out == 1:
-            return self.log_prob(descriptors, use_transform)
+            return self.log_prob(descriptors,
+                                 use_transform=use_transform,
+                                 batch_size=batch_size,
+                                 )
         else:
-            log_prob = self.log_prob(descriptors, use_transform)
+            log_prob = self.log_prob(descriptors,
+                                     use_transform=use_transform,
+                                     batch_size=batch_size)
             rc = [(log_prob[..., i:i+1]
                    - np.log(np.sum(np.exp(np.delete(log_prob, [i], axis=-1)),
                                    axis=-1, keepdims=True
@@ -254,37 +263,57 @@ class RCModel(ABC):
                    ) for i in range(log_prob.shape[-1])]
             return np.concatenate(rc, axis=-1)
 
-    def __call__(self, descriptors, use_transform=True):
+    def __call__(self, descriptors, use_transform=True, batch_size=None):
         """
         Return the commitment probability/probabilities.
 
         Returns p_B if n_out=1,
         otherwise the committment probabilities towards the states.
+        If batch_size is None we will try to get a default value from the
+        models training parameters.
         """
         if self.n_out == 1:
-            return self._p_binom(descriptors, use_transform)
-        return self._p_multinom(descriptors, use_transform)
+            return self._p_binom(descriptors,
+                                 use_transform=use_transform,
+                                 batch_size=batch_size,
+                                 )
+        return self._p_multinom(descriptors,
+                                use_transform=use_transform,
+                                batch_size=batch_size,
+                                )
 
-    def _p_binom(self, descriptors, use_transform):
-        q = self.q(descriptors, use_transform)
+    def _p_binom(self, descriptors, use_transform, batch_size):
+        q = self.q(descriptors,
+                   use_transform=use_transform,
+                   batch_size=batch_size,
+                   )
         return 1/(1 + np.exp(-q))
 
-    def _p_multinom(self, descriptors, use_transform):
-        exp_log_p = np.exp(self.log_prob(descriptors, use_transform))
+    def _p_multinom(self, descriptors, use_transform, batch_size):
+        exp_log_p = np.exp(self.log_prob(descriptors,
+                                         use_transform=use_transform,
+                                         batch_size=batch_size,
+                                         )
+                           )
         return exp_log_p / np.sum(exp_log_p, axis=1, keepdims=True)
 
-    def z_sel(self, descriptors, use_transform=True):
+    def z_sel(self, descriptors, use_transform=True, batch_size=None):
         """
         Return the value of the selection coordinate z_sel.
 
         It is zero at the most optimal point conceivable.
         For n_out=1 this is simply the unnormalized log probability.
+        If batch_size is None we will try to get a default value from the
+        models training parameters.
         """
         if self.n_out == 1:
-            return self.q(descriptors, use_transform)
+            return self.q(descriptors,
+                          use_transform=use_transform,
+                          batch_size=batch_size,
+                          )
         return self._z_sel_multinom(descriptors, use_transform)
 
-    def _z_sel_multinom(self, descriptors, use_transform):
+    def _z_sel_multinom(self, descriptors, use_transform, batch_size):
         """
         Multinomial selection coordinate.
 
@@ -295,7 +324,10 @@ class RCModel(ABC):
         We can therefore select the point for which this
         expression is closest to zero as the optimal SP.
         """
-        p = self._p_multinom(descriptors, use_transform)
+        p = self._p_multinom(descriptors,
+                             use_transform=use_transform,
+                             batch_size=batch_size,
+                             )
         # the prob to be on any TP is 1 - the prob to be on no TP
         # to be on no TP means beeing on a "self transition" (A->A, etc.)
         reactive_prob = 1 - np.sum(p * p, axis=1)
