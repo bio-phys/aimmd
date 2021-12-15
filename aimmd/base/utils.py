@@ -109,3 +109,36 @@ def emulate_production_from_storage(model, storage, n_states):
         model.train_hook(new_ts)
 
     return model, new_ts
+
+
+def get_batch_size_from_model_and_descriptors(model, descriptors, max_size=4096) -> int:
+    """
+    Get a batch size value either from models expected efficiency params.
+
+    If None is in there take the min(descriptors.shape[0], max_size)
+    """
+    try:
+        batch_size = model.ee_params["batch_size"]
+    except (KeyError, AttributeError):
+        # either ee_params not set or no batch_size in there
+        # so lets (try to) do it in one batch
+        batch_size = None
+    except Exception as e:
+        # raise everything else
+        raise e from None
+    if batch_size is None:
+        # None means (try) in one batch
+        batch_size = descriptors.shape[0]
+    # make sure we can not go tooo large even with a None value
+    # the below results in an 4 MB descriptors tensor
+    # if we have 64 bit floats and 1D descriptors
+    # since we expect descriptors to be dim 100 - 1000
+    # it is more like 400 - 4000 MB descriptors
+    # (or half of that for 32 bit floats)
+    #max_size = 4096  # = 1024 * 4
+    if batch_size > max_size:
+        logger.warning(f"Using batch size {max_size} instead of {batch_size}"
+                        + " to make sure we can fit everything in memory."
+                           )
+        batch_size = max_size
+    return batch_size

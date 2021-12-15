@@ -311,7 +311,10 @@ class RCModel(ABC):
                           use_transform=use_transform,
                           batch_size=batch_size,
                           )
-        return self._z_sel_multinom(descriptors, use_transform)
+        return self._z_sel_multinom(descriptors,
+                                    use_transform=use_transform,
+                                    batch_size=batch_size,
+                                    )
 
     def _z_sel_multinom(self, descriptors, use_transform, batch_size):
         """

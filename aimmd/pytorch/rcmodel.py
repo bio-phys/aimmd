@@ -27,6 +27,7 @@ from ..base.rcmodel_train_decision import (_train_decision_funcs,
 # TODO: Buffered version or non-buffered version?
 from ..base.storage import (BytesStreamtoH5py, BytesStreamtoH5pyBuffered,
                             H5pytoBytesStream)
+from ..base.utils import get_batch_size_from_model_and_descriptors
 from .utils import get_closest_pytorch_device, optimizer_state_to_device
 
 
@@ -337,29 +338,9 @@ class PytorchRCModel(RCModel):
 
     def _log_prob(self, descriptors, batch_size):
         if batch_size is None:
-            try:
-                batch_size = self.ee_params["batch_size"]
-            except (KeyError, AttributeError):
-                # either ee_params not seet or no batch_size in there
-                # so lets keep the None value
-                pass
-            else:
-                raise
-        if batch_size is None:
-            # do it in one batch
-            batch_size = descriptors.shape[0]
-        # make sure we can not go tooo large even with a None value
-        # the below results in an 4 MB descriptors tensor
-        # if we have 64 bit floats and 1D descriptors
-        # since we expect descriptors to be dim 100 - 1000
-        # it is more like 400 - 4000 MB descriptors
-        # (or half of that for 32 bit floats)
-        max_size = 4096  # = 1024 * 4
-        if batch_size > max_size:
-            logger.warning(f"Using batch size {max_size} instead of {batch_size}"
-                           + " to make sure we can fit everything in memory."
-                           )
-            batch_size = max_size
+            batch_size = get_batch_size_from_model_and_descriptors(
+                                    model=self, descriptors=descriptors
+                                                                   )
         predictions = []
         self.nnet.eval()  # put model in evaluation mode
         # no gradient accumulation for predictions!
@@ -595,18 +576,25 @@ class EnsemblePytorchRCModel(RCModel):
                                                          )
                                         for _ in range(epochs)])
 
-    def log_prob(self, descriptors, use_transform=True):
-        return self._log_prob(descriptors, use_transform)
+    def log_prob(self, descriptors, use_transform=True, batch_size=None):
+        return self._log_prob(descriptors,
+                              use_transform=use_transform,
+                              batch_size=batch_size,
+                              )
 
-    def _log_prob(self, descriptors, use_transform=False):
-        p = self(descriptors, use_transform)
+    def _log_prob(self, descriptors, use_transform, batch_size):
+        p = self(descriptors,
+                 use_transform=use_transform,
+                 batch_size=batch_size,
+                 )
         if p.shape[1] == 1:
             return -np.log(1. / p - 1.)
         return np.log(p)
 
     # NOTE: prediction happens in here,
     # since we have to do the weighting in probability space
-    def __call__(self, descriptors, use_transform=True, detailed_predictions=False):
+    def __call__(self, descriptors, use_transform=True, batch_size=None,
+                 detailed_predictions=False):
         if self.n_out == 1:
             def p_func(q):
                 return 1. / (1. + torch.exp(-q))
@@ -619,21 +607,27 @@ class EnsemblePytorchRCModel(RCModel):
             descriptors = self._apply_descriptor_transform(descriptors)
 
         [nnet.eval() for nnet in self.nnets]
+        if batch_size is None:
+            batch_size = get_batch_size_from_model_and_descriptors(
+                                            model=self, descriptors=descriptors,
+                                                                   )
         # TODO: do we need no_grad? or is eval and no_grad redundant?
-        plist = []
+        plists = [[] for _ in self.nnets]
         with torch.no_grad():
-            if self._nnets_same_device:
-                descriptors = torch.as_tensor(descriptors,
-                                              device=self._devices[0],
-                                              dtype=self._dtypes[0]
-                                              )
-            for i, nnet in enumerate(self.nnets):
-                if not self._nnets_same_device:
-                    descriptors = torch.as_tensor(descriptors,
-                                                  device=self._devices[i],
-                                                  dtype=self._dtypes[i]
-                                                  )
-                plist.append(p_func(nnet(descriptors)).cpu().numpy())
+            for descript_part in np.array_split(descriptors, batch_size):
+                if self._nnets_same_device:
+                    descript_part = torch.as_tensor(descript_part,
+                                                    device=self._devices[0],
+                                                    dtype=self._dtypes[0]
+                                                    )
+                for i, nnet in enumerate(self.nnets):
+                    if not self._nnets_same_device:
+                        descript_part = torch.as_tensor(descript_part,
+                                                        device=self._devices[i],
+                                                        dtype=self._dtypes[i]
+                                                        )
+                    plists[i].append(p_func(nnet(descript_part)).cpu().numpy())
+        plist = [np.concatenate(l, axis=0) for l in plists]
         p_mean = sum(plist)
         p_mean /= len(plist)
         [nnet.train() for nnet in self.nnets]
@@ -641,13 +635,13 @@ class EnsemblePytorchRCModel(RCModel):
             return p_mean, plist
         return p_mean
 
-    def test_loss(self, trainset):
+    def test_loss(self, trainset, batch_size=1024):
         # TODO/FIXME: this assumes binomial/multinomial loss!
         # TODO/FIXME: we should rewrite it in terms of self.loss if possible
         # calculate the test loss for the combined weighted prediction
         # i.e. the loss the model suffers when used as a whole
         # Note that self.__call__() puts the model in evaluation mode
-        p = self(trainset.descriptors, use_transform=False)
+        p = self(trainset.descriptors, use_transform=False, batch_size=batch_size)
         if self.n_out == 1:
             p = p[:, 0]  # make it a 1d array
             # NOTE: the only NaNs we can/should have are generated by multiplying
@@ -1010,7 +1004,7 @@ class MultiDomainPytorchRCModel(RCModel):
 
         """
         if loss == 'L_pred':
-            return self._test_loss_pred(trainset)
+            return self._test_loss_pred(trainset, batch_size)
         elif 'L_mod' in loss:
             mod_num = int(loss.lstrip('L_mod'))
             if not (0 <= mod_num < len(self.pnets)):
@@ -1025,13 +1019,13 @@ class MultiDomainPytorchRCModel(RCModel):
             raise ValueError("'loss' must be one of 'L_pred', 'L_mod{:d}', "
                              + "'L_gamma' or 'L_class'")
 
-    def _test_loss_pred(self, trainset):
+    def _test_loss_pred(self, trainset, batch_size):
         # TODO/FIXME: assumes binomial/multinomial loss!
         # calculate the test loss for the combined weighted prediction
         # p_i = \sum_m p_c(m) * p_i(m)
         # i.e. the loss the model would suffer when used as a whole
         # Note that self.__call__() puts the model in evaluation mode
-        p = self(trainset.descriptors, use_transform=False)
+        p = self(trainset.descriptors, use_transform=False, batch_size=batch_size)
         if self.n_out == 1:
             p = p[:, 0]  # make it a 1d array
             zeros = np.zeros_like(p)
@@ -1332,17 +1326,18 @@ class MultiDomainPytorchRCModel(RCModel):
     # for multinom q_i = ln(p_i) + ln(Z),
     # where we can choose Z freely and set it to 1, such that ln(z) = 0
     # using self.q() will then fix Z such that q 'feels' like an RC
-    def _log_prob(self, descriptors):
+    def _log_prob(self, descriptors, batch_size):
         # TODO/FIXME: this is never called...?
-        return self.q(descriptors, use_transform=False)
+        return self.q(descriptors, use_transform=False, batch_size=batch_size)
 
-    def log_prob(self, descriptors, use_transform=True):
-        p = self(descriptors, use_transform)
+    def log_prob(self, descriptors, use_transform=True, batch_size=None):
+        p = self(descriptors, use_transform=use_transform, batch_size=batch_size)
         if p.shape[1] == 1:
             return -np.log(1. / p - 1.)
         return np.log(p)
 
-    def __call__(self, descriptors, use_transform=True, domain_predictions=False):
+    def __call__(self, descriptors, use_transform=True,
+                 batch_size=None, domain_predictions=False):
         # returns the probabilities,
         # we decide here if we transform, as this is our initial step even if we back-calculate q
         # if wanted and self.descriptor_transform is defined we use it before prediction
@@ -1358,8 +1353,13 @@ class MultiDomainPytorchRCModel(RCModel):
         if use_transform:
             descriptors = self._apply_descriptor_transform(descriptors)
 
+        if batch_size is None:
+            batch_size = get_batch_size_from_model_and_descriptors(
+                                    model=self, descriptors=descriptors,
+                                                                   )
         # get the probabilities for each model from classifier
-        p_c = self._classify(descriptors)  # returns p_c on self._cdevice
+        p_c = self._classify(descriptors=descriptors,
+                             batch_size=batch_size)  # returns p_c on self._cdevice
         if self.one_hot_classify:
             # TODO: can we do this smarter?
             max_idxs = p_c.argmax(dim=1)
@@ -1367,30 +1367,36 @@ class MultiDomainPytorchRCModel(RCModel):
             p_c[torch.arange(max_idxs.shape[0]), max_idxs] = 1
         p_c = p_c.cpu().numpy()
         self.pnets = [pn.eval() for pn in self.pnets]  # pnets to evaluation
+        pred = np.zeros((p_c.shape[0], self.n_out))
+        idx_start = 0
         # now committement probabilities
         with torch.no_grad():
-            descriptors = torch.as_tensor(descriptors,
-                                          device=self._pdevices[0],
-                                          dtype=self._pdtypes[0])
-            pred = np.zeros((p_c.shape[0], self.n_out))
-            if domain_predictions:
-                p_m_list = []
-            for i, pnet in enumerate(self.pnets):
-                # .to() should be a no-op if they are all on the same device (?)
-                descriptors = descriptors.to(self._pdevices[i])
-                q = pnet(descriptors)
-                p = p_func(q).cpu().numpy()
+            for descript_part in np.array_split(descriptors, batch_size):
+                idx_end = idx_start + descript_part.shape[0]
+                descript_part = torch.as_tensor(descript_part,
+                                                device=self._pdevices[0],
+                                                dtype=self._pdtypes[0])
                 if domain_predictions:
-                    p_m_list.append(p)
-                pred += p_c[:, i:i+1] * p
-            # end pnets loop
+                    p_m_lists = [[] for _ in self.pnets]
+                for i, pnet in enumerate(self.pnets):
+                    # .to() should be a no-op if they are all on the same device (?)
+                    descript_part = descript_part.to(self._pdevices[i])
+                    q = pnet(descript_part)
+                    p = p_func(q).cpu().numpy()
+                    if domain_predictions:
+                      p_m_lists[i].append(p)
+                    pred[idx_start:idx_end] += p_c[idx_start:idx_end, i:i+1] * p
+                # end pnets loop
+                idx_start = idx_end
+            # end batch/descriptor parts loop
         # end torch.no_grad()
         self.pnets = [pn.train() for pn in self.pnets]  # back to train
         if domain_predictions:
+            p_m_list = [np.concatenate(l, axis=0) for l in p_m_lists]
             return (pred, p_m_list)
         return pred
 
-    def classify(self, descriptors, use_transform=True):
+    def classify(self, descriptors, use_transform=True, batch_size=None):
         """
         Returns the probabilities the classifier assigns to each model
         for given descriptors.
@@ -1398,25 +1404,32 @@ class MultiDomainPytorchRCModel(RCModel):
         # this is just a wrapper around _classify to convert to numpy
         if use_transform:
             descriptors = self._apply_descriptor_transform(descriptors)
+        if batch_size is None:
+            batch_size = get_batch_size_from_model_and_descriptors(
+                                    model=self, descriptors=descriptors,
+                                                                   )
         # get the probabilities for each model from classifier
         # and move them to cpu to numpy before return
-        return self._classify(descriptors).cpu().numpy()
+        return self._classify(descriptors=descriptors,
+                              batch_size=batch_size).cpu().numpy()
 
-    def _classify(self, descriptors):
+    def _classify(self, descriptors, batch_size):
         # return classifier model probabilities for descriptors
         # descriptors is expected to be numpy or torch tensor
         # returns a torch.tensor on the same device the classifier lives on
         self.cnet.eval()  # classify in evaluation mode
+        p_cs = []
         with torch.no_grad():
-            descriptors = torch.as_tensor(descriptors, device=self._cdevice,
-                                          dtype=self._cdtype)
-            q_c = self.cnet(descriptors)
-            exp_q_c = torch.exp(q_c)
-            # p_c is the probability the classifier assigns the point to be in models class
-            p_c = exp_q_c / torch.sum(exp_q_c, dim=1, keepdim=True)
+            for descript_part in np.array_split(descriptors, batch_size):
+                descript_part = torch.as_tensor(descript_part, device=self._cdevice,
+                                                dtype=self._cdtype)
+                q_c = self.cnet(descript_part)
+                exp_q_c = torch.exp(q_c)
+                # p_c is the probability the classifier assigns the point to be in models class
+                p_cs += [exp_q_c / torch.sum(exp_q_c, dim=1, keepdim=True)]
 
         self.cnet.train()  # and make the cnet trainable again
-        return p_c
+        return torch.cat(p_cs)
 
 
 # TODO: Use the decision function and documentation we already have and use for the other models!

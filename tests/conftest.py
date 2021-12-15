@@ -181,11 +181,11 @@ class OneOutRCModel(RCModel):
         # and how often we would have trained
         self.n_train += 1
 
-    def _log_prob(self, descriptors):
+    def _log_prob(self, descriptors, batch_size):
         # so we have a return value that has the correct shape
         return np.sum(descriptors, axis=1, keepdims=True)
 
-    def test_loss(self, trainset):
+    def test_loss(self, trainset, batch_size):
         # just to be able to instantiate
         raise NotImplementedError
 
@@ -204,13 +204,13 @@ class TwoOutRCModel(RCModel):
         # and how often we would have trained
         self.n_train += 1
 
-    def _log_prob(self, descriptors):
+    def _log_prob(self, descriptors, batch_size):
         # so we have a return value that has the correct shape
         q_A = np.sum(descriptors, axis=1, keepdims=True)
         # take q_B = -q_A such that p_A + p_B = 1
         q_B = -np.sum(descriptors, axis=1, keepdims=True)
         return np.concatenate((q_A, q_B), axis=1)
 
-    def test_loss(self, trainset):
+    def test_loss(self, trainset, batch_size):
         # just to be able to instantiate
         raise NotImplementedError
