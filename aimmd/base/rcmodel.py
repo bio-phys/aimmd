@@ -190,6 +190,9 @@ class RCModel(ABC):
 
         """
         # make sure there are enough points, otherwise take less
+        # NOTE this also enables starting with non-empty trainingsets
+        #      as we will always take at maximum as many points as we
+        #      have expected_p values for
         n_points = min(len(trainset), len(self.expected_p), window)
         if n_points < self.min_points_ee_factor:
             # we can not reasonably estimate EE factor due to too less points
