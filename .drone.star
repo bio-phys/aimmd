@@ -31,8 +31,8 @@ def main(ctx):
       make_conda_pipeline(os="linux", arch="amd64", py_version="3.8", pytest_args="--runall"),
       make_pip_pipeline(os="linux", arch="amd64", py_version="3.9", pytest_args="--runall"),
       make_conda_pipeline(os="linux", arch="amd64", py_version="3.9", pytest_args="--runall"),
-      make_pip_pipeline(os="linux", arch="amd64", py_version="3.10", pytest_args="--runall"),
-      make_conda_pipeline(os="linux", arch="amd64", py_version="3.10", pytest_args="--runall"),
+      #make_pip_pipeline(os="linux", arch="amd64", py_version="3.10", pytest_args="--runall"),
+      #make_conda_pipeline(os="linux", arch="amd64", py_version="3.10", pytest_args="--runall"),
     ]
   else:
     # all other branches
@@ -49,7 +49,7 @@ def main(ctx):
       #make_conda_pipeline(os="linux", arch="amd64", py_version="3.8"),
       make_pip_pipeline(os="linux", arch="amd64", py_version="3.9"),
       #make_conda_pipeline(os="linux", arch="amd64", py_version="3.9"),
-      make_pip_pipeline(os="linux", arch="amd64", py_version="3.10"),
+      #make_pip_pipeline(os="linux", arch="amd64", py_version="3.10"),
       #make_conda_pipeline(os="linux", arch="amd64", py_version="3.10"),
     ]
 
