@@ -129,6 +129,10 @@ def get_batch_size_from_model_and_descriptors(model, descriptors, max_size=4096)
     if batch_size is None:
         # None means (try) in one batch
         batch_size = descriptors.shape[0]
+    elif max_size < batch_size:
+        # this makes sure that if batch_size is given (i.e. not None)
+        # we will use it even if max_size would be smaller
+        max_size = batch_size
     # make sure we can not go tooo large even with a None value
     # the below results in an 4 MB descriptors tensor
     # if we have 64 bit floats and 1D descriptors
