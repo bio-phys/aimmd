@@ -68,6 +68,9 @@ _SEMAPHORES["MAX_FILES_OPEN"] = asyncio.BoundedSemaphore(resource.getrlimit(
                                                          )
 
 
+# SLURM semaphore stuff:
+# semaphore to make sure we modify clusterinfo only from one thread at a time
+_SEMAPHORES["SLURM_CLUSTER_INFO"] = asyncio.BoundedSemaphore(1)
 # slurm max job semaphore, if the user sets it it will be used
 _SEMAPHORES["SLURM_MAX_JOB"] = None
 

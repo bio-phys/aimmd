@@ -439,8 +439,8 @@ class PathSamplingChain:
     mcstep_foldername_prefix = "mcstep_"  # name = prefix + str(stepnum)
     mcstate_name_prefix = "mcstate_"  # name for symlinks to folders with
                                       # accepted step at stepnum
-    max_retries_on_crash = 2  # maximum number of *retries* on MD engine crash
-                              # i.e. setting to 1 means *retry* once on crash
+    max_retries_on_crash = 10  # maximum number of *retries* on MD engine crash
+                               # i.e. setting to 1 means *retry* once on crash
     wait_time_on_crash = 60  # time to wait for cleanup of 'depending threads'
                              # after a crash, 'depending threads' are e.g. the
                              # conjugate trials in a two way simulation,

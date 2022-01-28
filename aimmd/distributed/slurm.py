@@ -19,6 +19,7 @@ import time
 import shlex
 import asyncio
 import subprocess
+import collections
 import logging
 
 
@@ -27,6 +28,55 @@ from .utils import ensure_executable_available
 
 
 logger = logging.getLogger(__name__)
+
+
+def list_all_nodes(sinfo_executable="sinfo"):
+    # format option '%n' is a list of node hostnames
+    sinfo_cmd = f"{sinfo_executable} --noheader --format='%n'"
+    sinfo_out = subprocess.check_output(shlex.split(sinfo_cmd), text=True)
+    node_list = sinfo_out.split("\n")
+    # sinfo_out is terminated by '\n' so our last entry is the empty string
+    node_list = node_list[:-1]
+    return node_list
+
+
+_SLURM_CLUSTER_INFO = {"nodes": {"all": list_all_nodes(),
+                                 "suspected_broken": collections.Counter(),
+                                 "broken": [],
+                                 },
+                       }
+
+
+# TODO: use slurm_job_state to decide if we even supect the node is broken?!
+#       (currently also stuff like out of memory counts into the 'node failures')
+# TODO: make max_fail an attribute of SlurmProcess?
+async def _handle_suspected_broken_nodes(listofnodes, slurm_job_state,
+                                         max_fail=3):
+    # max_fail is the maximum number of jobs we allow to fail on one node
+    # before declaring it broken
+    global _SLURM_CLUSTER_INFO
+    async with _SEMAPHORES["SLURM_CLUSTER_INFO"]:
+        logger.debug(f"Adding nodes {listofnodes} to suspected broken nodes.")
+        for node in listofnodes:
+            _SLURM_CLUSTER_INFO["nodes"]["suspected_broken"][node] += 1
+            if _SLURM_CLUSTER_INFO["nodes"]["suspected_broken"][node] >= max_fail:
+                # declare it broken
+                logger.info(f"Adding node {node} to list of broken nodes.")
+                if node not in _SLURM_CLUSTER_INFO["nodes"]["broken"]:
+                    _SLURM_CLUSTER_INFO["nodes"]["broken"].append(node)
+                else:
+                    logger.debug(f"Node {node} already in broken node list.")
+        # failsaves
+        all_nodes = len(_SLURM_CLUSTER_INFO["nodes"]["all"])
+        broken_nodes = len(_SLURM_CLUSTER_INFO["nodes"]["broken"])
+        if broken_nodes >= all_nodes / 4:
+            logger.error("We already declared 1/4 of the cluster as broken."
+                         + "Houston, we might have a problem?")
+            if broken_nodes >= all_nodes / 2:
+                logger.error("In fact we declared 1/2 of the cluster as broken."
+                             + "Houston, we have a problem!")
+                if broken_nodes >= all_nodes * 0.75:
+                    raise RuntimeError("Houston? Almost the whole cluster is broken?")
 
 
 class SlurmSubmissionError(RuntimeError):
@@ -108,11 +158,18 @@ class SlurmProcess:
         self.sbatch_script = os.path.abspath(sbatch_script)
         self.workdir = os.path.abspath(workdir)
         self._jobid = None
+        self._nodes = None  # list of node hostnames this job runs on
         self._last_check_time = None  # make sure we do not call sacct too often
-        self._last_slurm_state = None  # the last slurm state we have seen
+        # to that avail cache the last sacct return we have seen
+        self._last_sacct_return = (None, None, None)
 
     async def submit(self):
-        sbatch_cmd = f"{self.sbatch_executable} --parsable {self.sbatch_script}"
+        global _SLURM_CLUSTER_INFO
+        sbatch_cmd = f"{self.sbatch_executable}"
+        broken_nodes = _SLURM_CLUSTER_INFO["nodes"]["broken"]
+        if len(broken_nodes) > 0:
+            sbatch_cmd += f" --exclude={broken_nodes.join(',')}"
+        sbatch_cmd += " --parsable {self.sbatch_script}"
         # 3 file descriptors: stdin,stdout,stderr
         await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
         await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
@@ -156,58 +213,100 @@ class SlurmProcess:
         return self._jobid
 
     @property
-    def slurm_job_state(self):
-        if self._jobid is None:
-            return None
+    def nodes(self):
+        nodes = None
+        slurm_nodelist = self._last_sacct_return[2]
+        if slurm_nodelist is not None:
+            nodes = self._nodelist_to_listofnodes(slurm_nodelist)
+        return nodes
+
+    async def _get_sacct_jobinfo(self):
         if self._last_check_time is None:
             self._last_check_time = time.time()
         elif (time.time() - self._last_check_time
               <= self.min_time_between_sacct_calls):
-            return self._last_slurm_state
+            return self._last_sacct_return
         else:
             self._last_check_time = time.time()
         sacct_cmd = f"{self.sacct_executable} --noheader"
         # query only for the specific job we are running
         sacct_cmd += f" -j {self._jobid}"
-        sacct_cmd += " -o jobid,state,exitcode --parsable2"  # separate with |
-        sacct_out = subprocess.check_output(shlex.split(sacct_cmd), text=True)
-        logger.debug(f"sacct returned {sacct_out}.")
+        sacct_cmd += " -o jobid,state,exitcode,nodelist"
+        sacct_cmd += " --parsable2"  # separate with |
+        # 3 file descriptors: stdin,stdout,stderr
+        await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
+        await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
+        await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
+        try:
+            sacct_proc = await asyncio.subprocess.create_subprocess_exec(
+                                                *shlex.split(sacct_cmd),
+                                                stdout=asyncio.subprocess.PIPE,
+                                                stderr=asyncio.subprocess.PIPE,
+                                                cwd=self.workdir,
+                                                close_fds=True,
+                                                                          )
+            stdout, stderr = await sacct_proc.communicate()
+            sacct_return = stdout.decode()
+        finally:
+            # and put the three back into the semaphore
+            _SEMAPHORES["MAX_FILES_OPEN"].release()
+            _SEMAPHORES["MAX_FILES_OPEN"].release()
+            _SEMAPHORES["MAX_FILES_OPEN"].release()
+        # only jobid (and possibly clustername) returned, semikolon to separate
+        logger.debug(f"sacct returned {sacct_return}.")
         # sacct returns one line per substep, we only care for the whole job
         # which should be the first line but we check explictly for jobid
         # (the substeps have .$NUM suffixes)
-        for line in sacct_out.split("\n"):
+        for line in sacct_return.split("\n"):
             splits = line.split("|")
-            if len(splits) == 3:
-                jobid, state, exitcode = splits
+            if len(splits) == 4:
+                jobid, state, exitcode, nodelist = splits
                 if jobid.strip() == self._jobid:
+                    # basic sanity check that everything went alright parsing
                     logger.debug(f"Extracted from sacct output: jobid {jobid},"
-                                 + f" state {state} and exitcode {exitcode}.")
-                    # TODO: parse and return the exitcode too?
-                    self._last_slurm_state = state
-                    return state
+                                 + f" state {state}, exitcode {exitcode} and "
+                                 + f"nodelist {nodelist}.")
+                    self._last_sacct_return = (state, exitcode, nodelist)
+                    return state, exitcode, nodelist
+                else:
+                    raise RuntimeError("Something went horribly wrong calling"
+                                       + " sacct and parsing its output. We "
+                                       + f"parsed jobid {jobid} but expected "
+                                       + f"jobid to be {self._jobid}.")
         # if we get here something probably went wrong checking for the job
         # the 'PENDING' will make us check again in a bit
         # (TODO: is this actually what we want?)
-        self._last_slurm_state = "PENDING"
-        return "PENDING"
+        self._last_sacct_return = ("PENDING", None, None)
+        return "PENDING", None, None
+
+    @property
+    def slurm_job_state(self):
+        return self._last_sacct_return[0]
 
     @property
     def returncode(self):
-        slurm_state = self.slurm_job_state
-        if slurm_state is None:
+        if self._jobid is None:
+            return None
+        if self.slurm_job_state is None:
             return None
         for key, val in self.slurm_state_to_exitcode.items():
-            if key in slurm_state:
-                logger.debug(f"Parsed SLURM state {slurm_state} as {key}.")
+            if key in self.slurm_job_state:
+                logger.debug(f"Parsed SLURM state {self.slurm_job_state} as {key}.")
                 # this also recognizes `CANCELLED by ...` as CANCELLED
                 return val
         # we should never finish the loop, it means we miss a slurm job state
         raise RuntimeError("Could not find a matching exitcode for slurm state"
-                           + f": {slurm_state}")
+                           + f": {self.slurm_job_state}")
 
     async def wait(self):
         while self.returncode is None:
             await asyncio.sleep(self.sleep_time)
+            await self._get_sacct_jobinfo()  # update cached jobinfo
+        if self.returncode != 0:
+            await _handle_suspected_broken_nodes(
+                                        nodelist=self.nodes,
+                                        slurm_job_state=self.slurm_job_state,
+                                                 )
         return self.returncode
 
     async def communicate(self, input=None):
@@ -232,3 +331,20 @@ class SlurmProcess:
 
     def kill(self):
         self.terminate()
+
+    def _nodelist_to_listofnodes(self, nodelist):
+        # takes a NodeList as returned by SLURMs sacct
+        # returns a list of single node hostnames
+        # NOTE: we expect nodelist to be either a string of the form
+        # $hostnameprefix$num or $hostnameprefix[$num1,$num2,...,$numN]
+        # or 'None assigned'
+        if "[" not in nodelist:
+            # it is '$hostnameprefix$num' or 'None assigned', return it
+            return [nodelist]
+        else:
+            # it is '$hostnameprefix[$num1,$num2,...,$numN]'
+            # make the string a list of single node hostnames
+            hostnameprefix, nums = nodelist.split("[")
+            nums = nums.rstrip("]")
+            nums = nums.split(",")
+            return [f"{hostnameprefix}{num}" for num in nums]
