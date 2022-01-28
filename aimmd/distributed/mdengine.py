@@ -450,6 +450,12 @@ class GmxEngine(MDEngine):
         constraints_mdp = copy.deepcopy(self._mdp)
         constraints_mdp["continuation"] = "no" if constraints else "yes"
         constraints_mdp["gen-vel"] = "yes" if generate_velocities else "no"
+        # make sure we write a trr and a xtc to read the final configuration
+        # (this way we dont have to check what ending conf_out_name has)
+        constraints_mdp["nstxout"] = 1
+        constraints_mdp["nstvout"] = 1
+        constraints_mdp["nstfout"] = 1
+        constraints_mdp["nstxout-compressed"] = 1
         if generate_velocities:
             # make sure we have draw a new/different random number for gen-vel
             constraints_mdp["gen-seed"] = -1
