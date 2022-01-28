@@ -170,6 +170,7 @@ class SlurmProcess:
         if len(broken_nodes) > 0:
             sbatch_cmd += f" --exclude={','.join(broken_nodes)}"
         sbatch_cmd += " --parsable {self.sbatch_script}"
+        logger.debug(f"About to execute sbatch_cmd {sbatch_cmd}.")
         # 3 file descriptors: stdin,stdout,stderr
         await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
         await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
@@ -190,7 +191,8 @@ class SlurmProcess:
             _SEMAPHORES["MAX_FILES_OPEN"].release()
             _SEMAPHORES["MAX_FILES_OPEN"].release()
         # only jobid (and possibly clustername) returned, semikolon to separate
-        logger.debug(f"sbatch returned {sbatch_return}.")
+        logger.debug(f"sbatch returned stdout: {sbatch_return}, "
+                     + f"stderr: {stderr.decode()}.")
         jobid = sbatch_return.split(";")[0].strip()
         # make sure jobid is an int/ can be cast as one
         err = False
