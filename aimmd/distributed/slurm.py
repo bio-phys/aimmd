@@ -33,10 +33,16 @@ logger = logging.getLogger(__name__)
 def list_all_nodes(sinfo_executable="sinfo"):
     # format option '%n' is a list of node hostnames
     sinfo_cmd = f"{sinfo_executable} --noheader --format='%n'"
-    sinfo_out = subprocess.check_output(shlex.split(sinfo_cmd), text=True)
-    node_list = sinfo_out.split("\n")
-    # sinfo_out is terminated by '\n' so our last entry is the empty string
-    node_list = node_list[:-1]
+    try:
+        sinfo_out = subprocess.check_output(shlex.split(sinfo_cmd), text=True)
+    except FileNotFoundError:  # raise when there is no sinfo command
+        logger.error("sinfo command not available. Initializing list of all "
+                     + "nodes as empty.")
+        node_list = []
+    else:
+        node_list = sinfo_out.split("\n")
+        # sinfo_out is terminated by '\n' so our last entry is the empty string
+        node_list = node_list[:-1]
     return node_list
 
 
