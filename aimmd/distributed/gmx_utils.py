@@ -46,7 +46,7 @@ def nstout_from_mdp(mdp, traj_type="TRR"):
             pass
 
     nstout = min(vals, default=None)
-    if nstout is None:
+    if (nstout is None) or (nstout == float("inf")):
         raise ValueError("The MDP you passed results in no trajectory output.")
     return nstout
 
@@ -55,33 +55,13 @@ def get_all_traj_parts(folder, deffnm, traj_type="TRR"):
     """Find and return a list of trajectory parts produced by a GmxEngine."""
     # NOTE: this assumes all files/parts are ther, i.e. nothing was deleted
     #       we just check for the highest number and also assume the tpr exists
-    def partnum_suffix(num):
-        # construct gromacs num part suffix from simulation_part
-        num_suffix = str(num)
-        while len(num_suffix) < 4:
-            num_suffix = "0" + num_suffix
-        num_suffix = ".part" + num_suffix
-        return num_suffix
-
     ending = "." + traj_type.lower()
-    content = os.listdir(folder)
-    filtered = [f for f in content
-                if (f.endswith(ending) and f.startswith(f"{deffnm}.part"))
-                ]
-    partnums = [int(f.lstrip(f"{deffnm}.part").rstrip(ending))
-                for f in filtered]
-    if len(partnums) > 0:
-        max_num = np.max(partnums)
-    else:
-        max_num = 0  # will result in us returning an empty list
-    trajs = [Trajectory(trajectory_file=os.path.join(folder,
-                                                     (f"{deffnm}"
-                                                      + f"{partnum_suffix(num)}"
-                                                      + f"{ending}")
-                                                     ),
+    traj_files = get_all_file_parts(folder=folder, deffnm=deffnm,
+                                    file_ending=ending)
+    trajs = [Trajectory(trajectory_file=traj_file,
                         structure_file=os.path.join(folder, f"{deffnm}.tpr")
                         )
-             for num in range(1, max_num+1)]
+             for traj_file in traj_files]
     return trajs
 
 
@@ -103,7 +83,10 @@ def get_all_file_parts(folder, deffnm, file_ending):
                 ]
     partnums = [int(f.lstrip(f"{deffnm}.part").rstrip(file_ending))
                 for f in filtered]
-    max_num = np.max(partnums)
+    if len(partnums) > 0:
+        max_num = np.max(partnums)
+    else:
+        max_num = 0  # will result in us returning an empty list
     parts = [os.path.join(folder, (f"{deffnm}{partnum_suffix(num)}{file_ending}"))
              for num in range(1, max_num+1)]
     return parts
