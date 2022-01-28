@@ -169,7 +169,7 @@ class SlurmProcess:
         broken_nodes = _SLURM_CLUSTER_INFO["nodes"]["broken"]
         if len(broken_nodes) > 0:
             sbatch_cmd += f" --exclude={','.join(broken_nodes)}"
-        sbatch_cmd += " --parsable {self.sbatch_script}"
+        sbatch_cmd += f" --parsable {self.sbatch_script}"
         logger.debug(f"About to execute sbatch_cmd {sbatch_cmd}.")
         # 3 file descriptors: stdin,stdout,stderr
         await _SEMAPHORES["MAX_FILES_OPEN"].acquire()
