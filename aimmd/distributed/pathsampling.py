@@ -319,6 +319,7 @@ class Brain:
                        path=trajectories[idx],
                        # initial step must be an accepted MCstate
                        accepted=True,
+                       p_acc=1,
                        )
             chain.current_step = s
             # save the initial step to storage

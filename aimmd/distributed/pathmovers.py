@@ -20,6 +20,7 @@ import os
 import abc
 import asyncio
 import logging
+import textwrap
 import numpy as np
 
 from . import _SEMAPHORES
@@ -60,13 +61,13 @@ class MCstep:
         if self.accepted:
             repr_str += "Accepted "
         repr_str += f"MCStep(mover={self.mover}, stepnum={self.stepnum}, "
-        repr_str += f"directory={self.directory}, "
-        repr_str += f"predicted_committors_sp={self.predicted_committors_sp} "
-        repr_str += f"shooting_snap={self.shooting_snap} "
-        repr_str += f"states_reached={self.states_reached} "
-        repr_str += f"path={self.path} "
-        repr_str += f"p_acc={self.p_acc})"
-        return repr_str
+        repr_str += f"states_reached={self.states_reached}, "
+        repr_str += f"p_acc={self.p_acc}, "
+        repr_str += f"predicted_committors_sp={self.predicted_committors_sp}, "
+        repr_str += f"directory={self.directory})"
+        #repr_str += f"shooting_snap={self.shooting_snap}, \n"
+        #repr_str += f"path={self.path}, "
+        return textwrap.fill(repr_str, width=139)
 
 
 class PathMover(abc.ABC):
@@ -74,6 +75,11 @@ class PathMover(abc.ABC):
     # produces an out-MCstep (not necessarily accepted)
     @abc.abstractmethod
     async def move(self, instep, stepnum, wdir, **kwargs):
+        raise NotImplementedError
+
+    # NOTE: (this is used in MCStep.__repr__ so it should not be too long)
+    @abc.abstractmethod
+    def __repr__(self) -> str:
         raise NotImplementedError
 
 
@@ -228,6 +234,10 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                                                               )
                             for _ in range(2)
                             ]
+
+    # TODO: improve?!
+    def __repr__(self) -> str:
+        return "TwoWayShootingPathMover"
 
     def __getstate__(self):
         state = self.__dict__.copy()
