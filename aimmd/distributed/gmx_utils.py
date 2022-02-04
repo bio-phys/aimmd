@@ -18,12 +18,13 @@ import os
 import logging
 import numpy as np
 from .trajectory import Trajectory
+from .mdconfig import MDP
 
 
 logger = logging.getLogger(__name__)
 
 
-def nstout_from_mdp(mdp, traj_type="TRR"):
+def nstout_from_mdp(mdp: MDP, traj_type: str = "TRR"):
     """Get lowest output frequency for gromacs trajectories from MDP class."""
     if traj_type.upper() == "TRR":
         keys = ["nstxout", "nstvout", "nstfout"]
@@ -51,11 +52,11 @@ def nstout_from_mdp(mdp, traj_type="TRR"):
     return nstout
 
 
-def get_all_traj_parts(folder, deffnm, traj_type="TRR"):
+def get_all_traj_parts(folder: str, deffnm: str, traj_type: str = "TRR"):
     """Find and return a list of trajectory parts produced by a GmxEngine."""
     # NOTE: this assumes all files/parts are ther, i.e. nothing was deleted
     #       we just check for the highest number and also assume the tpr exists
-    ending = "." + traj_type.lower()
+    ending = traj_type.lower()
     traj_files = get_all_file_parts(folder=folder, deffnm=deffnm,
                                     file_ending=ending)
     trajs = [Trajectory(trajectory_file=traj_file,
@@ -65,7 +66,7 @@ def get_all_traj_parts(folder, deffnm, traj_type="TRR"):
     return trajs
 
 
-def get_all_file_parts(folder, deffnm, file_ending):
+def get_all_file_parts(folder: str, deffnm: str, file_ending: str):
     """Find and return all files with given ending produced by GmxEngine."""
     # NOTE: this assumes all files/parts are ther, i.e. nothing was deleted
     #       we just check for the highest number and also assume they exist
@@ -77,6 +78,8 @@ def get_all_file_parts(folder, deffnm, file_ending):
         num_suffix = ".part" + num_suffix
         return num_suffix
 
+    if not file_ending.startswith("."):
+        file_ending = "." + file_ending
     content = os.listdir(folder)
     filtered = [f for f in content
                 if (f.endswith(file_ending) and f.startswith(f"{deffnm}.part"))
@@ -92,7 +95,7 @@ def get_all_file_parts(folder, deffnm, file_ending):
     return parts
 
 
-def ensure_mdp_options(mdp, genvel="no", continuation="yes"):
+def ensure_mdp_options(mdp: MDP, genvel: str = "no", continuation: str = "yes"):
     """
     Ensure that some commonly used mdp options have the given values.
 
