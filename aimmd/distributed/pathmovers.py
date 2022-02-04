@@ -54,8 +54,19 @@ class MCstep:
         self.accepted = accepted
         self.p_acc = p_acc
 
-    # TODO!:
-    #def __repr__(self):
+    # TODO: improve :)
+    def __repr__(self):
+        repr_str = ""
+        if self.accepted:
+            repr_str += "Accepted "
+        repr_str += f"MCStep(mover={self.mover}, stepnum={self.stepnum}, "
+        repr_str += f"directory={self.directory}, "
+        repr_str += f"predicted_committors_sp={self.predicted_committors_sp} "
+        repr_str += f"shooting_snap={self.shooting_snap} "
+        repr_str += f"states_reached={self.states_reached} "
+        repr_str += f"path={self.path} "
+        repr_str += f"p_acc={self.p_acc})"
+        return repr_str
 
 
 class PathMover(abc.ABC):
@@ -158,6 +169,8 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
     forward_deffnm = "forward"  # engine deffnm for forward shot
     backward_deffnm = "backward"  # same for backward shot
     transition_filename = "transition.trr"  # filename for produced transitions
+    # trajs to state will be named e.g. $forward_deffnm$traj_to_state_suffix
+    traj_to_state_suffix = "_traj_to_state"
 
     def __init__(self, states, engine_cls, engine_kwargs, walltime_per_part, T,
                  sp_selector=None):
@@ -283,6 +296,27 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         states_reached = np.array([0. for _ in range(len(self.states))])
         states_reached[fw_state] += 1
         states_reached[bw_state] += 1
+        out_tra_names = [os.path.join(wdir, (self.forward_deffnm
+                                             + self.traj_to_state_suffix
+                                             + "." + constraint_engine.output_traj_type)
+                                      ),
+                         os.path.join(wdir, (self.backward_deffnm
+                                             + self.traj_to_state_suffix
+                                             + "." + constraint_engine.output_traj_type)
+                                      ),
+                         ]
+        concats = await asyncio.gather(*(
+                        p.cut_and_concatenate(trajs=trajs,
+                                              tra_out=traj_out)
+                        for p, trajs, traj_out in zip(self.propagators,
+                                                      [fw_trajs, bw_trajs],
+                                                      out_tra_names,
+                                                      )
+                                         )
+                                       )
+        # cut and concatenate returns (traj_to_state, first_state_reached)
+        # but since we already know about the states we ignore them here
+        (fw_traj, _), (bw_traj, _) = concats
         # NOTE: this is actually not necessary as we alreay load our own
         # private copy of the model at the beginning of this move
         # load the selecting model for accept/reject
@@ -291,14 +325,17 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         predicted_committors_sp = (await model(fw_startconf))[0]
         # check if they end in different states
         if fw_state == bw_state:
-            logger.info(f"Both trials reached state {fw_state}.")
+            logger.info(f"Chain {self.chain_idx}: "
+                        + f"Both trials reached state {fw_state}.")
             return MCstep(mover=self,
                           stepnum=stepnum,
                           directory=wdir,
                           predicted_committors_sp=predicted_committors_sp,
                           shooting_snap=fw_startconf,
                           states_reached=states_reached,
-                          trial_trajectories=fw_trajs + bw_trajs,  # two lists
+                          # TODO: do we want to add fw_trajs and bw_trajs?
+                          #       i.e. the traj segments (or is the concatenated enough)
+                          trial_trajectories=[fw_traj, bw_traj],
                           accepted=False,
                           )
         else:
@@ -311,7 +348,8 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                 # can only be the other way round
                 minus_trajs, minus_state = fw_trajs, fw_state
                 plus_trajs, plus_state = bw_trajs, bw_state
-            logger.info(f"Forward trial reached state {fw_state}, "
+            logger.info(f"Chain {self.chain_idx}: "
+                        + f"Forward trial reached state {fw_state}, "
                         + f"backward trial reached state {bw_state}.")
             tra_out = os.path.join(wdir, f"{self.transition_filename}")
             path_traj = await construct_TP_from_plus_and_minus_traj_segments(
@@ -335,7 +373,8 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
             # and configuration is the same in old and new, i.e. for positions
             # we cancel old with new
             p_acc = p_sel_new / p_sel_old
-            log_str = f"Acceptance probability for generated trial is {round(p_acc, 6)}."
+            log_str = f"Chain {self.chain_idx}: Acceptance probability "
+            log_str += f"for generated trial is {round(p_acc, 6)}."
             accepted = False
             if (p_acc >= 1) or (p_acc > self._rng.random()):
                 accepted = True
@@ -347,7 +386,8 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                           predicted_committors_sp=predicted_committors_sp,
                           shooting_snap=fw_startconf,
                           states_reached=states_reached,
-                          trial_trajectories=minus_trajs + plus_trajs,
+                          # TODO: same as above: add fw_trajs and bw_trajs?
+                          trial_trajectories=[fw_traj, bw_traj],
                           path=path_traj,
                           accepted=accepted,
                           p_acc=p_acc,
