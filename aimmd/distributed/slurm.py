@@ -36,8 +36,8 @@ def list_all_nodes(sinfo_executable="sinfo"):
     try:
         sinfo_out = subprocess.check_output(shlex.split(sinfo_cmd), text=True)
     except FileNotFoundError:  # raise when there is no sinfo command
-        logger.error("sinfo command not available. Initializing list of all "
-                     + "nodes as empty.")
+        logger.warning("sinfo command not available. Initializing list of all "
+                       + "nodes in cluster as empty.")
         node_list = []
     else:
         node_list = sinfo_out.split("\n")
