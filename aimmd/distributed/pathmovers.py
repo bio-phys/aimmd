@@ -56,7 +56,7 @@ class MCstep:
         self.p_acc = p_acc
 
     # TODO: improve :)
-    def __repr__(self):
+    def _str_representation(self, long, width=139) -> str:
         repr_str = ""
         if self.accepted:
             repr_str += "Accepted "
@@ -64,10 +64,20 @@ class MCstep:
         repr_str += f"states_reached={self.states_reached}, "
         repr_str += f"p_acc={self.p_acc}, "
         repr_str += f"predicted_committors_sp={self.predicted_committors_sp}, "
-        repr_str += f"directory={self.directory})"
-        #repr_str += f"shooting_snap={self.shooting_snap}, \n"
-        #repr_str += f"path={self.path}, "
-        return textwrap.fill(repr_str, width=139)
+        repr_str += f"directory={self.directory}"
+        if not long:
+            repr_str += ")"  # terminate here
+        else:
+            repr_str += ", "  # more to come below
+            repr_str += f"shooting_snap={self.shooting_snap}, "
+            repr_str += f"path={self.path})"
+        return textwrap.fill(repr_str, width=width)
+
+    def __str__(self) -> str:
+        return self._str_representation(long=False)
+
+    def __repr__(self) -> str:
+        return self._str_representation(long=True)
 
 
 class PathMover(abc.ABC):
@@ -77,9 +87,9 @@ class PathMover(abc.ABC):
     async def move(self, instep, stepnum, wdir, **kwargs):
         raise NotImplementedError
 
-    # NOTE: (this is used in MCStep.__repr__ so it should not be too long)
+    # NOTE: (this is used in MCStep.__str__ so it should not be too long)
     @abc.abstractmethod
-    def __repr__(self) -> str:
+    def __str__(self) -> str:
         raise NotImplementedError
 
 
@@ -236,7 +246,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                             ]
 
     # TODO: improve?!
-    def __repr__(self) -> str:
+    def __str__(self) -> str:
         return "TwoWayShootingPathMover"
 
     def __getstate__(self):
