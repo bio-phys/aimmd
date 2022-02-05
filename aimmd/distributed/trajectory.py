@@ -215,11 +215,6 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                     filename for the submission script that will be written
                     (and deleted if everything goes well) for every trajectory.
     """
-    # make it possible to set values for slurm executables from this class
-    # but keep the defaults in one central location (the `SlurmProcess`)
-    sacct_executable = SlurmProcess.sacct_executable
-    sbatch_executable = SlurmProcess.sbatch_executable
-    scancel_executable = SlurmProcess.scancel_executable
 
     def __init__(self, executable, sbatch_script, call_kwargs={},
                  load_results_func=None, **kwargs):

@@ -851,11 +851,6 @@ class SlurmGmxEngine(GmxEngine):
     # TODO/FIXME: running sans slurm is not possible using gmx_mpi!
     #             and we will probably also need the option to pass other mdrun_extra_args?!
     constraints_md_sans_slurm = False
-    # make slurm executable setable from user-facing code but keep defaults
-    # at central location in the `SlurmProcess`
-    sacct_executable = SlurmProcess.sacct_executable
-    sbatch_executable = SlurmProcess.sbatch_executable
-    scancel_executable = SlurmProcess.scancel_executable
 
     def __init__(self, mdp, gro_file, top_file, sbatch_script, ndx_file=None,
                  **kwargs):
