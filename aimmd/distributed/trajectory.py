@@ -343,9 +343,6 @@ class SlurmTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
                 f.write(script)
         # and submit it
         slurm_proc = SlurmProcess(sbatch_script=sbatch_fname, workdir=tra_dir,
-                                  sacct_executable=self.sacct_executable,
-                                  sbatch_executable=self.sbatch_executable,
-                                  scancel_executable=self.scancel_executable,
                                   sleep_time=15,  # sleep 15 s between checking
                                   )
         if _SEMAPHORES["SLURM_MAX_JOB"] is not None:
