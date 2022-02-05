@@ -113,8 +113,7 @@ class SlurmClusterMediator:
     async def get_info_for_job(self, jobid: str):
         if (self._last_sacct_call is None
             or (time.time() - self._last_sacct_call
-                > self.min_time_between_sacct_calls)
-            ):
+                > self.min_time_between_sacct_calls)):
             # either we never called sacct or at least not in the recent past
             # so update cached jobinfo and save the new time
             self._last_sacct_call = time.time()
@@ -138,7 +137,6 @@ class SlurmClusterMediator:
                                                 *shlex.split(sacct_cmd),
                                                 stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE,
-                                                cwd=self.workdir,
                                                 close_fds=True,
                                                                           )
             stdout, stderr = await sacct_proc.communicate()
