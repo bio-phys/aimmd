@@ -358,9 +358,9 @@ class SlurmProcess:
         self._jobid = jobid
         async with _SEMAPHORES["SLURM_CLUSTER_MEDIATOR"]:
             self.slurm_cluster_mediator.monitor_register_job(jobid=jobid)
-            # get jobinfo (these will probably just be the defaults but at
-            #  least this is a dict with the rigth keys...)
-            await self._update_sacct_jobinfo()
+        # get jobinfo (these will probably just be the defaults but at
+        #  least this is a dict with the rigth keys...)
+        await self._update_sacct_jobinfo()
 
     @property
     def slurm_jobid(self) -> str:
