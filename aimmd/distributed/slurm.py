@@ -389,6 +389,16 @@ class SlurmProcess:
             return self._slurm_cluster_mediator
 
     async def submit(self) -> None:
+        """
+        Submit the job via sbatch.
+
+        Raises
+        ------
+        RuntimeError
+            If the job has already been submitted.
+        SlurmSubmissionError
+            If something goes wrong during the submission with sbatch.
+        """
         if self._jobid is not None:
             raise RuntimeError(f"Already monitoring job with id {self._jobid}.")
         sbatch_cmd = f"{self.sbatch_executable}"
@@ -584,6 +594,9 @@ class SlurmProcess:
                          + f"scancel returned {scancel_out}.")
             # remove the job from the monitoring
             self._finalize_completed_job(node_fail_heuristic=False)
+        else:
+            # we probably never submitted the job?
+            raise RuntimeError("Can not cancel a job with unknown jobid.")
 
     def kill(self) -> None:
         self.terminate()
