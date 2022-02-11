@@ -23,10 +23,9 @@ import inspect
 import logging
 import hashlib
 import functools
-import multiprocessing
 import numpy as np
 import MDAnalysis as mda
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from scipy import constants
 
 
@@ -161,17 +160,27 @@ class PyTrajectoryFunctionWrapper(TrajectoryFunctionWrapper):
     async def get_values_for_trajectory(self, traj):
         loop = asyncio.get_running_loop()
         async with _SEMAPHORES["MAX_PROCESS"]:
-            # NOTE: make sure we do not fork! (not save with multithreading)
-            # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
-            ctx = multiprocessing.get_context("forkserver")
             # fill in additional kwargs (if any)
             if len(self.call_kwargs) > 0:
                 func = functools.partial(self.function, **self._call_kwargs)
             else:
                 func = self.function
-            # use one python subprocess: if func releases the GIL
-            # it does not matter anyway, if func is full py 1 is enough
-            with ProcessPoolExecutor(1, mp_context=ctx) as pool:
+            # NOTE: even though one would expect pythonCVs to be CPU bound
+            #       it is actually faster to use a ThreadPoolExecutor because
+            #       we then skip the setup + import needed for a second process
+            #       In addition most pythonCVs will acutlly call c/cython-code
+            #       like MDAnalysis/mdtraj/etc and are therefore not limited
+            #       by the GIL anyway
+            #       We leave the code for ProcessPool here because this is the
+            #       only place where this could make sense to think about as
+            #       opposed to concatenation of trajs (which is IO bound)
+            # NOTE: make sure we do not fork! (not save with multithreading)
+            # see e.g. https://stackoverflow.com/questions/46439740/safe-to-call-multiprocessing-from-a-thread-in-python
+            #ctx = multiprocessing.get_context("forkserver")
+            #with ProcessPoolExecutor(1, mp_context=ctx) as pool:
+            with ThreadPoolExecutor(max_workers=1,
+                                    thread_name_prefix="PyTrajFunc_thread",
+                                    ) as pool:
                 vals = await loop.run_in_executor(pool, func, traj)
         return vals
 
