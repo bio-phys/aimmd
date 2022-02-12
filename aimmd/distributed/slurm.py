@@ -23,9 +23,8 @@ import collections
 import typing
 import logging
 
-
-from . import _SEMAPHORES
 from .utils import ensure_executable_available
+from . import _SEMAPHORES
 
 
 logger = logging.getLogger(__name__)
