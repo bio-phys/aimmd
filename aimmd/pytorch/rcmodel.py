@@ -1146,18 +1146,19 @@ class MultiDomainPytorchRCModel(RCModel):
                           }
                 loss = multinomial_loss(target)
                 total_loss += float(loss)
-            # the rest
-            des = descriptors[n_batch*batch_size:n_batch*batch_size + rest]
-            tar = cnet_targets[n_batch*batch_size:n_batch*batch_size + rest]
-            ws = weights[n_batch*batch_size:n_batch*batch_size + rest]
-            log_probs = self.cnet(des)
-            target = {Properties.q: log_probs,
-                      Properties.descriptors: des,
-                      Properties.shot_results: tar,
-                      Properties.weights: ws
-                      }
-            loss = multinomial_loss(target)
-            total_loss += float(loss)
+            if rest > 0:
+                # the rest
+                des = descriptors[n_batch*batch_size:n_batch*batch_size + rest]
+                tar = cnet_targets[n_batch*batch_size:n_batch*batch_size + rest]
+                ws = weights[n_batch*batch_size:n_batch*batch_size + rest]
+                log_probs = self.cnet(des)
+                target = {Properties.q: log_probs,
+                          Properties.descriptors: des,
+                          Properties.shot_results: tar,
+                          Properties.weights: ws
+                          }
+                loss = multinomial_loss(target)
+                total_loss += float(loss)
         # end torch.no_grad()
         self.cnet.train()  # back to train mode
         # normalize classifier loss per point in trainset
