@@ -121,7 +121,7 @@ def make_conda_pipeline(os, arch, py_version, pytest_args=""):
           "conda info -e",
           # install deep learning packages
           # TODO: this is CPUonly hardcoded...
-          "conda install -q torchvision cpuonly -c pytorch -y",
+          "conda install -q pytorch cpuonly -c pytorch -y",
           "conda install -q numpy cython -y",  # install setup dependecies
           # tensorflow from conda-forge seems to break quite often?!
           # the one from defaults can be some versions behind but usually works
