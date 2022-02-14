@@ -113,7 +113,7 @@ def emulate_production_from_storage(model, storage, n_states):
 
 def get_batch_size_from_model_and_descriptors(model, descriptors, max_size=4096) -> int:
     """
-    Get a batch size value either from models expected efficiency params.
+    Get a batch size value either from models expected efficiency params or from descriptors size.
 
     If None is in there take the min(descriptors.shape[0], max_size)
     """

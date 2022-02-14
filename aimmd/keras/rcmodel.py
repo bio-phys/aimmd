@@ -150,6 +150,10 @@ class KerasRCModel(RCModel):
                                         for _ in range(epochs)])
 
     def test_loss(self, trainset, batch_size=None):
+        if batch_size is None:
+            batch_size = get_batch_size_from_model_and_descriptors(
+                                    model=self, descriptors=trainset.descriptors,
+                                                                   )
         loss = self.nnet.evaluate(x=trainset.descriptors,
                                   y=trainset.shot_results,
                                   batch_size=batch_size,
@@ -170,7 +174,7 @@ class KerasRCModel(RCModel):
     def set_lr(self, new_lr):
         K.set_value(self.nnet.optimizer.lr, new_lr)
 
-    def train_epoch(self, trainset, batch_size=128, shuffle=True):
+    def train_epoch(self, trainset, batch_size=None, shuffle=True):
         # train for one epoch == one pass over the trainset
         loss = 0.
         for target in trainset.iter_batch(batch_size, shuffle):

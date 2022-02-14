@@ -193,6 +193,12 @@ class TrainSetIterator(Iterator):
         self.i = 0
         self.max_i = len(trainset)
         if batch_size is None:
+            # Note: we use None to denote we dont care,
+            #       but if possible use the full trainset
+            batch_size = len(trainset)
+        elif np.isinf(batch_size):
+            # Note: we use inf to mean take the full trainset always
+            #       even if we then run into out of memory issues
             batch_size = len(trainset)
         self.batch_size = batch_size
         self.trainset = trainset

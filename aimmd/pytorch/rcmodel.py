@@ -283,7 +283,11 @@ class PytorchRCModel(RCModel):
                                                          )
                                         for _ in range(epochs)])
 
-    def test_loss(self, trainset, batch_size=128):
+    def test_loss(self, trainset, batch_size=None):
+        if batch_size is None:
+            batch_size = get_batch_size_from_model_and_descriptors(
+                                model=self, descriptors=trainset.descriptors,
+                                                                   )
         self.nnet.eval()  # put model in evaluation mode
         total_loss = 0.
         with torch.no_grad():
@@ -309,7 +313,7 @@ class PytorchRCModel(RCModel):
         for i, param_group in enumerate(self.optimizer.param_groups):
             param_group['lr'] = new_lr
 
-    def train_epoch(self, trainset, batch_size=128, shuffle=True):
+    def train_epoch(self, trainset, batch_size=None, shuffle=True):
         # one pass over the whole trainset
         # returns loss per shot averaged over whole training set
         total_loss = 0.
@@ -339,7 +343,7 @@ class PytorchRCModel(RCModel):
     def _log_prob(self, descriptors, batch_size):
         if batch_size is None:
             batch_size = get_batch_size_from_model_and_descriptors(
-                                    model=self, descriptors=descriptors
+                                    model=self, descriptors=descriptors,
                                                                    )
         predictions = []
         self.nnet.eval()  # put model in evaluation mode
@@ -606,11 +610,12 @@ class EnsemblePytorchRCModel(RCModel):
         if use_transform:
             descriptors = self._apply_descriptor_transform(descriptors)
 
-        [nnet.eval() for nnet in self.nnets]
         if batch_size is None:
             batch_size = get_batch_size_from_model_and_descriptors(
                                             model=self, descriptors=descriptors,
                                                                    )
+
+        [nnet.eval() for nnet in self.nnets]
         # TODO: do we need no_grad? or is eval and no_grad redundant?
         plists = [[] for _ in self.nnets]
         with torch.no_grad():
@@ -635,9 +640,13 @@ class EnsemblePytorchRCModel(RCModel):
             return p_mean, plist
         return p_mean
 
-    def test_loss(self, trainset, batch_size=1024):
+    def test_loss(self, trainset, batch_size=None):
         # TODO/FIXME: this assumes binomial/multinomial loss!
         # TODO/FIXME: we should rewrite it in terms of self.loss if possible
+        if batch_size is None:
+            batch_size = get_batch_size_from_model_and_descriptors(
+                                model=self, descriptors=trainset.descriptors,
+                                                                   )
         # calculate the test loss for the combined weighted prediction
         # i.e. the loss the model suffers when used as a whole
         # Note that self.__call__() puts the model in evaluation mode
@@ -960,6 +969,10 @@ class MultiDomainPytorchRCModel(RCModel):
         pass
 
     def train_hook(self, trainset):
+        # TODO/FIXME: this expects the train decission to not return
+        #             batch_size, i.e. it only works with the
+        #             hardcoded decissions below and not with the
+        #             general external functions
         # TODO: different train decisions for different prediction nets?
         # committor prediction nets
         self._count_train_hook += 1
@@ -985,7 +998,7 @@ class MultiDomainPytorchRCModel(RCModel):
             self.log_ctrain_loss.append([self.train_epoch_cnet(trainset, cnet_target)
                                          for _ in range(epochs_c)])
 
-    def test_loss(self, trainset, loss='L_pred', batch_size=128):
+    def test_loss(self, trainset, loss='L_pred', batch_size=None):
         """
         Calculate the test loss over given TrainSet.
 
@@ -1003,6 +1016,11 @@ class MultiDomainPytorchRCModel(RCModel):
         Note that batch_size is ignored for loss='L_pred'.
 
         """
+        if batch_size is None:
+            batch_size = get_batch_size_from_model_and_descriptors(
+                                model=self, descriptors=trainset.descriptors,
+                                                                   )
+
         if loss == 'L_pred':
             return self._test_loss_pred(trainset, batch_size)
         elif 'L_mod' in loss:
@@ -1147,7 +1165,7 @@ class MultiDomainPytorchRCModel(RCModel):
         # because we only have one event (one correct model) per point
         return total_loss / np.sum(trainset.weights)
 
-    def train_epoch_pnets(self, trainset, batch_size=128, shuffle=True):
+    def train_epoch_pnets(self, trainset, batch_size=None, shuffle=True):
         # one pass over the whole trainset
         # returns loss per shot averaged over whole training set as list,
         # one fore each model by idx and last entry is the combined multidomain loss
