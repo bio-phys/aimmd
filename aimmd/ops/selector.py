@@ -198,7 +198,7 @@ class RCModelSelector(ShootingPointSelector):
         rand = np.random.random() * sum_bias
         idx = 0
         prob = biases[0]
-        while prob <= rand and idx < len(biases):
+        while prob <= rand and idx < len(biases) - 1:
             idx += 1
             prob += biases[idx]
 
