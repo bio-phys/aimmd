@@ -23,6 +23,136 @@ import openpathsampling as paths
 torch = pytest.importorskip("torch")
 
 
+from aimmd.pytorch.networks import ResNet, SNN, FFNet, ModuleStack
+
+
+class Test_Networks:
+    # NOTE: the reset_parameters tests are essentially smoke tests
+    #       they only test that the parameters changed, not that
+    #       the new params follow the "rigth" distribution
+    def test_reset_parameters_resnet(self):
+        n_blocks = 4
+        resnet = ResNet(n_units=20, n_blocks=n_blocks,
+                        block_class=None, block_kwargs=None,
+                        )
+        old_params_weights = [[]for _ in range(n_blocks)]
+        old_params_biases = [[]for _ in range(n_blocks)]
+        for i, block in enumerate(resnet.block_list):
+            for lay in block.layers:
+                old_params_biases[i].append(lay.bias.detach().numpy().copy())
+                old_params_weights[i].append(lay.weight.detach().numpy().copy())
+        # reset params
+        resnet.reset_parameters()
+        # check that they changed
+        for i, block in enumerate(resnet.block_list):
+            for j, lay in enumerate(block.layers[:-1]):
+                assert np.all(np.not_equal(lay.bias.detach().numpy(),
+                                           old_params_biases[i][j]
+                                           )
+                              )
+                assert np.all(np.not_equal(lay.weight.detach().numpy(),
+                                           old_params_weights[i][j]
+                                           )
+                              )
+            # note that the last layer of every residual block is initialized
+            # to zeros so there we can not check that they changed
+            # so we just check that they are zero
+            assert np.all(np.equal(block.layers[-1].bias.detach().numpy(), 0.))
+            assert np.all(np.equal(block.layers[-1].weight.detach().numpy(), 0.))
+
+    def test_reset_parameters_snn(self):
+        snn = SNN(n_in=20, n_hidden=[20, 10, 20])
+        old_params_weights = []
+        old_params_biases = []
+        for lay in snn.hidden_layers:
+            old_params_biases.append(lay.bias.detach().numpy().copy())
+            old_params_weights.append(lay.weight.detach().numpy().copy())
+        # reset and check
+        snn.reset_parameters()
+        for i, lay in enumerate(snn.hidden_layers):
+            assert np.all(np.not_equal(lay.bias.detach().numpy(),
+                                       old_params_biases[i]
+                                       )
+                          )
+            assert np.all(np.not_equal(lay.weight.detach().numpy(),
+                                       old_params_weights[i]
+                                       )
+                          )
+
+    def test_reset_parameters_ffnet(self):
+        ffnet = FFNet(n_in=20, n_hidden=[20, 10, 20])
+        old_params_weights = []
+        old_params_biases = []
+        for lay in ffnet.hidden_layers:
+            old_params_biases.append(lay.bias.detach().numpy().copy())
+            old_params_weights.append(lay.weight.detach().numpy().copy())
+        # reset and check
+        ffnet.reset_parameters()
+        for i, lay in enumerate(ffnet.hidden_layers):
+            assert np.all(np.not_equal(lay.bias.detach().numpy(),
+                                       old_params_biases[i]
+                                       )
+                          )
+            assert np.all(np.not_equal(lay.weight.detach().numpy(),
+                                       old_params_weights[i]
+                                       )
+                          )
+
+    def test_reset_parameters_module_stack(self):
+        ffnet = FFNet(n_in=20, n_hidden=[20, 10, 20])
+        module_stack = ModuleStack(n_out=2, modules=[ffnet])
+        old_params_weights = []
+        old_params_biases = []
+        for lay in ffnet.hidden_layers:
+            old_params_biases.append(lay.bias.detach().numpy().copy())
+            old_params_weights.append(lay.weight.detach().numpy().copy())
+        lp_old_weight = module_stack.log_predictor.weight.detach().numpy().copy()
+        lp_old_bias = module_stack.log_predictor.bias.detach().numpy().copy()
+        # first reset only the log_predictor
+        module_stack.reset_parameters_log_predictor()
+        # check that log predictor changed and everything else stayed
+        assert np.all(np.not_equal(module_stack.log_predictor.weight.detach().numpy(),
+                                   lp_old_weight
+                                   )
+                      )
+        assert np.all(np.not_equal(module_stack.log_predictor.bias.detach().numpy(),
+                                   lp_old_bias
+                                   )
+                      )
+        for i, lay in enumerate(ffnet.hidden_layers):
+            assert np.all(np.equal(lay.bias.detach().numpy(),
+                                   old_params_biases[i]
+                                   )
+                          )
+            assert np.all(np.equal(lay.weight.detach().numpy(),
+                                   old_params_weights[i]
+                                   )
+                          )
+        # save the new log preditor weights
+        lp_old_weight = module_stack.log_predictor.weight.detach().numpy().copy()
+        lp_old_bias = module_stack.log_predictor.bias.detach().numpy().copy()
+        # now reset all and check that they changed (again)
+        module_stack.reset_parameters()
+        # check that log predictor changed and everything else stayed
+        assert np.all(np.not_equal(module_stack.log_predictor.weight.detach().numpy(),
+                                   lp_old_weight
+                                   )
+                      )
+        assert np.all(np.not_equal(module_stack.log_predictor.bias.detach().numpy(),
+                                   lp_old_bias
+                                   )
+                      )
+        for i, lay in enumerate(ffnet.hidden_layers):
+            assert np.all(np.not_equal(lay.bias.detach().numpy(),
+                                       old_params_biases[i]
+                                       )
+                          )
+            assert np.all(np.not_equal(lay.weight.detach().numpy(),
+                                       old_params_weights[i]
+                                       )
+                          )
+
+
 class Test_RCModel:
     @pytest.mark.parametrize("n_states,model_type", [('binomial', 'MultiDomain'), ('multinomial', 'MultiDomain'),
                                                      ('binomial', 'EnsembleNet'), ('multinomial', 'EnsembleNet'),
@@ -47,6 +177,7 @@ class Test_RCModel:
         # a trainset for test_loss testing
         trainset = aimmd.TrainSet(len(states), descriptors=descriptors,
                                   shot_results=shot_results)
+
         # model creation
         def make_1hidden_net(n_in, n_out):
             modules = [aimmd.pytorch.networks.FFNet(n_in=n_in,
@@ -115,9 +246,8 @@ class Test_RCModel:
         assert np.allclose(predictions_before, predictions_after)
         assert np.allclose(test_loss_before, test_loss_after)
 
-
     @pytest.mark.slow
-    @pytest.mark.parametrize( "model_type", ['EESingleDomain', 'EEMultiDomain',])
+    @pytest.mark.parametrize("model_type", ['EESingleDomain', 'EEMultiDomain'])
     def test_toy_sim_eepytorch(self, tmp_path, ops_toy_sim_setup, model_type):
         # NOTE: this is only a smoke test.
         # We only test if we can run + restart without errors
@@ -126,10 +256,10 @@ class Test_RCModel:
         # model creation
         def make_1hidden_net(n_in, n_out):
             modules = [aimmd.pytorch.networks.FFNet(n_in=n_in,
-                                                   n_hidden=[n_in, n_out])
+                                                    n_hidden=[n_in, n_out])
                        ]
             torch_model = aimmd.pytorch.networks.ModuleStack(n_out=n_out,
-                                                            modules=modules)
+                                                             modules=modules)
             return torch_model
         if model_type == 'EESingleDomain':
             torch_model = make_1hidden_net(setup_dict['cv_ndim'], 1)
