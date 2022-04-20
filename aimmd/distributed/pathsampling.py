@@ -526,7 +526,11 @@ class PathSamplingChain:
             except EngineCrashedError as e:
                 # catch error raised when gromacs crashes
                 if n_crash < self.max_retries_on_crash:
-                    logger.warning("MD engine crashed. Retrying MC step.")
+                    logger.error(f"Chain {self.chain_idx}: MD engine crashed"
+                                 + f"for the {n_crash + 1}th time, "
+                                 + "retrying MC step for another "
+                                 + f"{self.max_retries_on_crash - n_crash} "
+                                 + "times.")
                     # wait a bit for everything to finish the cleanup
                     await asyncio.sleep(self.wait_time_on_crash)
                     # move stepdir and retry

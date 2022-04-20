@@ -272,6 +272,9 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         #             (or at least that it is relative to cwd)
         model = self.get_model(stepnum=stepnum)
         sp_idx = await self.sp_selector.pick(instep.path, model=model)
+        logger.info(f"Chain {self.chain_idx}: Selected SP with idx {sp_idx} "
+                    + f"on trajectory {instep.path} of len {len(instep.path)}."
+                    )
         fw_sp_name_uc = os.path.join(wdir, f"{self.forward_deffnm}_SP_unconstrained.trr")
         fw_sp_name = os.path.join(wdir, f"{self.forward_deffnm}_SP.trr")
         fw_startconf_uc = self.frame_extractors["fw"].extract(outfile=fw_sp_name_uc,
