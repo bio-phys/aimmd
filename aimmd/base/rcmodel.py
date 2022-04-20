@@ -376,18 +376,22 @@ class RCModelAsyncMixin:
             descriptors = await self.descriptor_transform(descriptors)
         return descriptors
 
-    async def log_prob(self, descriptors, use_transform=True):
+    async def log_prob(self, descriptors, use_transform=True, batch_size=None):
         if use_transform:
             descriptors = await self._apply_descriptor_transform(descriptors)
-        return self._log_prob(descriptors)
+        return self._log_prob(descriptors, batch_size=batch_size)
 
     log_prob.__doc__ = RCModel.log_prob.__doc__
 
-    async def q(self, descriptors, use_transform=True):
+    async def q(self, descriptors, use_transform=True, batch_size=None):
         if self.n_out == 1:
-            return await self.log_prob(descriptors, use_transform)
+            return await self.log_prob(descriptors,
+                                       use_transform=use_transform,
+                                       batch_size=batch_size)
         else:
-            log_prob = await self.log_prob(descriptors, use_transform)
+            log_prob = await self.log_prob(descriptors,
+                                           use_transform=use_transform,
+                                           batch_size=batch_size)
             rc = [(log_prob[..., i:i+1]
                    - np.log(np.sum(np.exp(np.delete(log_prob, [i], axis=-1)),
                                    axis=-1, keepdims=True
@@ -398,23 +402,31 @@ class RCModelAsyncMixin:
 
     q.__doc__ = RCModel.q.__doc__
 
-    async def __call__(self, descriptors, use_transform=True):
-        log_prob = await self.log_prob(descriptors, use_transform)
+    async def __call__(self, descriptors, use_transform=True, batch_size=None):
+        log_prob = await self.log_prob(descriptors,
+                                       use_transform=use_transform,
+                                       batch_size=batch_size)
         if self.n_out == 1:
             return self._p_binom(log_prob)
         return self._p_multinom(log_prob)
 
     __call__.__doc__ = RCModel.__call__.__doc__
 
-    async def z_sel(self, descriptors, use_transform=True):
+    async def z_sel(self, descriptors, use_transform=True, batch_size=None):
         if self.n_out == 1:
-            return await self.q(descriptors, use_transform)
-        return await self._z_sel_multinom(descriptors, use_transform)
+            return await self.q(descriptors,
+                                use_transform=use_transform,
+                                batch_size=batch_size)
+        return await self._z_sel_multinom(descriptors,
+                                          use_transform=use_transform,
+                                          batch_size=batch_size)
 
     z_sel.__doc__ = RCModel.z_sel.__doc__
 
-    async def _z_sel_multinom(self, descriptors, use_transform):
-        p = await self(descriptors, use_transform=use_transform)
+    async def _z_sel_multinom(self, descriptors, use_transform, batch_size):
+        p = await self(descriptors,
+                       use_transform=use_transform,
+                       batch_size=batch_size)
         # the prob to be on any TP is 1 - the prob to be on no TP
         # to be on no TP means beeing on a "self transition" (A->A, etc.)
         reactive_prob = 1 - np.sum(p * p, axis=1)
