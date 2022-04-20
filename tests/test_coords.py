@@ -56,8 +56,8 @@ class Test_symmetry:
         traj = md.Trajectory(xyz=xyz, topology=top)
 
         # symmetry function params
-        mol_idx = np.array([0], dtype=np.int)
-        solv_idxs = [[np.array([1, 2, 3, 4], dtype=np.int)]]
+        mol_idx = np.array([0], dtype=np.int64)
+        solv_idxs = [[np.array([1, 2, 3, 4], dtype=np.int64)]]
         zetas = [1, 2, 4, 8, 16, 32, 64, 128]
         # eta, r_s, zeta, lambda
         g_parms = [np.array([[1., 1.], [5., 1.], [1., 0.], [5., 0.]]),

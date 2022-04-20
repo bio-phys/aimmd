@@ -75,12 +75,36 @@ class ModuleStack(nn.Module):
                             'modules': None,
                             'modules_call_kwargs': modules_call_kwargs,
                             }
+        self.reset_parameters()
 
     def forward(self, x):
         for m in self.module_list:
             x = m(x)
         x = self.log_predictor(x)
         return x
+
+    def reset_parameters(self):
+        """Reset parameters (weights and biases) of the whole model."""
+        # these are the submodules, .e.g FFNet, ResNet, SNN, etc
+        for module in self.module_list:
+            reset_func = getattr(module, "reset_parameters", None)
+            if reset_func is not None:
+                module.reset_parameters()
+        # and here the log_predictor weights
+        self._reset_log_predictor()
+
+    def reset_parameters_log_predictor(self):
+        """Reset parameters for log predictor (== last layer) only."""
+        self._reset_log_predictor()
+
+    def _reset_log_predictor(self):
+        # TODO: this uses the pytorch default xavier uniform
+        #       we might want to use N(-\sqrt(1/fan_in), \sqrt(1/fan_in)),
+        #       i.e. kaiming normal? Actually I think it should be fine here
+        #       because we can expect the layer before to have zero mean (which
+        #        is assumed in the derivation of xavier) if we properly
+        #       intialized the layers below?
+        self.log_predictor.reset_parameters()
 
 
 class FFNet(nn.Module):
@@ -119,6 +143,7 @@ class FFNet(nn.Module):
             idx = int(key)
             dropout_list[idx] = nn.Dropout(val)
         self.dropout_layers = nn.ModuleList(dropout_list)
+        self.reset_parameters()
 
     def forward(self, x):
         for drop, act, lay in zip(self.dropout_layers,
@@ -142,6 +167,12 @@ class FFNet(nn.Module):
                 lay.reset_parameters()
         # NOTE: I think we do not need to check:
         # we can only have nn.Linear layers in there
+        # TODO: this uses pytorch default xavier uniform initialization
+        #       but we might want to use xavier normal?!
+        # TODO: proper initialization depends on the activation function,
+        #       the assumption made about the mean and var determine the 'gain'
+        #       we should try to get the correct value for ReLU, LReLU and friends
+        #       for now we just use gain=1 always
         for lay in self.hidden_layers:
             lay.reset_parameters()  # reset biases and weights
 
@@ -246,6 +277,7 @@ class PreActivationResidualUnit(nn.Module):
         # TODO: do we want to be able to use different activations?
         # i.e. should we use a list of activation functions?
         self.activation = activation
+        self.reset_parameters()
 
     def forward(self, x):
         identity = x
@@ -253,6 +285,25 @@ class PreActivationResidualUnit(nn.Module):
             x = lay(self.activation(norm(x)))
         x = x + identity
         return x
+
+    def reset_parameters(self):
+        for lay in self.norm_layers:
+            # TODO: how to best reset/initialize the possible
+            #       (batch)normalization layers?
+            reset_func = getattr(lay, "reset_parameters", None)
+            if reset_func is not None:
+                lay.reset_parameters()
+        # TODO: proper initialization depends on the activation function
+        #       this works only for activations that result in zero mean
+        for lay in self.layers[:-1]:
+            # these are all linear layers, their default initialization is
+            # xavier uniform
+            lay.reset_parameters()
+        # initialize the last linear layer weights and biases to zero
+        # see e.g. 'fixup initialization'
+        nn.init.zeros_(self.layers[-1].weight)
+        if self.layers[-1].bias is not None:
+            nn.init.zeros_(self.layers[-1].bias)
 
 
 class ResNet(nn.Module):
@@ -300,8 +351,19 @@ class ResNet(nn.Module):
                                          for clas, kwargs in zip(block_class,
                                                                  block_kwargs)
                                          ])
+        self.reset_parameters()
 
     def forward(self, x):
         for block in self.block_list:
             x = block(x)
         return x
+
+    def reset_parameters(self):
+        for block in self.block_list:
+            reset_func = getattr(block, "reset_parameters", None)
+            if reset_func is None:
+                # this should never happen, i.e. we expect that all block cls
+                # have a reset_parameters method
+                raise ValueError(f"The block {block} has no 'reset_parameters"
+                                 + " method.")
+            block.reset_parameters()
