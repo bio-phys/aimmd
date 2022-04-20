@@ -24,6 +24,7 @@ import numpy as np
 from . import _SEMAPHORES
 from .. import TrainSet
 from .mdengine import EngineError, EngineCrashedError
+from .logic import MaxStepsReachedError
 from .pathmovers import (MCstep, PathMover, ModelDependentPathMover)
 from .utils import accepted_trajs_from_aimmd_storage
 
@@ -504,7 +505,8 @@ class PathSamplingChain:
             raise ValueError("current_step must be set.")
         self._stepnum += 1
         done = False
-        n = 0
+        n_crash = 0
+        n_maxlen = 0
         mover = self._rng.choice(self.movers, p=self.mover_weights)
         while not done:
             step_dir = os.path.join(self.workdir,
@@ -515,21 +517,26 @@ class PathSamplingChain:
             try:
                 outstep = await mover.move(instep=instep, stepnum=self._stepnum,
                                            wdir=step_dir, model=model)
+            except MaxStepsReachedError as e:
+                # error raised when any trial takes "too long" to commit
+                logger.error(f"Chain {self.chain_idx}: MaxStepsReachedError, "
+                             + "retrying MC step from scratch.")
+                os.rename(step_dir, step_dir + f"_max_len{n_maxlen+1}")
+                n_maxlen += 1
             except EngineCrashedError as e:
                 # catch error raised when gromacs crashes
-                if n < self.max_retries_on_crash:
+                if n_crash < self.max_retries_on_crash:
                     logger.warning("MD engine crashed. Retrying MC step.")
                     # wait a bit for everything to finish the cleanup
                     await asyncio.sleep(self.wait_time_on_crash)
                     # move stepdir and retry
-                    os.rename(step_dir, step_dir + f"_crash{n+1}")
+                    os.rename(step_dir, step_dir + f"_crash{n_crash+1}")
+                    n_crash += 1
                 else:
                     # reached maximum tries, raise the error and crash the sampling :)
                     raise e from None
             else:
                 done = True
-            finally:
-                n += 1
 
         self.chainstore.append(outstep)
         if outstep.accepted:

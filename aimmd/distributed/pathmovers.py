@@ -189,7 +189,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
     traj_to_state_suffix = "_traj_to_state"
 
     def __init__(self, states, engine_cls, engine_kwargs, walltime_per_part, T,
-                 sp_selector=None):
+                 sp_selector=None, max_steps=None):
         """
         states - list of state functions, passed to Propagator
         descriptor_transform - coroutine function used to calculate descriptors
@@ -200,6 +200,12 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         T - temperature in degree K (used for velocity randomization)
         sp_selector - `aimmd.distributed.pathmovers.RCModelSPSelector` or None,
                       if None we will initialialize a selector with defaults
+        max_steps - int or None, maximum number of integration steps *per part*
+                    i.e. this bounds steps(TP) <= 2*max_steps.
+                    None means no upper length, i.e. trials can get "stuck".
+                    Note that if the maximum is reached in any direction the
+                    trial will be discarded and a new trial will be started
+                    from the last accepted MCStep.
         """
         # NOTE: we expect state funcs to be coroutinefuncs!
         # TODO: check that we use the same T as GMX? or maybe even directly take T from GMX (mdp)?
@@ -229,6 +235,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         if sp_selector is None:
             sp_selector = RCModelSPSelector()
         self.sp_selector = sp_selector
+        self.max_steps = max_steps
         self._build_extracts_and_propas()
 
     def _build_extracts_and_propas(self):
@@ -240,7 +247,8 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                                     states=self.states,
                                     engine_cls=self.engine_cls,
                                     engine_kwargs=self.engine_kwargs,
-                                    walltime_per_part=self.walltime_per_part
+                                    walltime_per_part=self.walltime_per_part,
+                                    max_steps=self.max_steps,
                                                               )
                             for _ in range(2)
                             ]
