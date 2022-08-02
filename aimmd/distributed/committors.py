@@ -15,6 +15,7 @@ You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import os
+import shutil
 import logging
 import asyncio
 import numpy as np
@@ -397,6 +398,22 @@ class CommittorSimulation:
                                        (f"{self.start_conf_name_prefix}"
                                         + f"{self.deffnm_engine_out}.trr"),
                                        )
+        if not os.path.isfile(start_conf_name):
+            # NOTE: I (hejung) think this is a bit overkill since we sort out the continuation issue
+            #       at the level of the _run_single_trial function
+            #       BUT: we'll leave it here for now, such that we can streamline the whole ocmmittor simulation at once
+            #            and maybe get away without the run_single_trial function?! or rewrite trial_tw as using two trial oneway?
+            # if the starting configuration does not exist that probably means we never
+            # started this particular trial, i.e. if we have continuation=True that means we
+            # did a correspondign trial/shotnum for a lower index configuration, but not yet
+            # for this one here, so just reset continuation to False and do this trial from scratch
+            if continuation:
+                logger.warn(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
+                            + f"shot {shot_num}, deffnm {self.deffnm_engine_out} "
+                            + f"but no starting_configuration found ({start_conf_name})."
+                            + f"Starting this particular trial from scratch, i.e. "
+                            + "setting continuation=False for this trial.")
+                continuation = False
         if not continuation:
             # get starting configuration and write it out with random velocities
             start_conf_name_uc = os.path.join(step_dir,
@@ -405,11 +422,28 @@ class CommittorSimulation:
                                                + f"{self.deffnm_engine_out}.trr"),
                                               )
             extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
-            starting_conf_uc = extractor_fw.extract(
-                                outfile=start_conf_name_uc,
-                                traj_in=self.starting_configurations[conf_num][0],
-                                idx=self.starting_configurations[conf_num][1],
-                                                   )
+            try:
+                starting_conf_uc = extractor_fw.extract(
+                                    outfile=start_conf_name_uc,
+                                    traj_in=self.starting_configurations[conf_num][0],
+                                    idx=self.starting_configurations[conf_num][1],
+                                                       )
+            except FileExistsError:
+                # if the unconstrained conf exists already but the constrained one not
+                # we empty the whole folder and start with a new unconstrained one
+                for fn in os.listdir(step_dir):
+                    fp = os.path.join(step_dir, fn)
+                    if os.path.isfile(fp) or os.path.islink(fp):
+                        os.unlink(fp)
+                    elif os.path.isdir(fp):
+                        shutil.rmtree(fp)
+                # and now extract again
+                starting_conf_uc = extractor_fw.extract(
+                                    outfile=start_conf_name_uc,
+                                    traj_in=self.starting_configurations[conf_num][0],
+                                    idx=self.starting_configurations[conf_num][1],
+                                                       )
+            # this will now always work
             constraints_engine = self.engine_cls[conf_num](**self.engine_kwargs[conf_num])
             starting_conf = await constraints_engine.apply_constraints(
                                                 conf_in=starting_conf_uc,
@@ -511,6 +545,20 @@ class CommittorSimulation:
                                           (f"{self.start_conf_name_prefix}"
                                            + f"{self.deffnm_engine_out}.trr"),
                                           )
+        if not os.path.isfile(start_conf_name_fw):
+            # NOTE: same as for trial_ow, I think we dont need to check for the starting_conf to sort out contnuation or not
+            #       see the note there ;)
+            # if the starting configuration does not exist that probably means we never
+            # started this particular trial, i.e. if we have continuation=True that means we
+            # did a correspondign trial/shotnum for a lower index configuration, but not yet
+            # for this one here, so just reset continuation to False and do this trial from scratch
+            if continuation:
+                logger.warn(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
+                            + f"shot {shot_num}, deffnm {self.deffnm_engine_out} "
+                            + f"but no starting_configuration found ({start_conf_name_fw})."
+                            + f"Starting this particular trial from scratch, i.e. "
+                            + "setting continuation=False for this trial.")
+                continuation = False
         continuation_fw = continuation
         if not continuation_fw:
             start_conf_name_fw_uc = os.path.join(step_dir,
@@ -519,11 +567,29 @@ class CommittorSimulation:
                                                   + f"{self.deffnm_engine_out}.trr"),
                                                  )
             extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
-            starting_conf_fw_uc = extractor_fw.extract(
-                                   outfile=start_conf_name_fw_uc,
-                                   traj_in=self.starting_configurations[conf_num][0],
-                                   idx=self.starting_configurations[conf_num][1],
-                                                   )
+            try:
+                starting_conf_fw_uc = extractor_fw.extract(
+                                    outfile=start_conf_name_fw_uc,
+                                    traj_in=self.starting_configurations[conf_num][0],
+                                    idx=self.starting_configurations[conf_num][1],
+                                                       )
+            except FileExistsError:
+                # if the unconstrained conf exists already but the constrained one not
+                # we empty the whole folder and start with a new unconstrained one
+                for fn in os.listdir(step_dir):
+                    fp = os.path.join(step_dir, fn)
+                    if os.path.isfile(fp) or os.path.islink(fp):
+                        os.unlink(fp)
+                    elif os.path.isdir(fp):
+                        shutil.rmtree(fp)
+                # and now extract again
+                starting_conf_fw_uc = extractor_fw.extract(
+                                        outfile=start_conf_name_fw_uc,
+                                        traj_in=self.starting_configurations[conf_num][0],
+                                        idx=self.starting_configurations[conf_num][1],
+                                                       )
+            # this will now always work, becasue we will always have an folder with just the unconstrained
+            # starting configuration
             constraints_engine = self.engine_cls[conf_num](**self.engine_kwargs[conf_num])
             starting_conf_fw = await constraints_engine.apply_constraints(
                                                 conf_in=starting_conf_fw_uc,
@@ -552,16 +618,21 @@ class CommittorSimulation:
                                            + f"{self.deffnm_engine_out_bw}.trr"),
                                           )
         continuation_bw = continuation
-        if continuation:
-            # check if we ever started the backwards trial
-            if os.path.isfile(start_conf_name_bw):
-                starting_conf_bw = Trajectory(
-                    trajectory_file=start_conf_name_bw,
-                    structure_file=self.starting_configurations[conf_num][0].structure_file
-                                       )
-                continuation_bw = True
-            else:
-                # if not start backwards trial from scratch
+        if not os.path.isfile(start_conf_name_bw):
+            # NOTE: here we need to sort out continuation or not as it is just for the bw direction
+            #       and we could always do only the forward first and then decide we want to add the backwards later
+            #       but then the folder exists (for fw) and our sorting out in the single_trial func is not sufficient
+            #       to decide if we started bw
+            # if the starting configuration does not exist that probably means we never
+            # started this particular trial, i.e. if we have continuation=True that means we
+            # did a corresponding trial/shotnum for a lower index configuration, but not yet
+            # for this one here, so just reset continuation to False and do this trial from scratch
+            if continuation_bw:
+                logger.warn(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
+                            + f"shot {shot_num}, deffnm {self.deffnm_engine_out_bw} "
+                            + f"but no starting_configuration found ({start_conf_name_bw})."
+                            + f"Starting this particular trial from scratch, i.e. "
+                            + "setting continuation=False for this trial and bw direction.")
                 continuation_bw = False
         if not continuation_bw:
             # write out the starting configuration if it is no continuation
@@ -573,6 +644,11 @@ class CommittorSimulation:
                                                    )
             n_bw = 0
         else:
+            # wrap the existing starting configuration as aimmd trajectory if it is a continuation
+            starting_conf_bw = Trajectory(
+                    trajectory_file=start_conf_name_bw,
+                    structure_file=self.starting_configurations[conf_num][0].structure_file
+                                       )
             # get the number of times we crashed/reached max length before
             n_bw = 0
             while (os.path.isdir(os.path.join(
@@ -759,9 +835,25 @@ class CommittorSimulation:
                         self._conf_dirs[conf_num],
                         f"{self.shot_dir_prefix}{str(shot_num)}",
                                 )
-        if not continuation:
-            # create directory only for new trials
+        #if not continuation:
+        #    # create directory only for new trials
+        #    os.mkdir(step_dir)
+        try:
             os.mkdir(step_dir)
+        except FileExistsError as e:
+            if not continuation:
+                # if it is not a continuation it should not exists!
+                raise e from None
+        else:
+            # if we can create the folder but have continuation=True
+            # this means we intended to but never started this trial
+            if continuation:
+                logger.warn(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
+                            + f"shot {shot_num}, deffnm {self.deffnm_engine_out} "
+                            + f"but no step directory found ({step_dir})."
+                            + f"Starting this particular trial from scratch, i.e. "
+                            + "setting continuation=False for this trial.")
+                continuation = False
         if two_way:
             state_reached = await self._run_single_trial_tw(
                                                     conf_num=conf_num,

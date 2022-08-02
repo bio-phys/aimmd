@@ -14,6 +14,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
+import os
 import asyncio
 import inspect
 import logging
@@ -341,6 +342,25 @@ class TrajectoryPropagatorUntilAnyState:
             trajs = [starting_configuration]
         else:
             engine = self.engine_cls(**self.engine_kwargs)
+            # if the list of previous trajs is empty we can not do a continuation
+            trajs = get_all_traj_parts(workdir, deffnm=deffnm,
+                                       traj_type=engine.output_traj_type)
+            if len(trajs) == 0 and continuation:
+                logger.error(f"No previous trajectories found in folder {workdir} for deffnm {deffnm}"
+                             + f"Setting continuation=False and starting a new trial from {starting_configuration}")
+                continuation = False
+                # TODO/FIXME: this bit below is gromacs specific! write a cleanup_directory method for gmx
+                #             and write a general (engine unspecific) cleanup_directory method that then dispatches
+                #             i.e. similar to what we do with the get_all_traj_parts methods in asyncmd
+                # remove possible leftover tprs and mdps from (crahsed/interupted) trials with the same deffnm
+                # i.e. trials in which jsut called prepare/grompp but never called run/mdrun
+                mdp_in = os.path.join(workdir, deffnm + ".mdp")
+                mdp_out = os.path.join(workdir, deffnm + "_mdout.mdp")
+                tpr = os.path.join(workdir, deffnm + ".tpr")
+                for f in [mdp_in, mdp_out, tpr]:
+                    if os.path.exists(f):
+                        logger.warning(f"Removing leftover file from previous run ({f}).")
+                        os.unlink(f)
             if not continuation:
                 await engine.prepare(
                             starting_configuration=starting_configuration,
@@ -348,13 +368,13 @@ class TrajectoryPropagatorUntilAnyState:
                             deffnm=deffnm,
                                     )
                 any_state_reached = False
-                trajs = []
+                #trajs = []
                 step_counter = 0
             else:
                 # NOTE: we assume that the state function could be different
                 # so get all traj parts and calculate the state functions on them
-                trajs = get_all_traj_parts(workdir, deffnm=deffnm,
-                                           traj_type=engine.output_traj_type)
+                #trajs = get_all_traj_parts(workdir, deffnm=deffnm,
+                #                           traj_type=engine.output_traj_type)
                 states_vals = await asyncio.gather(
                                 *(self._state_vals_for_traj(t) for t in trajs)
                                                    )

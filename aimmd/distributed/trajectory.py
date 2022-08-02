@@ -795,7 +795,7 @@ class FrameExtractor(abc.ABC):
         """
         outfile = os.path.abspath(outfile)
         if os.path.exists(outfile) and not overwrite:
-            raise ValueError(f"overwrite=False and outfile exists: {outfile}")
+            raise FileExistsError(f"overwrite=False and outfile exists: {outfile}")
         struct_out = (traj_in.structure_file if struct_out is None
                       else os.path.abspath(struct_out))
         if not os.path.isfile(struct_out):
