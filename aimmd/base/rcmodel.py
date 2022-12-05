@@ -15,7 +15,6 @@ You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
-import asyncio
 import numpy as np
 from openpathsampling.engines.snapshot import BaseSnapshot as OPSBaseSnapshot
 from openpathsampling.engines.trajectory import Trajectory as OPSTrajectory

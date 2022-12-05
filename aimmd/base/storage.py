@@ -428,39 +428,19 @@ class RCModelRack(collections.abc.MutableMapping):
 
 # TODO: DOCUMENT!!!
 # distributed TPS storage
-class MCstepMemory(collections.abc.Sequence):
-    # NOTE: we inherhit from Sequence (instead of MutableSequence) and write a custom .append method
-    #       this way we can easily make sure that trial data can not be reset
-    # TODO: should we use a `abc.collections.Collection` instead
-    #       (to reflect that trials are not necessarily ordered?)
+class MCstepMemory(MutableObjectShelf):
     # stores one MCstep
     # contains a sequence of trial trajectories (2 for TwoWayShooting)
     # *can* contain a path/transition
-    def __init__(self, root_grp, modelstore, chain_idx, mcstep=None):
-        self._root_grp = root_grp
+    def __init__(self, grp, modelstore, chain_idx, mcstep=None):
+        super().__init__(group=grp)
         self._modelstore = modelstore
         self._chain_idx = chain_idx
-        self._h5py_paths = {"path": "path",
-                            "trials": "trial_trajectories",
-                            "py_data": "obj_shelf_pickle_data",
-                            }
-        self._tras_grp = self._root_grp.require_group(
-                                            self._h5py_paths["trials"]
-                                                      )
         if mcstep is not None:
             self.save(mcstep=mcstep)
 
     def save(self, mcstep):
-        if len(self) != 0:
-            raise RuntimeError("Can not modify/overwrite saved MCsteps.")
-        trajs = mcstep.trial_trajectories
-        path = mcstep.path
         mover = mcstep.mover
-        for tra in trajs:
-            self._append(tra)
-        if path is not None:
-            self.path = path
-        py_grp = self._root_grp.require_group(self._h5py_paths["py_data"])
         if isinstance(mover, ModelDependentPathMover):
             mover_modelstore = mover.modelstore
             # check if they use the same hdf5 group, the RCModelshelf objects
@@ -472,75 +452,19 @@ class MCstepMemory(collections.abc.Sequence):
                 logger.error("saving a mcstep from a mover with a different "
                              + f"chain idx than we have ({mover.chain_idx} != "
                              + f"{self._chain_idx}).")
-        MutableObjectShelf(py_grp).save(obj=mcstep, overwrite=True)
+        super().save(obj=mcstep, overwrite=False, buffsize=2**22)
         if isinstance(mover, ModelDependentPathMover):
             # reset the modelstore of the mc.mover in case we use it somewhere else
             mcstep.mover.modelstore = mover_modelstore
 
     def load(self):
-        try:
-            py_grp = self._root_grp[self._h5py_paths["py_data"]]
-        except KeyError:
-            # we get a KeyError if there is no transition
-            return None
-        else:
-            mcstep = MutableObjectShelf(py_grp).load()
-        mcstep.trial_trajectories = [t for t in self]
-        mcstep.path = self.path
+        mcstep = super().load(buffsize=2**22)
         if isinstance(mcstep.mover, ModelDependentPathMover):
             mcstep.mover.modelstore = self._modelstore
             # TODO: do we want to set the chain_idx here?
             #       I think we should to be consistent with the modelstore...
             mcstep.mover.chain_idx = self._chain_idx
         return mcstep
-
-    @property
-    def path(self):
-        try:
-            tp_grp = self._root_grp[self._h5py_paths["path"]]
-        except KeyError:
-            # we get a KeyError if there is no transition
-            return None
-        else:
-            return AimmdObjectShelf(tp_grp).load()
-
-    @path.setter
-    def path(self, val):
-        # TODO: check that value is of type Trajectory?
-        if self.path is not None:
-            # make sure there is None (yet)
-            raise ValueError("Can only set the transition once,"
-                             + " i.e. if it has no value.")
-        else:
-            tp_grp = self._root_grp.require_group(self._h5py_paths["path"])
-            # the group should be empty, so lets fails if it is not
-            AimmdObjectShelf(tp_grp).save(obj=val, overwrite=False)
-
-    def __len__(self):
-        # return number of trial trajectories as length
-        return len(self._tras_grp.keys())
-
-    def __getitem__(self, key):
-        if isinstance(key, (int, np.int)):
-            if key >= len(self):
-                raise IndexError(f"Index (was {key}) must be <= len(self).")
-            else:
-                return AimmdObjectShelf(self._tras_grp[str(key)]).load()
-        elif isinstance(key, slice):
-            start, stop, step = key.indices(len(self))
-            ret_val = []
-            for idx in range(start, stop, step):
-                ret_val += [AimmdObjectShelf(self._tras_grp[str(idx)]).load()]
-            return ret_val
-        else:
-            raise TypeError("Keys must be int or slice.")
-
-    def _append(self, value):
-        # append a trajectory to the trajectories associated with this trial
-        # TODO: check that value is of type Trajectory?
-        single_tra_grp = self._tras_grp.require_group(str(len(self)))
-        # group should be empty so overwrite=False to fail if its not
-        AimmdObjectShelf(single_tra_grp).save(obj=value, overwrite=False)
 
 
 class ChainMemory(collections.abc.Sequence):

@@ -20,14 +20,18 @@ import logging
 import asyncio
 import numpy as np
 
-from .trajectory import (Trajectory, RandomVelocitiesFrameExtractor,
-                         InvertedVelocitiesFrameExtractor,
-                         )
-from .mdengine import EngineError, EngineCrashedError
-from .logic import (MaxStepsReachedError, TrajectoryPropagatorUntilAnyState,
-                    construct_TP_from_plus_and_minus_traj_segments,
-                    )
-from .gmx_utils import ensure_mdp_options
+from asyncmd.mdengine import EngineCrashedError
+from asyncmd import Trajectory
+from asyncmd.trajectory.convert import (RandomVelocitiesFrameExtractor,
+                                        InvertedVelocitiesFrameExtractor,
+                                        )
+from asyncmd.trajectory.propagate import (
+                            MaxStepsReachedError,
+                            ConditionalTrajectoryPropagator,
+                            construct_TP_from_plus_and_minus_traj_segments,
+                                          )
+from asyncmd.utils import ensure_mdconfig_options
+
 
 logger = logging.getLogger(__name__)
 
@@ -99,14 +103,14 @@ class CommittorSimulation:
         starting_configurations - list of iterables, each entry in the list is
                                   describing a starting configuration and must
                                   have at least the two entries:
-                                   (`aimd.distributed.Trajectory`,
+                                   (`asyncmd.Trajectory`,
                                     `index_of_conf_in_traj`)
                                   It can optionally have the form:
-                                   (`aimd.distributed.Trajectory`,
+                                   (`asyncmd.Trajectory`,
                                     `index_of_conf_in_traj`,
                                     `name_for_configuration`)
         states - A list of state functions, preferably wrapped using any
-                 `aimmd.distributed.TrajectoryFunctionWrapper`
+                 `asyncmd.trajectory.TrajectoryFunctionWrapper`
         engine_cls - a subclass of `aimmd.distributed.MDEngine`, the molecular
                      dynamics engine to use
         engine_kwargs - a dictionary with keyword arguments that can be used
@@ -169,10 +173,9 @@ class CommittorSimulation:
         self.two_way = ensure_list(val=two_way,
                                    length=len(starting_configurations),
                                    name="two_way")
-        # TODO: we assume gmx engines here!
         for i in range(len(starting_configurations)):
-            self.engine_kwargs[i]["mdp"] = ensure_mdp_options(
-                               self.engine_kwargs[i]["mdp"],
+            self.engine_kwargs[i]["mdconfig"] = ensure_mdconfig_options(
+                               self.engine_kwargs[i]["mdconfig"],
                                # dont generate velocities, we do that ourself
                                genvel="no",
                                # dont apply constraints at start of simulation
@@ -280,7 +283,7 @@ class CommittorSimulation:
                                             # TODO/FIXME: only works for gmx!
                                             f"{self.deffnm_engine_out}.tpr")
                 if os.path.isfile(traj_fname):
-                    trajs_per_conf += [Trajectory(trajectory_file=traj_fname,
+                    trajs_per_conf += [Trajectory(trajectory_files=traj_fname,
                                                   structure_file=struct_fname)
                                        ]
             trajs_to_state += [trajs_per_conf]
@@ -308,7 +311,7 @@ class CommittorSimulation:
                                             # TODO/FIXME: only works for gmx!
                                             f"{self.deffnm_engine_out}.tpr")
                 if os.path.isfile(traj_fname):
-                    trajs_per_conf += [Trajectory(trajectory_file=traj_fname,
+                    trajs_per_conf += [Trajectory(trajectory_files=traj_fname,
                                                   structure_file=struct_fname)
                                        ]
             trajs_to_state += [trajs_per_conf]
@@ -339,7 +342,7 @@ class CommittorSimulation:
                                             # TODO/FIXME: only works for gmx!
                                             f"{self.deffnm_engine_out}.tpr")
                 if os.path.isfile(traj_fname):
-                    trans_per_conf += [Trajectory(trajectory_file=traj_fname,
+                    trans_per_conf += [Trajectory(trajectory_files=traj_fname,
                                                   structure_file=struct_fname)
                                        ]
             transitions += [trans_per_conf]
@@ -387,13 +390,13 @@ class CommittorSimulation:
     async def _run_single_trial_ow(self, conf_num, shot_num, step_dir,
                                    continuation, overwrite):
         # construct propagator
-        propagator = TrajectoryPropagatorUntilAnyState(
-                                    states=self.states,
+        propagator = ConditionalTrajectoryPropagator(
+                                    conditions=self.states,
                                     engine_cls=self.engine_cls[conf_num],
                                     engine_kwargs=self.engine_kwargs[conf_num],
                                     walltime_per_part=self.walltime_per_part,
                                     max_steps=self.max_steps,
-                                                       )
+                                                     )
         start_conf_name = os.path.join(step_dir,
                                        (f"{self.start_conf_name_prefix}"
                                         + f"{self.deffnm_engine_out}.trr"),
@@ -411,8 +414,9 @@ class CommittorSimulation:
                 logger.warn(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
                             + f"shot {shot_num}, deffnm {self.deffnm_engine_out} "
                             + f"but no starting_configuration found ({start_conf_name})."
-                            + f"Starting this particular trial from scratch, i.e. "
-                            + "setting continuation=False for this trial.")
+                            + "Starting this particular trial from scratch, "
+                            + "i.e. setting continuation=False for this trial."
+                            )
                 continuation = False
         if not continuation:
             # get starting configuration and write it out with random velocities
@@ -453,7 +457,7 @@ class CommittorSimulation:
             n = 0
         else:
             starting_conf = Trajectory(
-                trajectory_file=start_conf_name,
+                trajectory_files=start_conf_name,
                 structure_file=self.starting_configurations[conf_num][0].structure_file
                                        )
             # get the number of times we crashed/reached max length before
@@ -532,13 +536,13 @@ class CommittorSimulation:
         # NOTE: this is a potential misuse of a committor simulation,
         #       see the note further down for more on why it is/should be ok
         # propagators
-        propagators = [TrajectoryPropagatorUntilAnyState(
-                                    states=self.states,
+        propagators = [ConditionalTrajectoryPropagator(
+                                    conditions=self.states,
                                     engine_cls=self.engine_cls[conf_num],
                                     engine_kwargs=self.engine_kwargs[conf_num],
                                     walltime_per_part=self.walltime_per_part,
                                     max_steps=self.max_steps,
-                                                         )
+                                                       )
                        for _ in range(2)]
         # forward starting configuration
         start_conf_name_fw = os.path.join(step_dir,
@@ -556,8 +560,9 @@ class CommittorSimulation:
                 logger.warn(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
                             + f"shot {shot_num}, deffnm {self.deffnm_engine_out} "
                             + f"but no starting_configuration found ({start_conf_name_fw})."
-                            + f"Starting this particular trial from scratch, i.e. "
-                            + "setting continuation=False for this trial.")
+                            + "Starting this particular trial from scratch, "
+                            + "i.e. setting continuation=False for this trial."
+                            )
                 continuation = False
         continuation_fw = continuation
         if not continuation_fw:
@@ -599,7 +604,7 @@ class CommittorSimulation:
             n_fw = 0
         else:
             starting_conf_fw = Trajectory(
-                trajectory_file=start_conf_name_fw,
+                trajectory_files=start_conf_name_fw,
                 structure_file=self.starting_configurations[conf_num][0].structure_file
                                        )
             # get the number of times we crashed/reached max length before
@@ -631,7 +636,7 @@ class CommittorSimulation:
                 logger.warn(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
                             + f"shot {shot_num}, deffnm {self.deffnm_engine_out_bw} "
                             + f"but no starting_configuration found ({start_conf_name_bw})."
-                            + f"Starting this particular trial from scratch, i.e. "
+                            + "Starting this particular trial from scratch, i.e. "
                             + "setting continuation=False for this trial and bw direction.")
                 continuation_bw = False
         if not continuation_bw:
@@ -646,7 +651,7 @@ class CommittorSimulation:
         else:
             # wrap the existing starting configuration as aimmd trajectory if it is a continuation
             starting_conf_bw = Trajectory(
-                    trajectory_file=start_conf_name_bw,
+                    trajectory_files=start_conf_name_bw,
                     structure_file=self.starting_configurations[conf_num][0].structure_file
                                        )
             # get the number of times we crashed/reached max length before
@@ -851,8 +856,9 @@ class CommittorSimulation:
                 logger.warn(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
                             + f"shot {shot_num}, deffnm {self.deffnm_engine_out} "
                             + f"but no step directory found ({step_dir})."
-                            + f"Starting this particular trial from scratch, i.e. "
-                            + "setting continuation=False for this trial.")
+                            + "Starting this particular trial from scratch, "
+                            + "i.e. setting continuation=False for this trial."
+                            )
                 continuation = False
         if two_way:
             state_reached = await self._run_single_trial_tw(
@@ -871,7 +877,7 @@ class CommittorSimulation:
                                                     overwrite=overwrite,
                                                             )
         if state_reached is None:
-            logger.info(f"No result due to uncommitted or crashed trajectories "
+            logger.info("No result due to uncommitted or crashed trajectories "
                         + f"in trial for configuration {self._conf_dirs[conf_num]} shot {shot_num}.")
         return state_reached
 

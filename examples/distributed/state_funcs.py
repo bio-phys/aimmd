@@ -12,7 +12,7 @@ import mdtraj as mdt
 
 
 def alpha_R(traj, scratch_dir):
-    traj = mdt.load(traj.trajectory_file,
+    traj = mdt.load(traj.trajectory_files,
                     # mdt can not work with tprs, so we use theinitial gro for now
                     top=os.path.join(scratch_dir, "gmx_infiles/conf.gro"),
                     )
@@ -27,7 +27,7 @@ def alpha_R(traj, scratch_dir):
 
 
 def C7_eq(traj, scratch_dir):
-    traj = mdt.load(traj.trajectory_file,
+    traj = mdt.load(traj.trajectory_files,
                     # mdt can not work with tprs, so we use theinitial gro for now
                     top=os.path.join(scratch_dir, "gmx_infiles/conf.gro"),
                     )
@@ -43,7 +43,7 @@ def C7_eq(traj, scratch_dir):
 
 def descriptor_func_ic(traj, scratch_dir):
     """All internal coordinates (bond-length, angles, dihedrals) as descriptors."""
-    traj = mdt.load(traj.trajectory_file,
+    traj = mdt.load(traj.trajectory_files,
                     # mdt can not work with tprs, so we use theinitial gro for now
                     top=os.path.join(scratch_dir, "gmx_infiles/conf.gro"),
                     )
@@ -55,7 +55,7 @@ def descriptor_func_ic(traj, scratch_dir):
 
 def descriptor_func_psi_phi(traj, scratch_dir):
     """Only psi and phi angle as internal coords. Actually cos and sin for both of them."""
-    traj = mdt.load(traj.trajectory_file,
+    traj = mdt.load(traj.trajectory_files,
                     # mdt can not work with tprs, so we use theinitial gro for now
                     top=os.path.join(scratch_dir, "gmx_infiles/conf.gro"),
                     )
@@ -70,7 +70,7 @@ if __name__ == "__main__":
                 description="Calculate CV values for alanine dipeptide",
                                      )
     parser.add_argument("structure_file", type=str)
-    parser.add_argument("trajectory_file", type=str)
+    parser.add_argument("trajectory_files", type=str, nargs="+")
     parser.add_argument("output_file", type=str)
     parser.add_argument("-f", "--function", type=str,
                         default="descriptors",

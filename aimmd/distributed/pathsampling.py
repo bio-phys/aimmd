@@ -21,10 +21,11 @@ import asyncio
 import logging
 import numpy as np
 
-from . import _SEMAPHORES
+from asyncmd.mdengine import EngineError, EngineCrashedError
+from asyncmd.trajectory.propagate import MaxStepsReachedError
+
+from ._config import _SEMAPHORES
 from .. import TrainSet
-from .mdengine import EngineError, EngineCrashedError
-from .logic import MaxStepsReachedError
 from .pathmovers import (MCstep, PathMover, ModelDependentPathMover)
 from .utils import accepted_trajs_from_aimmd_storage
 
@@ -312,9 +313,9 @@ class Brain:
                                      p=weights)
         # put a (dummy) MCstep with the trajectory into every PathSampling sim
         for idx, chain in zip(traj_idxs, self.chains):
-            # assume that we can get dir from trajectory_file, i.e. dont check
-            # (and dont care) if the structure_file is somewhere else
-            sdir, _ = os.path.split(trajectories[idx].trajectory_file)
+            # assume that we can get dir from first trajectory_file, i.e. dont
+            # check (and dont care) if the structure_file is somewhere else
+            sdir, _ = os.path.split(trajectories[idx].trajectory_files[0])
             s = MCstep(mover=None, stepnum=0, directory=sdir,  # required
                        # our initial seed path for this chain
                        path=trajectories[idx],

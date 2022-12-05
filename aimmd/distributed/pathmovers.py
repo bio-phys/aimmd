@@ -23,14 +23,17 @@ import logging
 import textwrap
 import numpy as np
 
-from . import _SEMAPHORES
-from .trajectory import (RandomVelocitiesFrameExtractor,
-                         InvertedVelocitiesFrameExtractor,
-                         )
-from .logic import (TrajectoryPropagatorUntilAnyState,
-                    construct_TP_from_plus_and_minus_traj_segments,
-                    )
-from .gmx_utils import ensure_mdp_options
+from asyncmd import Trajectory
+from asyncmd.trajectory.convert import (RandomVelocitiesFrameExtractor,
+                                        InvertedVelocitiesFrameExtractor,
+                                        )
+from asyncmd.trajectory.propagate import (
+                            ConditionalTrajectoryPropagator,
+                            construct_TP_from_plus_and_minus_traj_segments,
+                                          )
+from asyncmd.utils import ensure_mdconfig_options
+
+from ._config import _SEMAPHORES
 
 
 logger = logging.getLogger(__name__)
@@ -219,12 +222,8 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         self.states = states
         self.engine_cls = engine_cls
         self.engine_kwargs = engine_kwargs
-        # TODO: we assume gmx engines here!
-        #       at some point we will need to write a general function working
-        #       on any MDConfig (possibly delegating to our current gmx helper
-        #       functions)
-        self.engine_kwargs["mdp"] = ensure_mdp_options(
-                                self.engine_kwargs["mdp"],
+        self.engine_kwargs["mdconfig"] = ensure_mdconfig_options(
+                                self.engine_kwargs["mdconfig"],
                                 # dont generate velocities, we do that ourself
                                 genvel="no",
                                 # dont apply constraints at start of simulation
@@ -243,13 +242,13 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                                  # will be used on the extracted randomized fw SP
                                  "bw": InvertedVelocitiesFrameExtractor(),
                                  }
-        self.propagators = [TrajectoryPropagatorUntilAnyState(
-                                    states=self.states,
+        self.propagators = [ConditionalTrajectoryPropagator(
+                                    conditions=self.states,
                                     engine_cls=self.engine_cls,
                                     engine_kwargs=self.engine_kwargs,
                                     walltime_per_part=self.walltime_per_part,
                                     max_steps=self.max_steps,
-                                                              )
+                                                            )
                             for _ in range(2)
                             ]
 
