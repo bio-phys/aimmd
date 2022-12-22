@@ -104,20 +104,20 @@ class ModelDependentPathMover(PathMover):
     # this enables us to do the accept/reject (at the end) with the initially
     # saved model
     # TODO: make it possible to use without an arcd.Storage?!
-    savename_prefix = "RCModel_"
+    savename_prefix = "RCModel"
     delete_cached_model = True  # wheter to delete the model after accept/reject
 
-    def __init__(self, modelstore=None, chain_idx=None):
+    def __init__(self, modelstore=None, sampler_idx=None):
         # NOTE: modelstore - aimmd.storage.RCModelRack
         #       this should enable us to use the same arcd.Storage for multiple
         #       MC chains at the same time, if we have/create multiple RCModelRacks (in Brain?)
         # NOTE : we set it to None by default because it will be set through
-        #        PathSamplingChain.__init__ for all movers it owns to the
+        #        PathChainSampler.__init__ for all movers it owns to the
         #        rcmodel-store associated with the chainstore
-        # NOTE: same for chain_idx (which is used to create a unique savename
+        # NOTE: same for sampler_idx (which is used to create a unique savename
         #       for the saved models)
         self.modelstore = modelstore
-        self.chain_idx = chain_idx
+        self.sampler_idx = sampler_idx
         self._rng = np.random.default_rng()  # numpy newstyle RNG, one per Mover
 
     # NOTE: we take care of the modelstore in storage to
@@ -131,7 +131,8 @@ class ModelDependentPathMover(PathMover):
     #        (see the TwoWayShooting for an example)
 
     def _model_name(self, stepnum):
-        return f"{self.savename_prefix}_in_chain{self.chain_idx}_at_step{stepnum}"
+        return (f"{self.savename_prefix}_in_chainsampler{self.sampler_idx}"
+                + f"_at_step{stepnum}")
 
     def store_model(self, model, stepnum):
         if self.modelstore is None:
@@ -218,7 +219,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         # we implicitly pass None here, it will be set by
         # `PathSamplingChain.__init__()` to the rcmodel-store associated with
         # the chainstore of the chain this sampler will be used with
-        super().__init__() #modelstore=None, chain_idx=None)
+        super().__init__() #modelstore=None, sampler_idx=None)
         self.states = states
         self.engine_cls = engine_cls
         self.engine_kwargs = engine_kwargs
@@ -271,7 +272,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         #             (or at least that it is relative to cwd)
         model = self.get_model(stepnum=stepnum)
         sp_idx = await self.sp_selector.pick(instep.path, model=model)
-        logger.info(f"Chain {self.chain_idx}: Selected SP with idx {sp_idx} "
+        logger.info(f"Sampler {self.sampler_idx}: Selected SP with idx {sp_idx} "
                     + f"on trajectory {instep.path} of len {len(instep.path)}."
                     )
         fw_sp_name_uc = os.path.join(wdir, f"{self.forward_deffnm}_SP_unconstrained.trr")
@@ -355,7 +356,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         predicted_committors_sp = (await model(fw_startconf))[0]
         # check if they end in different states
         if fw_state == bw_state:
-            logger.info(f"Chain {self.chain_idx}: "
+            logger.info(f"Sampler {self.sampler_idx}: "
                         + f"Both trials reached state {fw_state}.")
             return MCstep(mover=self,
                           stepnum=stepnum,
@@ -378,7 +379,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                 # can only be the other way round
                 minus_trajs, minus_state = fw_trajs, fw_state
                 plus_trajs, plus_state = bw_trajs, bw_state
-            logger.info(f"Chain {self.chain_idx}: "
+            logger.info(f"Sampler {self.sampler_idx}: "
                         + f"Forward trial reached state {fw_state}, "
                         + f"backward trial reached state {bw_state}.")
             tra_out = os.path.join(wdir, f"{self.transition_filename}")
@@ -403,7 +404,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
             # and configuration is the same in old and new, i.e. for positions
             # we cancel old with new
             p_acc = p_sel_new / p_sel_old
-            log_str = f"Chain {self.chain_idx}: Acceptance probability "
+            log_str = f"Sampler {self.sampler_idx}: Acceptance probability "
             log_str += f"for generated trial is {round(p_acc, 6)}."
             accepted = False
             if (p_acc >= 1) or (p_acc > self._rng.random()):

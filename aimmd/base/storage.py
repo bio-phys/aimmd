@@ -432,10 +432,9 @@ class MCstepMemory(MutableObjectShelf):
     # stores one MCstep
     # contains a sequence of trial trajectories (2 for TwoWayShooting)
     # *can* contain a path/transition
-    def __init__(self, grp, modelstore, chain_idx, mcstep=None):
+    def __init__(self, grp, modelstore, mcstep=None):
         super().__init__(group=grp)
         self._modelstore = modelstore
-        self._chain_idx = chain_idx
         if mcstep is not None:
             self.save(mcstep=mcstep)
 
@@ -448,10 +447,6 @@ class MCstepMemory(MutableObjectShelf):
             if mover_modelstore._group != self._modelstore._group:
                 logger.error("saving a mcstep with a 'foreign' modelstore")
             mcstep.mover.modelstore = None
-            if mover.chain_idx != self._chain_idx:
-                logger.error("saving a mcstep from a mover with a different "
-                             + f"chain idx than we have ({mover.chain_idx} != "
-                             + f"{self._chain_idx}).")
         super().save(obj=mcstep, overwrite=False, buffsize=2**22)
         if isinstance(mover, ModelDependentPathMover):
             # reset the modelstore of the mc.mover in case we use it somewhere else
@@ -461,13 +456,10 @@ class MCstepMemory(MutableObjectShelf):
         mcstep = super().load(buffsize=2**22)
         if isinstance(mcstep.mover, ModelDependentPathMover):
             mcstep.mover.modelstore = self._modelstore
-            # TODO: do we want to set the chain_idx here?
-            #       I think we should to be consistent with the modelstore...
-            mcstep.mover.chain_idx = self._chain_idx
         return mcstep
 
 
-class ChainMemory(collections.abc.Sequence):
+class MCStepCollection(collections.abc.Sequence):
     # TODO: do we want Sequence behaivour for trials or for MCStates?!
     #       (and have the other available via a method/methods)
     # NOTE: we inherhit from Sequence (instead of MutableSequence) and write a custom .append method
@@ -475,13 +467,11 @@ class ChainMemory(collections.abc.Sequence):
     # store a single TPS chain
     # should behave like a list of trials?!
     # and have an `accepts` and a `transitions` method?!
-    def __init__(self, root_grp, chain_idx, storage):
+    def __init__(self, root_grp, modelstore):
         self._root_grp = root_grp
-        self.chain_idx = chain_idx
-        self._storage = storage
+        self._modelstore = modelstore
         self._h5py_paths = {"MCsteps": "MCsteps",  # the actual datasets
                             "MCstates": "MCstates",  # links to the current (accepted) MC states
-                            "PSObject": "PSChainObject",  # the PathSamplingChain obj that generated/generates the steps
                             }
         self._mcsteps_grp = self._root_grp.require_group(
                                                 self._h5py_paths["MCsteps"]
@@ -489,61 +479,18 @@ class ChainMemory(collections.abc.Sequence):
         self._mcstates_grp = self._root_grp.require_group(
                                                 self._h5py_paths["MCstates"]
                                                          )
-        self._pschain_grp = self._root_grp.require_group(
-                                                self._h5py_paths["PSObject"]
-                                                         )
-        self.modelstore = self._storage.rcmodels
-
-    def save_pathsampling_object(self, pathsampling_object):
-        # set the stuff we cannot save to None after keeping a reference
-        if pathsampling_object.chainstore._root_grp != self._root_grp:
-            logger.error("Saving a PathSamplingChain from a different ChainMemory.")
-        psc_chainstore = pathsampling_object.chainstore
-        pathsampling_object.chainstore = None
-        mover_modelstores = []
-        for mover in pathsampling_object.movers:
-            if isinstance(mover, ModelDependentPathMover):
-                if mover.modelstore._group != self.modelstore._group:
-                    logger.error("Saving a mover in the PathSamplingChain with"
-                                 + " a different modelstore.")
-                mover_modelstores += [mover.modelstore]
-                mover.modelstore = None
-            else:
-                mover_modelstores += [None]
-        psc_cur_step = pathsampling_object.current_step
-        # TODO/FIXME: ensure that the step is the current step in this chain?!
-        pathsampling_object.current_step = None
-        # save the stripped down saveable object
-        MutableObjectShelf(self._pschain_grp).save(obj=pathsampling_object,
-                                                   overwrite=True)
-        # and rebuild the object with the non-saveable objects
-        pathsampling_object.chainstore = psc_chainstore
-        for mover, mover_ms in zip(pathsampling_object.movers, mover_modelstores):
-            if isinstance(mover, ModelDependentPathMover):
-                mover.modelstore = mover_ms
-        pathsampling_object.current_step = psc_cur_step
-
-    def load_pathsampling_object(self):
-        psc_object = MutableObjectShelf(self._pschain_grp).load()
-        psc_object.chainstore = self
-        # set the current to the last accepted mcstep, i.e. last mcstate
-        psc_object.current_step = self.mcstate(len(self) - 1)
-        for mover in psc_object.movers:
-            if isinstance(mover, ModelDependentPathMover):
-                mover.modelstore = self.modelstore
-        return psc_object
 
     def __len__(self):
         return len(self._mcsteps_grp.keys())
 
     def __getitem__(self, key):
-        if isinstance(key, (int, np.int)):
+        if isinstance(key, (int, np.integer)):
             if key >= len(self):
                 raise IndexError(f"Index (was {key}) must be < len(self).")
             else:
                 return MCstepMemory(self._mcsteps_grp[str(key)],
-                                    modelstore=self.modelstore,
-                                    chain_idx=self.chain_idx).load()
+                                    modelstore=self._modelstore,
+                                    ).load()
         elif isinstance(key, slice):
             start, stop, step = key.indices(len(self))
             # TODO: do we want the generator (i.e. yield)?
@@ -558,8 +505,8 @@ class ChainMemory(collections.abc.Sequence):
                 #yield MCstepMemory(self._mcsteps_grp[str(idx)],
                 #                   modelstore=self.modelstore).load()
                 ret_val += [MCstepMemory(self._mcsteps_grp[str(idx)],
-                                         modelstore=self.modelstore,
-                                         chain_idx=self.chain_idx).load()]
+                                         modelstore=self._modelstore,
+                                         ).load()]
             return ret_val
         else:
             raise TypeError("Keys must be int or slice.")
@@ -569,8 +516,7 @@ class ChainMemory(collections.abc.Sequence):
         n = len(self)
         single_step_grp = self._mcsteps_grp.require_group(str(n))
         _ = MCstepMemory(single_step_grp,
-                         modelstore=self.modelstore,
-                         chain_idx=self.chain_idx,
+                         modelstore=self._modelstore,
                          mcstep=mcstep)
         if mcstep.accepted:
             # add it as active mcstate too
@@ -583,102 +529,281 @@ class ChainMemory(collections.abc.Sequence):
         """Return a generator over all active Markov Chain states."""
         for idx in range(len(self._mcstates_grp.keys())):
             yield MCstepMemory(self._mcstates_grp[str(idx)],
-                               modelstore=self.modelstore,
-                               chain_idx=self.chain_idx).load()
+                               modelstore=self._modelstore,
+                               ).load()
 
     def mcstate(self, idx):
         """Return the active Markov Chain state at trial with given idx."""
-        if isinstance(idx, (int, np.int)):
+        if isinstance(idx, (int, np.integer)):
             if idx >= len(self._mcstates_grp.keys()):
                 raise IndexError(f"No Markov Chain state with index {idx}.")
             return MCstepMemory(self._mcstates_grp[str(idx)],
-                                modelstore=self.modelstore,
-                                chain_idx=self.chain_idx).load()
+                                modelstore=self._modelstore,
+                                ).load()
         else:
             raise ValueError("Markov chain state index must be an integer.")
 
 
-class CentralMemory(collections.abc.Sequence):
-    # store N (T)PS chains
-    # should behave like a list of chains?!
-    def __init__(self, root_grp, storage):
-        self._root_grp = root_grp
-        self._storage = storage
-        self._h5py_paths = {"chains": "PSchains",
-                            "brain": "Brain"}
-        self._chains_grp = self._root_grp.require_group(
-                                                self._h5py_paths["chains"]
-                                                        )
-        self._brain_grp = self._root_grp.require_group(
-                                                self._h5py_paths["brain"]
-                                                        )
+class MCStepCollectionBundle(collections.abc.Sequence):
+    # should behave like a list of MCStepCollections
+    # TODO:
+    # optimally like a MCStepCollection if there is only one in the list?
+    # (we can get the behavior wanted in the line above by making the sequence
+    #  a storage property and checking if it has len==1 before returning!)
+    # (but then we can not access self.n_collections if len==1...)
+    def __init__(self, group, modelstore) -> None:
+        self._group = group
+        self._modelstore = modelstore
 
-    def save_brain(self, brain):
-        storage = brain.storage
-        if storage is not self._storage:
-            logger.error("Saving a brain from a different storage!")
-        brain.storage = None
-        model = brain.model
-        brain.model = None
-        tasks = brain.tasks
-        brain.tasks = None
-        chains = brain.chains
-        for cstore, chain in zip(self, chains):
-            cstore.save_pathsampling_object(chain)
-        brain.chains = None
-        # save the stripped down brain
-        MutableObjectShelf(self._brain_grp).save(obj=brain, overwrite=True)
-        # and rebuild the brain to working state
-        brain.storage = storage
-        brain.model = model
-        brain.tasks = tasks
-        brain.chains = chains
+    def __len__(self) -> int:
+        return len(self._group.keys())
 
-    def load_brain(self, model, tasks):
-        brain = MutableObjectShelf(self._brain_grp).load()
-        brain.storage = self._storage
-        brain.model = model
-        brain.tasks = tasks
-        brain.chains = [c.load_pathsampling_object() for c in self]
-        return brain
+    def __getitem__(self, key):
+        if isinstance(key, (int, np.integer)):
+            if key >= len(self):
+                raise IndexError(f"Key must be smaller than number of MCStepCollections ({len(self)}).")
+            return MCStepCollection(root_grp=self._group[str(key)],
+                                    modelstore=self._modelstore)
+        elif isinstance(key, slice):
+            start, stop, step = key.indices(len(self))
+            ret_val = []
+            for idx in range(start, stop, step):
+                ret_val += [MCStepCollection(root_grp=self._group[str(idx)],
+                                             modelstore=self._modelstore)
+                            ]
+            return ret_val
+        else:
+            raise TypeError("Keys must be int or slice.")
 
     @property
-    def n_chains(self):
+    def n_collections(self):
         return len(self)
 
-    @n_chains.setter
-    def n_chains(self, value):
-        # can only increase n_chains
+    @n_collections.setter
+    def n_collections(self, value):
+        # can only increase n_collections
         le = len(self)
         if value == le:
             # nothing to do
             return
         if le != 0:
-            logger.info("Resetting the number of chains for initialized storage.")
+            logger.info("Resetting the number of MCStepCollections for initialized storage.")
         if value < le:
-            raise ValueError("Can only increase number of chains.")
+            raise ValueError("Can only increase number of collections.")
         for i in range(le, value):
-            _ = self._chains_grp.create_group(str(i))
+            _ = self._group.create_group(str(i))
+
+
+class ChainSamplerStore(MutableObjectShelf):
+    # class to store PathSamplingChain objects
+    # TODO: this also needs to know about the modelstore/storage!
+    def __init__(self, group, mcstep_collection, modelstore):
+        super().__init__(group=group)
+        self.mcstep_collection = mcstep_collection
+        self.modelstore = modelstore
+
+    def save(self, obj, buffsize=2 ** 22):
+        # set the stuff we cannot save to None after keeping a reference
+        if obj.mcstep_collection._root_grp != self.mcstep_collection._root_grp:
+            logger.error("Saving a PathChainSampler associated with a different MCStepCollection.")
+        pcs_step_collection = obj.mcstep_collection
+        obj.mcstep_collection = None
+        pcs_modelstore = obj.modelstore  # TODO: test and warn as below? (why do we even have this here twice?)
+        obj.modelstore = None
+        mover_modelstores = []
+        for mover in obj.movers:
+            if isinstance(mover, ModelDependentPathMover):
+                if mover.modelstore._group != self.modelstore._group:
+                    logger.error("Saving a mover in the PathSamplingChain with"
+                                 + " a different modelstore.")
+                mover_modelstores += [mover.modelstore]
+                mover.modelstore = None
+            else:
+                mover_modelstores += [None]
+        # TODO: do we even want that? or leave step set, i.e. not at none
+        #       and then just pickle the mcstep (this will ge rid of the modelstore
+        #         for the movers but we dont use them for restarting anyway?!)
+        #pcs_cur_step = obj.current_step
+        # TODO/FIXME: ensure that the step is the current step in this chain?!
+        # TODO: MCSteps should be pickleable anyway!, i.e. we should not need to set thme to None here!
+        #obj.current_step = None
+        # save the stripped down saveable object
+        super().save(obj, overwrite=True, buffsize=buffsize)
+        # and rebuild the object with the non-saveable objects
+        obj.mcstep_collection = pcs_step_collection
+        obj.modelstore = pcs_modelstore
+        for mover, mover_ms in zip(obj.movers, mover_modelstores):
+            if isinstance(mover, ModelDependentPathMover):
+                mover.modelstore = mover_ms
+        #obj.current_step = pcs_cur_step
+        return
+
+    def load(self, buffsize=2 ** 22):
+        obj = super().load(buffsize)
+        obj.mcstep_collection = self.mcstep_collection
+        # set the current to the last accepted mcstep, i.e. last mcstate
+        # TODO: do we even want that? or just leave it at whatever it was when saving?!
+        #       and if we want to reuse the sampling object we know we need to set the current step anyway?
+        # TODO: MCSteps should be pickleable anyway!
+        #obj.current_step = self.mcstep_collection.mcstate(len(self.mcstep_collection) - 1)
+        for mover in obj.movers:
+            if isinstance(mover, ModelDependentPathMover):
+                mover.modelstore = self.modelstore
+        obj.modelstore = self.modelstore
+        return obj
+
+
+class ChainSamplerStoreBundle(collections.abc.Sequence):
+    def __init__(self, group, mcstep_collections, modelstore) -> None:
+        self.group = group
+        # mcstep_collections is a list of mcstep collections, one for each
+        # PathSamplingChain in Brain (can be the same entry for all though)
+        self.mcstep_collections = mcstep_collections
+        self.modelstore = modelstore
 
     def __len__(self):
-        return len(self._chains_grp.keys())
+        return len(self.group.keys())
 
     def __getitem__(self, key):
-        if isinstance(key, (int, np.int)):
+        if isinstance(key, (int, np.integer)):
             if key >= len(self):
                 raise IndexError(f"Key must be smaller than n_chains ({len(self)}).")
-            return ChainMemory(root_grp=self._chains_grp[str(key)],
-                               chain_idx=key, storage=self._storage)
+            return ChainSamplerStore(group=self.group[str(key)],
+                                     mcstep_collection=self.mcstep_collections[key],
+                                     modelstore=self.modelstore,)
         elif isinstance(key, slice):
             start, stop, step = key.indices(len(self))
             ret_val = []
             for idx in range(start, stop, step):
-                ret_val += [ChainMemory(root_grp=self._chains_grp[str(idx)],
-                                        chain_idx=idx, storage=self._storage)
+                ret_val += [ChainSamplerStore(group=self.group[str(idx)],
+                                              mcstep_collection=self.mcstep_collections[idx],
+                                              modelstore=self.modelstore,
+                                              )
                             ]
             return ret_val
         else:
             raise TypeError("Keys must be int or slice.")
+
+    @property
+    def n_samplers(self):
+        return len(self)
+
+    @n_samplers.setter
+    def n_samplers(self, value):
+        # this just sets the number of groups we have for ChainSamplerStores
+        # saving/loading always works by iterating over existing entries/groups
+        # and calling the ChainSamplerStore save and load methods
+        le = len(self)
+        if value > le:
+            for i in range(le, value):
+                _ = self.group.create_group(str(i))
+        elif value < le:
+            for i in range(value, le):
+                del self.group[str(i)]
+        elif value == le:
+            # nothing to do
+            return
+
+
+# TODO: finish writing this! (first we need to sort out how the brain knows about which chain uses which store!)
+#       we can probably just use a similar thing as the array we save here but as a proeprty/attribute of the brain?!
+class BrainStore(MutableObjectShelf):
+    # class to save distributed Brain objects
+    def __init__(self, group, storage):
+        super().__init__(group)
+        self._storage = storage
+        self._h5py_paths = {
+            "samplers": "PSChainSamplers",
+            # this is the mapping between PSChainSampler and MCStep collection
+            # it is a 1d int array, each sampler has the idx of its collection
+            "sampler_to_stepcollection": "PSChainSamplers_to_MCStepCollections",
+            }
+        # mcstep_collections is a list of mcstep collections, one for each
+        # PathSamplingChain in Brain (can be the same entry for all though)
+        #self._mcstep_collections = mcstep_collections
+        self._sampler_stores_grp = self.group.require_group(
+                                                self._h5py_paths["samplers"]
+                                                            )
+
+    @property
+    def _sampler_to_stepcollection(self):
+        try:
+            sampler_to_step_dset = self.group[
+                                self._h5py_paths["sampler_to_stepcollection"]
+                                              ]
+        except KeyError:
+            raise KeyError("No brain has been stored here yet.")
+        else:
+            return sampler_to_step_dset[:].copy()
+
+    @_sampler_to_stepcollection.setter
+    def _sampler_to_stepcollection(self, val):
+        # TODO: check val for basic sanity?
+        try:
+            # check if there is something
+            _ = self.group[self._h5py_paths["sampler_to_stepcollection"]]
+        except KeyError:
+            # TODO: do we want to do anything if there is an old value? or just delete...
+            pass
+        else:
+            del self.group[self._h5py_paths["sampler_to_stepcollection"]]
+        self.group.create_dataset(name=self._h5py_paths["sampler_to_stepcollection"],
+                                  data=val,
+                                  # TODO: which version is smarter? cast to np.int64 for sure or let the user decide (and mess up) the dtype?
+                                  #dtype=val.dtype,
+                                  dtype=np.int64)
+
+    def save(self, obj, buffsize=2 ** 22):
+        storage = obj.storage
+        if storage is not self._storage:
+            logger.error("Saving a brain from a different storage!")
+        obj.storage = None
+        model = obj.model
+        obj.model = None
+        tasks = obj.tasks
+        obj.tasks = None
+        samplers = obj.samplers
+        ########################################################################################
+        # TODO: here we need to sort out how the brain stores its sampler to stepcollection mapping
+        sampler_to_stepcollection = obj.sampler_to_mcstepcollection
+        mcstep_collections = [self._storage.mcstep_collections[idx]
+                              for idx in sampler_to_stepcollection]
+        # save the mapping for when we load the brain
+        self._sampler_to_stepcollection = sampler_to_stepcollection
+        ########################################################################################
+        sampler_stores = ChainSamplerStoreBundle(
+                                        group=self._sampler_stores_grp,
+                                        mcstep_collections=mcstep_collections,
+                                        modelstore=self._storage.rcmodels,
+                                                 )
+        sampler_stores.n_samplers = len(samplers)
+        for sstore, sampler in zip(sampler_stores, samplers):
+            sstore.save(sampler)
+        obj.samplers = None
+        # save the stripped down brain
+        super().save(obj, overwrite=True, buffsize=buffsize)
+        # and rebuild the brain to working state
+        obj.storage = storage
+        obj.model = model
+        obj.tasks = tasks
+        obj.samplers = samplers
+
+    def load(self, model, tasks, buffsize=2 ** 22):
+        obj = super().load(buffsize)
+        obj.storage = self._storage
+        obj.model = model
+        obj.tasks = tasks
+        sampler_to_stepcollection = self._sampler_to_stepcollection
+        mcstep_collections = [self._storage.mcstep_collections[idx]
+                              for idx in sampler_to_stepcollection]
+        sampler_stores = ChainSamplerStoreBundle(
+                                        group=self._sampler_stores_grp,
+                                        mcstep_collections=mcstep_collections,
+                                        modelstore=self._storage.rcmodels,
+                                                 )
+        # TODO: reset sampler_to_mcstepcollection?!
+        obj.samplers = [ss.load() for ss in sampler_stores]
+        return obj
 
 
 class Storage:
@@ -778,36 +903,34 @@ class Storage:
                     else:
                         # we can just change the path
                         self._store.attrs["dirname"] = np.string_(self._dirname)
-                        # but we warn becasue the folder with the models must be copied
+                        # but we warn because the folder with the models must be copied
                         # TODO/FIXME: automatically copy the folder from old to new location?
                         logger.warn("The directory containing the storage changed, we updated it in the storage."
                                     + "Note that currently you need to copy the KerasRCModels folder yourself.")
 
         rcm_grp = self.file.require_group(_H5PY_PATH_DICT["rcmodel_store"])
         self.rcmodels = RCModelRack(rcmodel_group=rcm_grp, storage_directory=self._dirname)
+        self._mcstep_collections = None
         self._empty_cache()  # should be empty, but to be sure
 
-    @property
-    def central_memory(self):
-        # check if it is there, if yes return
-        # (also set our private reference, such that we dont check every time)
-        if self._central_memory is not None:
-            return self._central_memory
-        try:
-            cm_grp = self.file[_H5PY_PATH_DICT["distributed_cm"]]
-        except KeyError:
-            return None
-        else:
-            self._central_memory = CentralMemory(root_grp=cm_grp, storage=self)
-            return self._central_memory
+    def load_brain(self, model, tasks):
+        brain = BrainStore(group=self.file.require_group(_H5PY_PATH_DICT["distributed_brainstore"]),
+                           storage=self).load(model=model, tasks=tasks)
+        return brain
 
-    def initialize_central_memory(self, n_chains):
-        """Initialize central_memory for distributed TPS with n_chains."""
-        if self.central_memory is not None:
-            raise ValueError("CentralMemory already initialized")
-        cm_grp = self.file.require_group(_H5PY_PATH_DICT["distributed_cm"])
-        self._central_memory = CentralMemory(root_grp=cm_grp, storage=self)
-        self.central_memory.n_chains = n_chains
+    def save_brain(self, brain):
+        BrainStore(group=self.file.require_group(_H5PY_PATH_DICT["distributed_brainstore"]),
+                   storage=self
+                   ).save(obj=brain)
+
+    @property
+    def mcstep_collections(self):
+        if self._mcstep_collections is None:
+            self._mcstep_collections = MCStepCollectionBundle(
+                                            group=self.file.require_group(_H5PY_PATH_DICT["distributed_mcstepcollections"]),
+                                            modelstore=self.rcmodels,
+                                                              )
+        return self._mcstep_collections
 
     # make possible to use in with statements
     def __enter__(self):
