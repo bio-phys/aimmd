@@ -97,12 +97,14 @@ class TrainingTask(BrainTask):
 class DensityCollectionTask(BrainTask):
     # do density collection
     def __init__(self, model, first_collection=100,
-                 recreate_interval=500, interval=10):
+                 recreate_interval=500, interval=10,
+                 ):
         super().__init__(interval=interval)
         self.model = model
         self.first_collection = first_collection
         self.recreate_interval = recreate_interval
         self._last_collection = None  # starting step values for collections
+        self._has_never_run = True
 
     async def run(self, brain, mcstep: MCstep, sampler_idx):
         if brain.storage is None:
@@ -110,41 +112,19 @@ class DensityCollectionTask(BrainTask):
                          + "possible for simulations with attached storage."
                          )
             return
+        if self._has_never_run:
+            # get the start values from a possible previous simulation
+            self._last_collection = [len(mcstep_collection)
+                                     for mcstep_collection in brain.storage.mcstep_collections
+                                     ]
+            # minus the step we just finished before we ran
+            collection_idx = brain.sampler_to_mcstepcollection[sampler_idx]
+            self._last_collection[collection_idx] -= 1
+            self._has_never_run = False
         dc = self.model.density_collector
         if brain.total_steps - self.first_collection >= 0:
-            if brain.total_steps - self.first_collection == 0:
-                # first collection
-                trajs, counts = accepted_trajs_from_aimmd_storage(
-                                                storage=brain.storage,
-                                                per_mcstep_collection=False,
-                                                starts=None,
-                                                                  )
-                async with _SEMAPHORES["BRAIN_MODEL"]:
-                    await dc.add_density_for_trajectories(model=self.model,
-                                                          trajectories=trajs,
-                                                          counts=counts,
-                                                          )
-                # remember the start values for next time
-                self._last_collection = [len(mcstep_collection)
-                                         for mcstep_collection in brain.storage.mcstep_collections
-                                         ]
-            elif brain.total_steps % self.interval == 0:
-                # FIXME/TODO: this bit below will add too many trajectories
-                #             if we restart/continue a simulation from storage!
-                #             in this case we will start with a fresh task
-                #             (which ahs self._last_collection = None)
-                #             so it will get **all** trajectories from
-                #             storage and add them here
-                #             (because accepted_trajs_from_aimmd_storage
-                #              interprets None as start from first step)
-                #             We should be able to fix that by remembering the
-                #             number of added trajectories in the densitycollector
-                #             OR we can maybe save the tasks too?
-                #             OR we can make sure the tasks are properly initialized
-                #             when loading a brain?
-                #             OR we could just remember with a bool if we ever
-                #             ran and recreate the density from scratch the first time?
-                # add only the last interval steps
+            if ((brain.total_steps % self.interval == 0)
+                or (brain.total_steps - self.first_collection == 0)):
                 trajs, counts = accepted_trajs_from_aimmd_storage(
                                                 storage=brain.storage,
                                                 per_mcstep_collection=False,
@@ -159,12 +139,12 @@ class DensityCollectionTask(BrainTask):
                 self._last_collection = [len(mcstep_collection)
                                          for mcstep_collection in brain.storage.mcstep_collections
                                          ]
-            # Note that this below is an if because reevaluation should be
-            # independent of adding new TPs in the same MCStep
-            if brain.total_steps % self.recreate_interval == 0:
-                # reevaluation time
-                async with _SEMAPHORES["BRAIN_MODEL"]:
-                    await dc.reevaluate_density(model=self.model)
+        # Note that this below is an if because reevaluation should be
+        # independent of adding new TPs in the same MCStep
+        if brain.total_steps % self.recreate_interval == 0:
+            # reevaluation time
+            async with _SEMAPHORES["BRAIN_MODEL"]:
+                await dc.reevaluate_density(model=self.model)
 
 
 # TODO: rename chains -> samplers
