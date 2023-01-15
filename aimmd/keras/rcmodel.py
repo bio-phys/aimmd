@@ -129,11 +129,13 @@ class KerasRCModel(RCModel):
             batch_size = get_batch_size_from_model_and_descriptors(
                                     model=self, descriptors=descriptors,
                                                                    )
-        predictions = []
-        for descript_part in np.array_split(descriptors, batch_size):
-            pred = self.nnet.predict(descript_part, batch_size=batch_size)
-            predictions.append(pred)
-        return np.concatenate(predictions, axis=0)
+        #predictions = []
+        #n_split = (descriptors.shape[0] // batch_size) + 1
+        #for descript_part in np.array_split(descriptors, n_split):
+        #    pred = self.nnet.predict(descript_part, batch_size=batch_size)
+        #    predictions.append(pred)
+        #return np.concatenate(predictions, axis=0)
+        return self.nnet.predict(descriptors, batch_size=batch_size)
 
     def train_hook(self, trainset):
         self._count_train_hook += 1

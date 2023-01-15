@@ -345,11 +345,12 @@ class PytorchRCModel(RCModel):
             batch_size = get_batch_size_from_model_and_descriptors(
                                     model=self, descriptors=descriptors,
                                                                    )
+        n_split = (descriptors.shape[0] // batch_size) + 1
         predictions = []
         self.nnet.eval()  # put model in evaluation mode
         # no gradient accumulation for predictions!
         with torch.no_grad():
-            for descript_part in np.array_split(descriptors, batch_size):
+            for descript_part in np.array_split(descriptors, n_split):
                 # we do this to create the descriptors array on same
                 # devive (GPU/CPU) where the model lives
                 descript_part = torch.as_tensor(descript_part, device=self._device,
@@ -615,11 +616,12 @@ class EnsemblePytorchRCModel(RCModel):
                                             model=self, descriptors=descriptors,
                                                                    )
 
+        n_split = (descriptors.shape[0] // batch_size) + 1
         [nnet.eval() for nnet in self.nnets]
         # TODO: do we need no_grad? or is eval and no_grad redundant?
         plists = [[] for _ in self.nnets]
         with torch.no_grad():
-            for descript_part in np.array_split(descriptors, batch_size):
+            for descript_part in np.array_split(descriptors, n_split):
                 if self._nnets_same_device:
                     descript_part = torch.as_tensor(descript_part,
                                                     device=self._devices[0],
@@ -1384,13 +1386,14 @@ class MultiDomainPytorchRCModel(RCModel):
             max_idxs = p_c.argmax(dim=1)
             p_c = torch.zeros_like(p_c)
             p_c[torch.arange(max_idxs.shape[0]), max_idxs] = 1
+        n_split = (descriptors.shape[0] // batch_size) + 1
         p_c = p_c.cpu().numpy()
         self.pnets = [pn.eval() for pn in self.pnets]  # pnets to evaluation
         pred = np.zeros((p_c.shape[0], self.n_out))
         idx_start = 0
         # now committement probabilities
         with torch.no_grad():
-            for descript_part in np.array_split(descriptors, batch_size):
+            for descript_part in np.array_split(descriptors, n_split):
                 idx_end = idx_start + descript_part.shape[0]
                 descript_part = torch.as_tensor(descript_part,
                                                 device=self._pdevices[0],
@@ -1436,10 +1439,11 @@ class MultiDomainPytorchRCModel(RCModel):
         # return classifier model probabilities for descriptors
         # descriptors is expected to be numpy or torch tensor
         # returns a torch.tensor on the same device the classifier lives on
+        n_split = (descriptors.shape[0] // batch_size) + 1
         self.cnet.eval()  # classify in evaluation mode
         p_cs = []
         with torch.no_grad():
-            for descript_part in np.array_split(descriptors, batch_size):
+            for descript_part in np.array_split(descriptors, n_split):
                 descript_part = torch.as_tensor(descript_part, device=self._cdevice,
                                                 dtype=self._cdtype)
                 q_c = self.cnet(descript_part)
