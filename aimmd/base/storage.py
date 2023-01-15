@@ -20,6 +20,7 @@ import io
 import pickle
 import collections.abc
 import h5py
+import asyncmd
 import numpy as np
 from pkg_resources import parse_version
 
@@ -848,7 +849,6 @@ class Storage:
         self.file = h5py.File(fname, mode=mode)
         self._store = self.file.require_group(_H5PY_PATH_DICT["level0"])
         self._dirname = os.path.dirname(os.path.abspath(os.path.join(os.getcwd(), fname)))
-        self._central_memory = None
         if ("w" in mode) or ("a" in mode and not fexists):
             # first creation of file: write aimmd compatibility version string
             self._store.attrs["storage_version"] = np.string_(
@@ -911,6 +911,17 @@ class Storage:
         rcm_grp = self.file.require_group(_H5PY_PATH_DICT["rcmodel_store"])
         self.rcmodels = RCModelRack(rcmodel_group=rcm_grp, storage_directory=self._dirname)
         self._mcstep_collections = None
+        self._distributed_traj_val_cache = self.file.require_group(_H5PY_PATH_DICT["distributed_traj_val_cache"])
+        try:
+            cur_cache = asyncmd.config._GLOBALS["H5PY_CACHE"]
+        except KeyError:
+            # no cache set, so we set this file
+            asyncmd.config.register_h5py_cache(h5py_group=self._distributed_traj_val_cache,
+                                               make_default=True,
+                                               )
+        else:
+            logger.warning("Resetting the asyncmd h5py trajectory value cache."
+                           + f"Was {cur_cache}.")
         self._empty_cache()  # should be empty, but to be sure
 
     def load_brain(self, model, tasks):

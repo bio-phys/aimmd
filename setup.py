@@ -183,8 +183,9 @@ setup(
         'networkx',
         #'dcgpy',
         'sympy',  # only used for dcgpy atm
-        # for arcd.Storage (and for old loading/saving of keras models)
+        # for aimmd.Storage (and for old loading/saving of keras models)
         'h5py>=3',  # need >=3 for the 'new' string handling
+        'asyncmd',  # needed for distributed
     ],
 
     # List additional groups of dependencies here (e.g. development

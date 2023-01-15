@@ -26,11 +26,12 @@ class Properties:
 # setup dictionary mapping descriptive strings to 'paths' in HDF5 file
 _H5PY_PATH_DICT = {"level0": "/aimmd_data"}  # toplevel aimmd group
 _H5PY_PATH_DICT["cache"] = _H5PY_PATH_DICT["level0"] + "/cache"  # cache
-_H5PY_PATH_DICT["distributed"] = _H5PY_PATH_DICT["level0"] + "/Distributed"
+_H5PY_PATH_DICT["distributed"] = _H5PY_PATH_DICT["level0"] + "/distributed"
 _H5PY_PATH_DICT.update({  # these depend on cache, distributed and level0 to be defined
         "rcmodel_store": _H5PY_PATH_DICT["level0"] + "/RCModels",
         "trainset_store": _H5PY_PATH_DICT["level0"] + "/TrainSet",
         "tra_dc_cache": _H5PY_PATH_DICT["cache"] + "/TrajectoryDensityCollectors",
         "distributed_brainstore": _H5PY_PATH_DICT["distributed"] + "/BrainStore",
         "distributed_mcstepcollections": _H5PY_PATH_DICT["distributed"] + "/MCStepCollections",
+        "distributed_traj_val_cache": _H5PY_PATH_DICT["cache"] + "/distributed",
                        })
