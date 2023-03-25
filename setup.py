@@ -122,7 +122,7 @@ setup(
     long_description=LONG_DESCRIPTION,
 
     # The project's main homepage.
-    url='https://gitea.kotspeicher.de/hejung/aimmd',
+    url='https://github.com/bio-phys/aimmd',
 
     # Author details
     author=about_dct['__author__'],
@@ -148,9 +148,9 @@ setup(
 
         # Specify the Python versions you support here. In particular, ensure
         # that you indicate whether you support Python 2, Python 3 or both.
-        'Programming Language :: Python :: 3.6',  # CI tested
-        'Programming Language :: Python :: 3.7',  # CI tested
-        'Programming Language :: Python :: 3.8',  # CI tested
+        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
         # NOTE: we use f-strings and therfore require python >= 3.6
         # NOTE: even without f-strings python 2 will not work as intended:
         # 1. we did not take care of integer division vs float division

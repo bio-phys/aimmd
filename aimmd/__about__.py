@@ -66,6 +66,6 @@ else:
 
 __title__ = "aimmd"
 __author__ = "Hendrik Jung"
-__author_email__ = "hendrik.andre.jung@googlemail.com"
+__author_email__ = "hendrik.jung@biophys.mpg.de"
 __license__ = "GNU GENERAL PUBLIC LICENSE v3"
 __copyright__ = "2019-2021 {:s}".format(__author__)
