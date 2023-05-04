@@ -411,7 +411,7 @@ class CommittorSimulation:
             # did a correspondign trial/shotnum for a lower index configuration, but not yet
             # for this one here, so just reset continuation to False and do this trial from scratch
             if continuation:
-                logger.warn(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
+                logger.info(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
                             + f"shot {shot_num}, deffnm {self.deffnm_engine_out} "
                             + f"but no starting_configuration found ({start_conf_name})."
                             + "Starting this particular trial from scratch, "
@@ -557,7 +557,7 @@ class CommittorSimulation:
             # did a correspondign trial/shotnum for a lower index configuration, but not yet
             # for this one here, so just reset continuation to False and do this trial from scratch
             if continuation:
-                logger.warn(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
+                logger.info(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
                             + f"shot {shot_num}, deffnm {self.deffnm_engine_out} "
                             + f"but no starting_configuration found ({start_conf_name_fw})."
                             + "Starting this particular trial from scratch, "
@@ -633,7 +633,7 @@ class CommittorSimulation:
             # did a corresponding trial/shotnum for a lower index configuration, but not yet
             # for this one here, so just reset continuation to False and do this trial from scratch
             if continuation_bw:
-                logger.warn(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
+                logger.info(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
                             + f"shot {shot_num}, deffnm {self.deffnm_engine_out_bw} "
                             + f"but no starting_configuration found ({start_conf_name_bw})."
                             + "Starting this particular trial from scratch, i.e. "
@@ -853,7 +853,7 @@ class CommittorSimulation:
             # if we can create the folder but have continuation=True
             # this means we intended to but never started this trial
             if continuation:
-                logger.warn(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
+                logger.info(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
                             + f"shot {shot_num}, deffnm {self.deffnm_engine_out} "
                             + f"but no step directory found ({step_dir})."
                             + "Starting this particular trial from scratch, "
