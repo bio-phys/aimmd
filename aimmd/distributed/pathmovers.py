@@ -20,6 +20,8 @@ import os
 import abc
 import asyncio
 import logging
+import pickle
+import typing
 import textwrap
 import numpy as np
 
@@ -43,6 +45,9 @@ class MCstep:
     # TODO: make this 'immutable'? i.e. expose everything as get-only-properties?
     # TODO: some of the attributes are only relevant for shooting,
     #       do we want a subclass for shooting MCsteps?
+
+    default_savename = "mcstep_data.pckl"
+
     def __init__(self, mover, stepnum, directory, predicted_committors_sp=None,
                  shooting_snap=None, states_reached=None,
                  path=None, trial_trajectories=[], accepted=False, p_acc=0):
@@ -61,7 +66,7 @@ class MCstep:
     # TODO: improve :)
     def _str_representation(self, long, width=139) -> str:
         repr_str = ""
-        if self.accepted:
+        if not long and self.accepted:
             repr_str += "Accepted "
         repr_str += f"MCStep(mover={self.mover}, stepnum={self.stepnum}, "
         repr_str += f"states_reached={self.states_reached}, "
@@ -73,6 +78,7 @@ class MCstep:
         else:
             repr_str += ", "  # more to come below
             repr_str += f"shooting_snap={self.shooting_snap}, "
+            repr_str += f"accepted={self.accepted}, "
             repr_str += f"path={self.path})"
         return textwrap.fill(repr_str, width=width)
 
@@ -81,6 +87,25 @@ class MCstep:
 
     def __repr__(self) -> str:
         return self._str_representation(long=True)
+
+    # TODO/FIXME: This does not work (h5py files can not be pickled and the mover has a reference to the storage...)
+    def save(self, fname: typing.Optional[str] = None,
+             overwrite: bool = False) -> None:
+        if fname is None:
+            fname = os.path.join(self.directory, self.default_savename)
+        if not overwrite and os.path.exists(fname):
+            # we check if it exists, because pickle/open will happily overwrite
+            raise ValueError(f"{fname} exists but overwrite=False.")
+        with open(fname, "wb") as pfile:
+            pickle.dump(self, pfile)
+
+    @classmethod
+    def load(cls, fname: typing.Optional[str] = None):
+        if fname is None:
+            fname = cls.default_savename
+        with open(fname, "rb") as pfile:
+            obj = pickle.load(pfile)
+        return obj
 
 
 class PathMover(abc.ABC):
