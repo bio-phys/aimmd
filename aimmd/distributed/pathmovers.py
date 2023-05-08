@@ -66,10 +66,9 @@ class MCstep:
     # TODO: improve :)
     def _str_representation(self, long, width=139) -> str:
         repr_str = ""
-        if not long and self.accepted:
-            repr_str += "Accepted "
         repr_str += f"MCStep(mover={self.mover}, stepnum={self.stepnum}, "
         repr_str += f"states_reached={self.states_reached}, "
+        repr_str += f"accepted={self.accepted}, "
         repr_str += f"p_acc={self.p_acc}, "
         repr_str += f"predicted_committors_sp={self.predicted_committors_sp}, "
         repr_str += f"directory={self.directory}"
@@ -78,9 +77,11 @@ class MCstep:
         else:
             repr_str += ", "  # more to come below
             repr_str += f"shooting_snap={self.shooting_snap}, "
-            repr_str += f"accepted={self.accepted}, "
             repr_str += f"path={self.path})"
-        return textwrap.fill(repr_str, width=width)
+        return textwrap.fill(repr_str, width=width,
+                             break_long_words=False,
+                             subsequent_indent="       ",  # as long as MCStep(
+                             )
 
     def __str__(self) -> str:
         return self._str_representation(long=False)
@@ -88,7 +89,7 @@ class MCstep:
     def __repr__(self) -> str:
         return self._str_representation(long=True)
 
-    # TODO/FIXME: This does not work (h5py files can not be pickled and the mover has a reference to the storage...)
+    # TODO/FIXME: Do we need this? we can/could just pickle the MCSteps anyway?
     def save(self, fname: typing.Optional[str] = None,
              overwrite: bool = False) -> None:
         if fname is None:
@@ -150,10 +151,19 @@ class ModelDependentPathMover(PathMover):
     #       (instead of an identifying string)
     # NOTE 2: when saving a MCstep we ensure that the modelstore is the correct
     #         (as in associated with that MCchain) RCModel rack
-    #         and when loading a MCstep we can set the movers.modelstore?!
-    #         subclasses can then completely overwrite __getstate__
-    #        and __setstate__ to create their runtime attributes
-    #        (see the TwoWayShooting for an example)
+    #         and when loading a MCstep we (can) set the movers.modelstore
+    #         subclasses can still use __getstate__ and __setstate__ to create
+    #         their runtime attributes but need to call the super classes
+    #         __getstate__ and __setstate__ as usual for subclasses
+    #         (see the TwoWayShooting for an example)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["modelstore"] = None
+        return state
+
+    def __setstate__(self, state: dict):
+        self.__dict__ = state
 
     def _model_name(self, stepnum):
         return (f"{self.savename_prefix}_in_chainsampler{self.sampler_idx}"
@@ -283,13 +293,13 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         return "TwoWayShootingPathMover"
 
     def __getstate__(self):
-        state = self.__dict__.copy()
+        state = super().__getstate__()
         state["frame_extractors"] = None
         state["propagators"] = None
         return state
 
-    def __setstate__(self, state):
-        self.__dict__.update(state)
+    def __setstate__(self, state: dict):
+        super().__setstate__(state)
         self._build_extracts_and_propas()
 
     async def _move(self, instep, stepnum, wdir, model, **kwargs):
