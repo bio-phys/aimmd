@@ -827,6 +827,7 @@ class Storage:
     #_compatibility_version = parse_version("0.8")
     ## renamed arcd -> aimmd
     _compatibility_version = parse_version("0.8.1")
+    # TODO: increase version when we merge distributed!
 
     # TODO: should we require descriptor_dim as input on creation?
     #       to make clear that you can not change it?!
@@ -911,18 +912,31 @@ class Storage:
         rcm_grp = self.file.require_group(_H5PY_PATH_DICT["rcmodel_store"])
         self.rcmodels = RCModelRack(rcmodel_group=rcm_grp, storage_directory=self._dirname)
         self._mcstep_collections = None
-        self._distributed_traj_val_cache = self.file.require_group(_H5PY_PATH_DICT["distributed_traj_val_cache"])
-        try:
-            cur_cache = asyncmd.config._GLOBALS["H5PY_CACHE"]
-        except KeyError:
-            # no cache set, so we set this file
-            asyncmd.config.register_h5py_cache(h5py_group=self._distributed_traj_val_cache,
-                                               make_default=True,
-                                               )
+        # register this storage file as trajectory value cache with asyncmd
+        if mode != "r":
+            # we have write intent on the file, so get/create the trajectory value cache
+            self._distributed_traj_val_cache = self.file.require_group(
+                                _H5PY_PATH_DICT["distributed_traj_val_cache"]
+                                                                       )
+            try:
+                cur_cache = asyncmd.config._GLOBALS["H5PY_CACHE"]
+            except KeyError:
+                # no cache set, so we set this file
+                asyncmd.config.register_h5py_cache(
+                                h5py_group=self._distributed_traj_val_cache,
+                                make_default=True,
+                                                   )
+            else:
+                logger.warning("Resetting the asyncmd h5py trajectory value "
+                               + f"cache. Was {cur_cache}.")
         else:
-            logger.warning("Resetting the asyncmd h5py trajectory value cache."
-                           + f"Was {cur_cache}.")
-        self._empty_cache()  # should be empty, but to be sure
+            # no write intent, so we warn about it
+            logger.warning("Opening storage without write intent, asyncmd "
+                           + "trajectory value caching will not be performed "
+                           + "in h5py (but most likely as seperate npz files)."
+                           )
+        # empty the density collector caches (should be empty, but to be sure)
+        self._empty_cache()
 
     def load_brain(self, model, tasks):
         brain = BrainStore(group=self.file.require_group(_H5PY_PATH_DICT["distributed_brainstore"]),
