@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class SPSelector(abc.ABC):
+    """Abstract base class for shooting point selectors."""
     def __init__(self) -> None:
         self._rng = np.random.default_rng()
 
@@ -40,6 +41,7 @@ class SPSelector(abc.ABC):
 
 # TODO: DOCUMENT
 class RCModelSPSelector(SPSelector):
+    """Select SPs biased towards current best guess of the transition state."""
     def __init__(self, scale=1., distribution="lorentzian",
                  density_adaptation=True, exclude_first_last_frame=True):
         super().__init__()
@@ -146,9 +148,10 @@ class RCModelSPSelector(SPSelector):
         # NOTE: this does not register the SP with model!
         #       i.e. we do stuff different than in the ops selector
         #       For the distributed case we need to save the predicted
-        #       commitment probabilities at the shooting point with the MCStep
-        #       this way we can make sure that they are added to the central model
-        #       in the same order as the shooting results to the trainset
+        #       commitment probabilities at the shooting point with the MCStep,
+        #       such that we can make sure that they are added to the central
+        #       RCmodel in the same order as the shooting results are added to
+        #       the trainset
         biases = await self._biases(trajectory, model)
         sum_bias = np.sum(biases)
         if sum_bias == 0.:
