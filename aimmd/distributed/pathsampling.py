@@ -572,6 +572,7 @@ class PathChainSampler:
                 done = True
 
         self.mcstep_collection.append(outstep)
+        outstep.save()  # write it to a pickle file next to the trajectories
         if outstep.accepted:
             self._accepts.append(1)
             self.current_step = outstep

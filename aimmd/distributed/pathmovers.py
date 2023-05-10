@@ -91,6 +91,7 @@ class MCstep:
         return self._str_representation(long=True)
 
     # TODO/FIXME: Do we need this? we can/could just pickle the MCSteps anyway?
+    #             (for now we keep it because it makes pickling a one-liner)
     def save(self, fname: typing.Optional[str] = None,
              overwrite: bool = False) -> None:
         if fname is None:
@@ -102,10 +103,13 @@ class MCstep:
             pickle.dump(self, pfile)
 
     @classmethod
-    def load(cls, fname: typing.Optional[str] = None):
+    def load(cls, directory: typing.Optional[str] = None,
+             fname: typing.Optional[str] = None):
+        if directory is None:
+            directory = os.getcwd()
         if fname is None:
             fname = cls.default_savename
-        with open(fname, "rb") as pfile:
+        with open(os.path.join(directory, fname), "rb") as pfile:
             obj = pickle.load(pfile)
         return obj
 
