@@ -411,6 +411,7 @@ class Brain:
                                   )
         # save self at the end
         self.storage.save_brain(self)
+        # TODO: save model and trainset too?!
 
     async def run_for_n_steps(self, n_steps):
         # run for n_steps total in all samplers combined
@@ -452,6 +453,7 @@ class Brain:
                                   )
         # save self at the end
         self.storage.save_brain(self)
+        # TODO: save model and trainset too?!
 
     async def _run_tasks(self, mcstep, sampler_idx):
         for t in self.tasks:
