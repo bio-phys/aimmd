@@ -19,38 +19,55 @@ import asyncio
 import logging
 import numpy as np
 
+from asyncmd import Trajectory
+from asyncmd.trajectory.convert import FrameExtractor
+
 
 logger = logging.getLogger(__name__)
 
 
 class SPSelector(abc.ABC):
     """Abstract base class for shooting point selectors."""
+    probability_is_ensemble_weight = False
     def __init__(self) -> None:
         self._rng = np.random.default_rng()
 
     @abc.abstractmethod
-    async def probability(self, snapshot, trajectory, model) -> float:
-        """Return proposal probability of the snapshot for this trajectory."""
+    async def probability(self, snapshot: Trajectory, **kwargs) -> float:
+        """
+        Return the proposal probability for the given snapshot.
+        """
+        # For SPSelectors that draw a SP from an in-trajectory this method
+        # should be called with (snapshot, trajectory)
+        # For SPSelectors that draw from an ensemble of SPs this function only
+        # needs the snapshot
         raise NotImplementedError
 
     @abc.abstractmethod
-    async def pick(self, trajectory, model) -> int:
-        """Return the index of the chosen snapshot within trajectory."""
+    async def pick(self, outfile: str, **kwargs) -> Trajectory:
+        """Pick and return a snapshot to shot from."""
+        # For SPSelectors that draw from an in-trajectory this method should
+        # take a trajectory
+        # For SPSelectors that draw from a predefined ensemble this does not
+        # necessarily need any arguments except the output path for the drawn
+        # snapshot (but if an RCModel selects the points it needs the potential
+        # shooting snapshots to predict the committors to bias accordingly)
         raise NotImplementedError
 
 
-# TODO: DOCUMENT
+# TODO: (finish) make a superclass for both/all RCModelSelectors
+#       we should try to move all methods to the superclass
 class RCModelSPSelector(SPSelector):
-    """Select SPs biased towards current best guess of the transition state."""
-    def __init__(self, scale=1., distribution="lorentzian",
-                 density_adaptation=True, exclude_first_last_frame=True):
+    """
+    Select SPs biased towards the current best guess of the transition state of
+    the RCmodel.
+    """
+    def __init__(self, scale: float, distribution: str,
+                 density_adaptation: bool = True) -> None:
         super().__init__()
         self.distribution = distribution
         self.scale = scale
         self.density_adaptation = density_adaptation
-        # whether we allow to choose first and last frame
-        # if False they will also not contribute to sum_bias and accept/reject
-        self.exclude_first_last_frame = exclude_first_last_frame
 
     @property
     def distribution(self):
@@ -74,6 +91,26 @@ class RCModelSPSelector(SPSelector):
 
     def _gaussian(self, z):
         return np.exp(-z**2/self.scale)
+
+
+# TODO: DOCUMENT
+class RCModelSPSelectorFromTraj(RCModelSPSelector):
+    """
+    Select SPs from a given in-trajectory (usualy a TP).
+
+    Selection is biased towards the current best guess of the transition state
+    of the RCModel.
+    """
+    def __init__(self, scale: float = 1., distribution: str = "lorentzian",
+                 density_adaptation: bool = True,
+                 exclude_first_last_frame: bool = True) -> None:
+        super().__init__(scale=scale,
+                         distribution=distribution,
+                         density_adaptation=density_adaptation,
+                         )
+        # whether we allow to choose first and last frame
+        # if False they will also not contribute to sum_bias and accept/reject
+        self.exclude_first_last_frame = exclude_first_last_frame
 
     async def f(self, snapshot, trajectory, model):
         """Return the unnormalized proposal probability of a snapshot."""
@@ -143,8 +180,29 @@ class RCModelSPSelector(SPSelector):
             ret = ret[1:-1]
         return ret
 
-    async def pick(self, trajectory, model):
-        """Return the index of the chosen snapshot within trajectory."""
+    async def pick(self, outfile: str, frame_extractor: FrameExtractor,
+                   trajectory: Trajectory, model) -> Trajectory:
+        """
+        Pick a shooting snapshot from given trajectory.
+
+        Parameters
+        ----------
+        outfile : str
+            Path to write out the selected snapshot.
+        frame_extractor : FrameExtractor
+            The framextractor to use when getting the snapshot from the
+            trajectory, e.g. RandomVelocities for TwoWayShooting.
+        trajectory : Trajectory
+            The input trajectory from which we select the snapshot.
+        model : aimmd.RCModel
+            The RCModel that is used to bias the selection towards the current
+            best guess of the transition state.
+
+        Returns
+        -------
+        Trajectory
+            The selected shooting snapshot.
+        """
         # NOTE: this does not register the SP with model!
         #       i.e. we do stuff different than in the ops selector
         #       For the distributed case we need to save the predicted
@@ -177,7 +235,20 @@ class RCModelSPSelector(SPSelector):
         while prob <= rand and idx < len(biases) - 1:
             idx += 1
             prob += biases[idx]
-        # and return chosen idx
         if self.exclude_first_last_frame:
             idx += 1
-        return idx
+        logger.debug(f"Selected SP with idx {idx} on trajectory {trajectory} "
+                     + f"of len {len(trajectory)}.")
+        # get the frame from the trajectory and write it out
+        snapshot = frame_extractor.extract(outfile=outfile,
+                                           traj_in=trajectory,
+                                           idx=idx)
+        return snapshot
+
+
+# TODO: write this!
+class RCModelSelectorFromEQ(RCModelSPSelector):
+    probability_is_ensemble_weight = True
+    # select SPs from a biased EQ distribtion so we can shot in parallel
+    # and get a weight for every mcstep (instead of an accept/reject)
+    pass

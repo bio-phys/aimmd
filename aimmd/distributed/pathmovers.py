@@ -36,7 +36,7 @@ from asyncmd.trajectory.propagate import (
 from asyncmd.utils import ensure_mdconfig_options
 
 from ._config import _SEMAPHORES
-from .spselectors import SPSelector, RCModelSPSelector
+from .spselectors import RCModelSPSelector, RCModelSPSelectorFromTraj
 
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,9 @@ class MCstep:
 
     def __init__(self, mover, stepnum, directory, predicted_committors_sp=None,
                  shooting_snap=None, states_reached=None,
-                 path=None, trial_trajectories=[], accepted=False, p_acc=0):
+                 path=None, trial_trajectories=[], accepted=False, p_acc=0,
+                 weight=1,
+                 ):
         # TODO: should this be the obj? or an unique string identififer? or...?
         self.mover = mover  # NOTE: currently we use the obj (and require all PathMovers to be pickleable)
         self.stepnum = stepnum
@@ -63,6 +65,7 @@ class MCstep:
         self.trial_trajectories = trial_trajectories
         self.accepted = accepted
         self.p_acc = p_acc
+        self.weight = weight
 
     # TODO: improve :)
     def _str_representation(self, long, width=139) -> str:
@@ -72,6 +75,7 @@ class MCstep:
         repr_str += f"accepted={self.accepted}, "
         repr_str += f"p_acc={self.p_acc}, "
         repr_str += f"predicted_committors_sp={self.predicted_committors_sp}, "
+        repr_str += f"weight={self.weight}, "
         repr_str += f"directory={self.directory}"
         if not long:
             repr_str += ")"  # terminate here
@@ -228,12 +232,13 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
     # for TwoWay shooting moves until any state is reached
     forward_deffnm = "forward"  # engine deffnm for forward shot
     backward_deffnm = "backward"  # same for backward shot
-    transition_filename = "transition.trr"  # filename for produced transitions
+    transition_filename = "transition"  # filename for produced transitions
     # trajs to state will be named e.g. $forward_deffnm$traj_to_state_suffix
     traj_to_state_suffix = "_traj_to_state"
 
     def __init__(self, states, engine_cls, engine_kwargs, walltime_per_part, T,
-                 sp_selector=None, max_steps=None):
+                 sp_selector: typing.Optional[RCModelSPSelector] = None,
+                 max_steps: typing.Optional[int] = None):
         """
         states - list of state functions, passed to Propagator
         descriptor_transform - coroutine function used to calculate descriptors
@@ -273,9 +278,17 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         self.walltime_per_part = walltime_per_part
         self.T = T
         if sp_selector is None:
-            sp_selector = RCModelSPSelector()
+            sp_selector = RCModelSPSelectorFromTraj()
         self.sp_selector = sp_selector
         self.max_steps = max_steps
+        try:
+            # see if it is set as engine_kwarg
+            output_traj_type = engine_kwargs["output_traj_type"]
+        except KeyError:
+            # it is not, so we use the engine_class default
+            output_traj_type = engine_cls.output_traj_type
+        finally:
+            self.output_traj_type = output_traj_type.lower()
         self._build_extracts_and_propas()
 
     def _build_extracts_and_propas(self):
@@ -311,21 +324,16 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         # NOTE/FIXME: we assume wdir is an absolute path
         #             (or at least that it is relative to cwd)
         model = self.get_model(stepnum=stepnum)
-        sp_idx = await self.sp_selector.pick(instep.path, model=model)
-        logger.info(f"Sampler {self.sampler_idx}: Selected SP with idx {sp_idx} "
-                    + f"on trajectory {instep.path} of len {len(instep.path)}."
-                    )
-        fw_sp_name_uc = os.path.join(wdir, f"{self.forward_deffnm}_SP_unconstrained.trr")
         fw_sp_name = os.path.join(wdir, f"{self.forward_deffnm}_SP.trr")
-        fw_startconf_uc = self.frame_extractors["fw"].extract(outfile=fw_sp_name_uc,
-                                                              traj_in=instep.path,
-                                                              idx=sp_idx)
-        # TODO: this is still a bit hacky, do we have a better solution for the
-        #       constraints? do we even need them?
-        constraint_engine = self.engine_cls(**self.engine_kwargs)
-        fw_startconf = await constraint_engine.apply_constraints(conf_in=fw_startconf_uc,
-                                                                 conf_out_name=fw_sp_name,
-                                                                 wdir=wdir)
+        fw_startconf = await self.sp_selector.pick(
+                                    outfile=fw_sp_name,
+                                    frame_extractor=self.frame_extractors["fw"],
+                                    trajectory=instep.path,
+                                    model=model,
+                                                   )
+        # NOTE: we do not apply constraints as we select from a trajectory that
+        #       is produced by the engine which applies the correct constraints
+        #       i.e. the configurations are alreayd constrained
         bw_sp_name = os.path.join(wdir, f"{self.backward_deffnm}_SP.trr")
         # we only invert the fw SP
         bw_startconf = self.frame_extractors["bw"].extract(outfile=bw_sp_name,
@@ -369,11 +377,11 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         states_reached[bw_state] += 1
         out_tra_names = [os.path.join(wdir, (self.forward_deffnm
                                              + self.traj_to_state_suffix
-                                             + "." + constraint_engine.output_traj_type)
+                                             + "." + self.output_traj_type)
                                       ),
                          os.path.join(wdir, (self.backward_deffnm
                                              + self.traj_to_state_suffix
-                                             + "." + constraint_engine.output_traj_type)
+                                             + "." + self.output_traj_type)
                                       ),
                          ]
         concats = await asyncio.gather(*(
@@ -408,6 +416,8 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                           #       i.e. the traj segments (or is the concatenated enough)
                           trial_trajectories=[fw_traj, bw_traj],
                           accepted=False,
+                          p_acc=0,
+                          weight=0,
                           )
         else:
             # its a TP, we will cut, concatenate and order it such that it goes
@@ -422,13 +432,35 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
             logger.info(f"Sampler {self.sampler_idx}: "
                         + f"Forward trial reached state {fw_state}, "
                         + f"backward trial reached state {bw_state}.")
-            tra_out = os.path.join(wdir, f"{self.transition_filename}")
+            tra_out = os.path.join(wdir, f"{self.transition_filename}.{self.output_traj_type}")
             path_traj = await construct_TP_from_plus_and_minus_traj_segments(
                             minus_trajs=minus_trajs, minus_state=minus_state,
                             plus_trajs=plus_trajs, plus_state=plus_state,
                             state_funcs=self.states, tra_out=tra_out,
                             struct_out=None, overwrite=False,
                                                                              )
+            if self.sp_selector.probability_is_ensemble_weight:
+                # Build an unordered ensemble of transitions with weights
+                # we use this branch if we know that the probability is the
+                # ensemble weight of the transition trajectory (except for a
+                # constant factor, which we can normalize away)
+                # This is the case if we draw the shooting points from a
+                # distribution that is p_{SP}(x) = p_{eq}(x) * p_{bias}(x),
+                # then we can cancel the p_{eq}(x) part in the generation
+                # probability for the Path in itself and get an ensemble weight
+                # for each generated transition from the known p_{bias}(x)
+                # [See e.g. Falkner et al; arXiv 2207.14530]
+                raise NotImplementedError
+                # TODO: write this!
+            # "Normal" MCMC TPS below
+            # we use this branch if we need to cancel part of the
+            # probabilities from old and new transition trajectory in the
+            # accept/reject, i.e. if we need the ordered Markov chain to
+            # get the correct ensemble of transitions, this is e.g.
+            # the case for "normal" TwoWayShooting (shooting from the last
+            # accepted TP), where we cancel the p_{EQ}(x_{SP}) parts in the
+            # acceptance probability (such that the SPSelector does not
+            # need to calculate p_{EQ}(x_{SP}))
             # accept or reject?
             p_sel_old = await self.sp_selector.probability(fw_startconf,
                                                            instep.path,
@@ -441,8 +473,8 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
             #          )
             # but accept only depends on p_sel, because Maxwell-Boltzmann vels,
             # i.e. p_mod cancel with p_eq_sp velocity part
-            # and configuration is the same in old and new, i.e. for positions
-            # we cancel old with new
+            # and configuration is the same in old and new, i.e. for the
+            # positions we can cancel old with new
             p_acc = p_sel_new / p_sel_old
             log_str = f"Sampler {self.sampler_idx}: Acceptance probability "
             log_str += f"for generated trial is {round(p_acc, 6)}."
