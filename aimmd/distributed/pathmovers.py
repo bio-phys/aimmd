@@ -16,6 +16,7 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 # code to move around in path-space, pathmovers generate new trial paths and
 # accept/reject them, i.e. they move the MarkovChain from one MCStep to the next
+import functools
 import os
 import abc
 import asyncio
@@ -406,19 +407,27 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         if fw_state == bw_state:
             logger.info(f"Sampler {self.sampler_idx}: "
                         + f"Both trials reached state {fw_state}.")
-            return MCstep(mover=self,
-                          stepnum=stepnum,
-                          directory=wdir,
-                          predicted_committors_sp=predicted_committors_sp,
-                          shooting_snap=fw_startconf,
-                          states_reached=states_reached,
-                          # TODO: do we want to add fw_trajs and bw_trajs?
-                          #       i.e. the traj segments (or is the concatenated enough)
-                          trial_trajectories=[fw_traj, bw_traj],
-                          accepted=False,
-                          p_acc=0,
-                          weight=0,
-                          )
+            half_finished_step = functools.partial(
+                                    MCstep,
+                                    mover=self,
+                                    stepnum=stepnum,
+                                    directory=wdir,
+                                    predicted_committors_sp=predicted_committors_sp,
+                                    shooting_snap=fw_startconf,
+                                    states_reached=states_reached,
+                                    # TODO: do we want to add fw_trajs and bw_trajs?
+                                    #       i.e. the traj segments (or is the concatenated enough)
+                                    trial_trajectories=[fw_traj, bw_traj],
+                                    weight=0,
+                                    )
+            if self.sp_selector.probability_is_ensemble_weight:
+                # We have/are creating an unordered ensemble of TP with weights
+                # need to 'accept' all trials, in this case with weight=0
+                return half_finished_step(accepted=True, p_acc=1)
+            else:
+                # we have a 'real' Markov chain, set p_acc=0 for non-TP
+                # this kicks them out of the MCStates iteration
+                return half_finished_step(accepted=False, p_acc=0)
         else:
             # its a TP, we will cut, concatenate and order it such that it goes
             # from lower idx state to higher idx state
@@ -450,38 +459,50 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                 # probability for the Path in itself and get an ensemble weight
                 # for each generated transition from the known p_{bias}(x)
                 # [See e.g. Falkner et al; arXiv 2207.14530]
-                raise NotImplementedError
-                # TODO: write this!
-            # "Normal" MCMC TPS below
-            # we use this branch if we need to cancel part of the
-            # probabilities from old and new transition trajectory in the
-            # accept/reject, i.e. if we need the ordered Markov chain to
-            # get the correct ensemble of transitions, this is e.g.
-            # the case for "normal" TwoWayShooting (shooting from the last
-            # accepted TP), where we cancel the p_{EQ}(x_{SP}) parts in the
-            # acceptance probability (such that the SPSelector does not
-            # need to calculate p_{EQ}(x_{SP}))
-            # accept or reject?
-            p_sel_old = await self.sp_selector.probability(fw_startconf,
-                                                           instep.path,
-                                                           model=model)
-            p_sel_new = await self.sp_selector.probability(fw_startconf,
-                                                           path_traj,
-                                                           model=model)
-            # p_acc = ((p_sel_new * p_mod_sp_new_to_old * p_eq_sp_new)
-            #          / (p_sel_old * p_mod_sp_old_to_new * p_eq_sp_old)
-            #          )
-            # but accept only depends on p_sel, because Maxwell-Boltzmann vels,
-            # i.e. p_mod cancel with p_eq_sp velocity part
-            # and configuration is the same in old and new, i.e. for the
-            # positions we can cancel old with new
-            p_acc = p_sel_new / p_sel_old
-            log_str = f"Sampler {self.sampler_idx}: Acceptance probability "
-            log_str += f"for generated trial is {round(p_acc, 6)}."
-            accepted = False
-            if (p_acc >= 1) or (p_acc > self._rng.random()):
+                ensemble_weight = await self.sp_selector.probability(
+                                                        snapshot=fw_startconf,
+                                                        trajectory=path_traj,
+                                                        model=model,
+                                                                     )
+                p_acc = 1
+                log_str = f"Sampler {self.sampler_idx}: Ensemble weight "
+                log_str += f"for generated trial is {round(ensemble_weight, 6)}."
                 accepted = True
-                log_str += " Trial was accepted."
+            else:
+                # "Normal" MCMC TPS below
+                # we use this branch if we need to cancel part of the
+                # probabilities from old and new transition trajectory in the
+                # accept/reject, i.e. if we need the ordered Markov chain to
+                # get the correct ensemble of transitions, this is e.g.
+                # the case for "normal" TwoWayShooting (shooting from the last
+                # accepted TP), where we cancel the p_{EQ}(x_{SP}) parts in the
+                # acceptance probability (such that the SPSelector does not
+                # need to calculate p_{EQ}(x_{SP}))
+                # accept or reject?
+                p_sel_old = await self.sp_selector.probability(
+                                                        snapshot=fw_startconf,
+                                                        trajectory=instep.path,
+                                                        model=model)
+                p_sel_new = await self.sp_selector.probability(
+                                                        snapshot=fw_startconf,
+                                                        trajectory=path_traj,
+                                                        model=model)
+                # p_acc = ((p_sel_new * p_mod_sp_new_to_old * p_eq_sp_new)
+                #          / (p_sel_old * p_mod_sp_old_to_new * p_eq_sp_old)
+                #          )
+                # but accept only depends on p_sel, because Maxwell-Boltzmann vels,
+                # i.e. p_mod cancel with p_eq_sp velocity part
+                # and configuration is the same in old and new, i.e. for the
+                # positions we can cancel old with new
+                p_acc = p_sel_new / p_sel_old
+                ensemble_weight = 1
+                log_str = f"Sampler {self.sampler_idx}: Acceptance probability"
+                log_str += f" for generated trial is {round(p_acc, 6)}."
+                accepted = False
+                if (p_acc >= 1) or (p_acc > self._rng.random()):
+                    accepted = True
+                    log_str += " Trial was accepted."
+            # In both cases: log and return the MCstep
             logger.info(log_str)
             return MCstep(mover=self,
                           stepnum=stepnum,
@@ -494,4 +515,5 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                           path=path_traj,
                           accepted=accepted,
                           p_acc=p_acc,
+                          weight=ensemble_weight,
                           )

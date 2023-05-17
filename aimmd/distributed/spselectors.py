@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 class SPSelector(abc.ABC):
     """Abstract base class for shooting point selectors."""
     probability_is_ensemble_weight = False
+
     def __init__(self) -> None:
         self._rng = np.random.default_rng()
 
@@ -44,7 +45,8 @@ class SPSelector(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    async def pick(self, outfile: str, **kwargs) -> Trajectory:
+    async def pick(self, outfile: str, frame_extractor: FrameExtractor,
+                   **kwargs) -> Trajectory:
         """Pick and return a snapshot to shot from."""
         # For SPSelectors that draw from an in-trajectory this method should
         # take a trajectory
@@ -55,8 +57,9 @@ class SPSelector(abc.ABC):
         raise NotImplementedError
 
 
+# TODO: Document!
 # TODO: (finish) make a superclass for both/all RCModelSelectors
-#       we should try to move all methods to the superclass
+#       we should try to move all possible methods to the superclass
 class RCModelSPSelector(SPSelector):
     """
     Select SPs biased towards the current best guess of the transition state of
@@ -92,28 +95,10 @@ class RCModelSPSelector(SPSelector):
     def _gaussian(self, z):
         return np.exp(-z**2/self.scale)
 
-
-# TODO: DOCUMENT
-class RCModelSPSelectorFromTraj(RCModelSPSelector):
-    """
-    Select SPs from a given in-trajectory (usualy a TP).
-
-    Selection is biased towards the current best guess of the transition state
-    of the RCModel.
-    """
-    def __init__(self, scale: float = 1., distribution: str = "lorentzian",
-                 density_adaptation: bool = True,
-                 exclude_first_last_frame: bool = True) -> None:
-        super().__init__(scale=scale,
-                         distribution=distribution,
-                         density_adaptation=density_adaptation,
-                         )
-        # whether we allow to choose first and last frame
-        # if False they will also not contribute to sum_bias and accept/reject
-        self.exclude_first_last_frame = exclude_first_last_frame
-
     async def f(self, snapshot, trajectory, model):
-        """Return the unnormalized proposal probability of a snapshot."""
+        """
+        Return the unnormalized proposal probability of snapshot from trajectory.
+        """
         # we expect that 'snapshot' is a len 1 trajectory!
         z_sel = await model.z_sel(snapshot)
         any_nan = np.any(np.isnan(z_sel))
@@ -138,27 +123,15 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
                 return 1.
         return ret
 
-    async def probability(self, snapshot, trajectory, model):
-        """Return proposal probability of the snapshot for this trajectory."""
-        # we expect that 'snapshot' is a len 1 trajectory!
-        sum_bias, f_val = await asyncio.gather(
-                                          self.sum_bias(trajectory, model),
-                                          self.f(snapshot, trajectory, model),
-                                               )
-        if sum_bias == 0.:
-            logger.error("All SP weights are 0. Using equal probabilities.")
-            if self.exclude_first_last_frame:
-                return 1. / (len(trajectory) - 2)
-            else:
-                return 1. / len(trajectory)
-        return f_val / sum_bias
-
     async def sum_bias(self, trajectory, model):
         """
         Return the partition function of proposal probabilities for trajectory.
         """
-        biases = await self._biases(trajectory, model)
+        biases = await self.biases(trajectory, model)
         return np.sum(biases)
+
+    async def biases(self, trajectory, model):
+        return await self._biases(trajectory=trajectory, model=model)
 
     async def _biases(self, trajectory, model):
         z_sels = await model.z_sel(trajectory)
@@ -176,6 +149,45 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
                                                             committor_probs
                                                                   )
             ret *= density_fact.reshape(committor_probs.shape)
+        return ret
+
+
+# TODO: DOCUMENT
+class RCModelSPSelectorFromTraj(RCModelSPSelector):
+    """
+    Select SPs from a given in-trajectory (usualy a TP).
+
+    Selection is biased towards the current best guess of the transition state
+    of the RCModel.
+    """
+    def __init__(self, scale: float = 1., distribution: str = "lorentzian",
+                 density_adaptation: bool = True,
+                 exclude_first_last_frame: bool = True) -> None:
+        super().__init__(scale=scale,
+                         distribution=distribution,
+                         density_adaptation=density_adaptation,
+                         )
+        # whether we allow to choose first and last frame
+        # if False they will also not contribute to sum_bias and accept/reject
+        self.exclude_first_last_frame = exclude_first_last_frame
+
+    async def probability(self, snapshot, trajectory, model):
+        """Return proposal probability of the snapshot for this trajectory."""
+        # we expect that 'snapshot' is a len 1 trajectory!
+        sum_bias, f_val = await asyncio.gather(
+                                          self.sum_bias(trajectory, model),
+                                          self.f(snapshot, trajectory, model),
+                                               )
+        if sum_bias == 0.:
+            logger.error("All SP weights are 0. Using equal probabilities.")
+            if self.exclude_first_last_frame:
+                return 1. / (len(trajectory) - 2)
+            else:
+                return 1. / len(trajectory)
+        return f_val / sum_bias
+
+    async def _biases(self, trajectory, model):
+        ret = await super()._biases(trajectory=trajectory, model=model)
         if self.exclude_first_last_frame:
             ret = ret[1:-1]
         return ret
@@ -210,7 +222,7 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
         #       such that we can make sure that they are added to the central
         #       RCmodel in the same order as the shooting results are added to
         #       the trainset
-        biases = await self._biases(trajectory, model)
+        biases = await self.biases(trajectory, model)
         sum_bias = np.sum(biases)
         if sum_bias == 0.:
             logger.error('Model not able to give educated guess.\
@@ -246,9 +258,89 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
         return snapshot
 
 
-# TODO: write this!
-class RCModelSelectorFromEQ(RCModelSPSelector):
+# TODO: DOCUMENT!
+# TODO/FIXME: think about density_adaptation!
+#       (it does not really make sense here as the points are not distributed
+#        according to p(x|TP), so correcting for it is useless...we would need
+#        to correct for the density of points in the given trajectories
+#        projected into pB/z_sel space!)
+class RCModelSPSelectorFromEQ(RCModelSPSelector):
     probability_is_ensemble_weight = True
     # select SPs from a biased EQ distribtion so we can shot in parallel
     # and get a weight for every mcstep (instead of an accept/reject)
-    pass
+    def __init__(self, trajectories: list[Trajectory],
+                 equilibrium_weights: list[np.ndarray],
+                 scale: float = 1,
+                 distribution: str = "lorentzian",
+                 density_adaptation: bool = False) -> None:
+        # NOTE: we expect equilibrium_weight to be the multiplicative factor by
+        #       which the ensemble weight for the structure differs from
+        #       equilibrium, e.g.:
+        #       -> all ones if the structures come from an equilibrium traj
+        #       -> exp(\beta V_{bias}(x)) for each structure from a biased
+        #          sampling run
+        #       -> the equilibrium weights from binless WHAM if from multiple
+        #          biased sampling runs
+        super().__init__(scale=scale,
+                         distribution=distribution,
+                         density_adaptation=density_adaptation,
+                         )
+        if isinstance(trajectories, Trajectory):
+            trajectories = [trajectories]
+        if isinstance(equilibrium_weights, np.ndarray):
+            equilibrium_weights = [equilibrium_weights]
+        # this looks a bit weired but we always concatenate the equilibrium
+        # weights to one large array, if it was just one bevore nothing changes
+        equilibrium_weights = np.concatenate(equilibrium_weights, axis=0)
+        # make sure trajectories and equilibrium_weights match (at least in length)
+        if equilibrium_weights.shape[0] != sum(len(t) for t in trajectories):
+            raise ValueError("Mismatch between trajectory and equilibrium_weights lengths!")
+        self.trajectories = trajectories
+        self.equilibrium_weights = equilibrium_weights
+
+    # TODO: is this correct?!
+    #       we normalize by using the sum of biases from the reservoir ensemble (self.trajectories)
+    #       but I think we must normalize to get \sum_i 1 / p_bias(x_i) correct
+    #       if we do not normalize we get a factor len(traj) * Z in the weight that depends on the trajectory length....
+    #       (I [hejung] think this is the best we can do because it assumes
+    #        the new points (on the trajectory) come from the reservoir ensemble)
+    async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
+                          model, **kwargs) -> float:
+        # get bias according to current model estimate of TSE
+        all_biases = await asyncio.gather(*(self.biases(trajectory=t,
+                                                        model=model)
+                                            for t in self.trajectories + [trajectory])
+                                          )
+        all_biases, biases_for_new_traj = all_biases
+        sum_bias = np.sum(all_biases)
+        return np.sum(sum_bias / biases_for_new_traj)
+
+    async def pick(self, outfile: str, frame_extractor: FrameExtractor, model,
+                   **kwargs) -> Trajectory:
+        # get bias according to current model estimate of TSE
+        all_biases = await asyncio.gather(*(self.biases(trajectory=t,
+                                                        model=model)
+                                            for t in self.trajectories)
+                                          )
+        all_biases = np.concatenate(all_biases, axis=0)
+        # get effective weight (which corrects for possible non-EQ frequency of
+        # configurations in self.trajectories)
+        effective_weights = all_biases * self.equilibrium_weights
+        # now pick an index according to effective weight
+        index = self._rng.choice(effective_weights.shape[0], size=None,
+                                 p=effective_weights/np.sum(effective_weights),
+                                 )
+        # find the right trajectory in self.trajectories
+        traj_index = 0
+        while index >= len(self.trajectories[traj_index]):
+            # and we directly find the correct frame index in it too...
+            index -= len(self.trajectories[traj_index])
+            traj_index += 1
+        # and write out the choosen snapshot using frame_extractor
+        logger.debug(f"Selected SP with idx {index} on trajectory "
+                     + f"{self.trajectories[traj_index]}.")
+        # get the frame from the trajectory and write it out
+        snapshot = frame_extractor.extract(outfile=outfile,
+                                           traj_in=self.trajectories[traj_index],
+                                           idx=index)
+        return snapshot

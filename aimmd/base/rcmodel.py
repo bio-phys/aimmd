@@ -304,7 +304,7 @@ class RCModel(ABC):
             return self.q(descriptors,
                           use_transform=use_transform,
                           batch_size=batch_size,
-                          )
+                          )[:, 0]  # make z_sel 1d!
         return self._z_sel_multinom(descriptors,
                                     use_transform=use_transform,
                                     batch_size=batch_size,
@@ -413,9 +413,9 @@ class RCModelAsyncMixin:
 
     async def z_sel(self, descriptors, use_transform=True, batch_size=None):
         if self.n_out == 1:
-            return await self.q(descriptors,
-                                use_transform=use_transform,
-                                batch_size=batch_size)
+            return (await self.q(descriptors,
+                                 use_transform=use_transform,
+                                 batch_size=batch_size))[:, 0]  # make z_sel 1d
         return await self._z_sel_multinom(descriptors,
                                           use_transform=use_transform,
                                           batch_size=batch_size)
