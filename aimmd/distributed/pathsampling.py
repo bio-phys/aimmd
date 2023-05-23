@@ -576,7 +576,10 @@ class PathChainSampler:
         # first choose a mover
         instep = self.current_step
         if instep is None:
-            raise ValueError("current_step must be set.")
+            logger.warning("Sampler %d: Instep is None."
+                           " This will only work with sampling schemes that"
+                           " generate their own shooting points.",
+                           self.sampler_idx)
         self._stepnum += 1
         done = False
         n_crash = 0

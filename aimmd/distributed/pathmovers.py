@@ -322,14 +322,14 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         self._build_extracts_and_propas()
 
     async def _move(self, instep, stepnum, wdir, model, **kwargs):
-        # NOTE/FIXME: we assume wdir is an absolute path
-        #             (or at least that it is relative to cwd)
         model = self.get_model(stepnum=stepnum)
         fw_sp_name = os.path.join(wdir, f"{self.forward_deffnm}_SP.trr")
+        # instep can be None if we shoot from an ensemble of points
+        inpath = instep.path if instep is not None else None
         fw_startconf = await self.sp_selector.pick(
                                     outfile=fw_sp_name,
                                     frame_extractor=self.frame_extractors["fw"],
-                                    trajectory=instep.path,
+                                    trajectory=inpath,
                                     model=model,
                                                    )
         # NOTE: we do not apply constraints as we select from a trajectory that

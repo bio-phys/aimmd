@@ -447,6 +447,10 @@ class TrajectoryDensityCollector:
     The inverse of the estimate of the density of points on TPs can be used as
     an additional factor in the shooting point selection to flatten the
     distribution of proposed shooting points in commitment probability space.
+    This class calculates descriptors from trajectories using the
+    descriptor_transform of a given RCModel and caches the results for future
+    reevaluations when/if the model predictions change and therefore result in
+    a different density of points when projected to committor space.
 
     """
 
@@ -604,8 +608,8 @@ class TrajectoryDensityCollector:
             self._counts = np.zeros((0,), dtype=np.float64)
             self._fill_pointer = 0
 
-    def reset_density(self) -> None:
-        """Reset stored density estimate and remove all stored trajectories."""
+    def reset_density_and_descriptors(self) -> None:
+        """Reset stored density estimate and remove all stored descriptors."""
         if self.cache_file is None:
             self._reset_descriptors()
         else:
