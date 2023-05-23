@@ -98,6 +98,7 @@ class DensityCollectionTask(BrainTask):
     # do density collection
     def __init__(self, model, first_collection=100,
                  recreate_interval=500, interval=10,
+                 mode="p_x_TP", trajectories=None, trajectory_weights=None,
                  ):
         super().__init__(interval=interval)
         self.model = model
@@ -105,8 +106,16 @@ class DensityCollectionTask(BrainTask):
         self.recreate_interval = recreate_interval
         self._last_collection = None  # starting step values for collections
         self._has_never_run = True
+        # TODO: make mode a property and check if it is one of our known opts
+        #       when setting
+        # TODO: document what we do in which mode!
+        self._mode = mode
+        # TODO: check that trajectories and trajctory_weights are not None when
+        #       we are in "custom" mode?!
+        self._trajectories = trajectories
+        self._trajectory_weights = trajectory_weights
 
-    async def run(self, brain, mcstep: MCstep, sampler_idx):
+    async def _run_p_x_TP(self, brain, mcstep: MCstep, sampler_idx):
         if brain.storage is None:
             logger.error("Density collection/adaptation is currently only "
                          + "possible for simulations with attached storage."
@@ -145,6 +154,40 @@ class DensityCollectionTask(BrainTask):
             # reevaluation time
             async with _SEMAPHORES["BRAIN_MODEL"]:
                 await dc.reevaluate_density(model=self.model)
+
+    async def _run_custom(self, brain, mcstep: MCstep, sampler_idx):
+        dc = self.model.density_collector
+        if brain.total_steps - self.first_collection >= 0:
+            if brain.total_steps - self.first_collection == 0:
+                async with _SEMAPHORES["BRAIN_MODEL"]:
+                    await dc.add_density_for_trajectories(
+                                            model=self.model,
+                                            trajectories=self._trajectories,
+                                            counts=self._trajectory_weights,
+                                                          )
+                self._has_never_run = False
+        if brain.total_steps % self.recreate_interval == 0:
+            if self._has_never_run:
+                # if we have not added the trajectories yet we need to do that
+                async with _SEMAPHORES["BRAIN_MODEL"]:
+                    await dc.add_density_for_trajectories(
+                                            model=self.model,
+                                            trajectories=self._trajectories,
+                                            counts=self._trajectory_weights,
+                                                          )
+                self._has_never_run = False
+            else:
+                # otherwise we can just reevaluate with the current model
+                async with _SEMAPHORES["BRAIN_MODEL"]:
+                    await dc.reevaluate_density(model=self.model)
+
+    async def run(self, brain, mcstep: MCstep, sampler_idx):
+        if self._mode == "p_x_TP":
+            await self._run_p_x_TP(brain=brain, mcstep=mcstep,
+                                   sampler_idx=sampler_idx)
+        elif self._mode == "custom":
+            await self._run_custom(brain=brain, mcstep=mcstep,
+                                   sampler_idx=sampler_idx)
 
 
 # TODO: rename chains -> samplers

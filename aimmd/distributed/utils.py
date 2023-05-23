@@ -22,19 +22,23 @@ def accepted_trajs_from_aimmd_storage(storage, per_mcstep_collection=True, start
 
     Parameters:
     -----------
-    storage - :class:`aimmd.Storage`
-    per_mcstep_collection - bool (default=True), whether to return the results seperated
-                            by mcstep_collections
-    starts - None or list of ints (len=n_mcstep_collection), the starting step for the
-             collection for every collection, if None we will start with the
-             first step
+    storage : :class:`aimmd.Storage`
+    per_mcstep_collection : bool
+        Whether to return the results seperated by mcstep_collections, True by
+        default
+    starts : None or list of ints (len=n_mcstep_collection)
+        The starting step for the collection for every collection, if None we
+        will start with the first step
 
     Returns:
     --------
-    tras - list of trajectories of the accepted trials
-    counts - list of counts, i.e. if a trial was accepted multiple times
+    tras : list of trajectories
+        The accepted trials
+    weights : list of weights
+        Trials can have different weights, e.g. if a trial was accepted
+        multiple times or has an ensemble weight attached to it already
 
-    Note, if per_mcstep_collection is True a list of tras, counts is returned.
+    Note, if per_mcstep_collection is True a list of tras, weights is returned.
     Each entry in the list corresponds to the mcstep_collection with the same index.
     """
     def accepted_trajs_from_mcstep_collection(mcstep_collection, start):
@@ -53,26 +57,32 @@ def accepted_trajs_from_aimmd_storage(storage, per_mcstep_collection=True, start
         last_accept = start
         found = False
         while not found:
-            if mcstep_collection[last_accept].accepted:
+            if (mcstep_collection[last_accept].accepted
+                and mcstep_collection[last_accept].weight > 0):
                 found = True  # not necessary since we use break
                 break
             last_accept -= 1
         # now iterate over the storage
         tras = []
-        counts = []
+        weights = []
         for i, step in enumerate(mcstep_collection[start:]):
-            if step.accepted:
+            if (step.accepted and step.weight > 0):
                 last_accept = i + start
                 tras.append(step.path)
-                counts.append(1)
+                weights.append(step.weight)
+                last_weight = step.weight  # remember the weight for next iters
             else:
                 try:
-                    counts[-1] += 1
+                    # can only end up here without triggering IndexError if we
+                    # did the loop already and defined last_weight
+                    weights[-1] += last_weight
                 except IndexError:
                     # no accepts yet
                     tras.append(mcstep_collection[last_accept].path)
-                    counts.append(1)
-        return tras, counts
+                    weights.append(mcstep_collection[last_accept].weight)
+                    # remember the weight
+                    last_weight = mcstep_collection[last_accept].weight
+        return tras, weights
 
     if starts is None:
         starts = [0 for _ in storage.mcstep_collections]
@@ -82,9 +92,9 @@ def accepted_trajs_from_aimmd_storage(storage, per_mcstep_collection=True, start
                 ]
     else:
         tras = []
-        counts = []
+        weights = []
         for i, cs in enumerate(storage.mcstep_collections):
             t, c = accepted_trajs_from_mcstep_collection(cs, starts[i])
             tras += t
-            counts += c
-        return tras, counts
+            weights += c
+        return tras, weights

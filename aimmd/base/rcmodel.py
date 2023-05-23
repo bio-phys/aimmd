@@ -14,6 +14,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
+import asyncio
 import logging
 import numpy as np
 from openpathsampling.engines.snapshot import BaseSnapshot as OPSBaseSnapshot
@@ -589,6 +590,29 @@ class TrajectoryDensityCollector:
                     # delete cache h5py group (if file is not open in read-only)
                     del self._cache.parent[self._cache.name]
 
+    def _reset_descriptors_cached(self) -> None:
+        if self._descriptors is not None:
+            self._counts.resize(0, axis=0)
+            self._descriptors.resize(0, axis=0)
+            self._fill_pointer = 0
+
+    def _reset_descriptors(self) -> None:
+        if self._descriptors is not None:
+            descriptor_dim = self._descriptors.shape[1]
+            self._descriptors = np.zeros((0, descriptor_dim),
+                                         dtype=np.float64)
+            self._counts = np.zeros((0,), dtype=np.float64)
+            self._fill_pointer = 0
+
+    def reset_density(self) -> None:
+        """Reset stored density estimate and remove all stored trajectories."""
+        if self.cache_file is None:
+            self._reset_descriptors()
+        else:
+            self._reset_descriptors_cached()
+        self.density_histogram = np.zeros(tuple(self.bins
+                                                for _ in range(self.n_dim)))
+
     def _extend_if_needed_cached(self, tra_len, descriptor_dim, add_entries=4000):
         """Extend cache if next trajectory would not fit."""
         # make sure we always make space for the whole tra
@@ -810,8 +834,9 @@ class TrajectoryDensityCollectorAsync(TrajectoryDensityCollector):
         # add descriptors to self
         if counts is None:
             counts = len(trajectories) * [1.]
-        for tra, c in zip(trajectories, counts):
-            descriptors = await model.descriptor_transform(tra)
+        all_descriptors = await asyncio.gather(*(model.descriptor_transform(tra)
+                                                 for tra in trajectories))
+        for descriptors, c in zip(all_descriptors, counts):
             self.append(tra_descriptors=descriptors, multiplicity=c)
         # now predict for the newly added
         pred = await model(self._descriptors[len_before:self._fill_pointer],

@@ -148,7 +148,7 @@ class RCModelSPSelector(SPSelector):
             density_fact = model.density_collector.get_correction(
                                                             committor_probs
                                                                   )
-            ret *= density_fact.reshape(committor_probs.shape)
+            ret *= density_fact
         return ret
 
 
