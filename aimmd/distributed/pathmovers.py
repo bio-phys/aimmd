@@ -418,16 +418,15 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                                     # TODO: do we want to add fw_trajs and bw_trajs?
                                     #       i.e. the traj segments (or is the concatenated enough)
                                     trial_trajectories=[fw_traj, bw_traj],
-                                    weight=0,
                                     )
             if self.sp_selector.probability_is_ensemble_weight:
                 # We have/are creating an unordered ensemble of TP with weights
                 # need to 'accept' all trials, in this case with weight=0
-                return half_finished_step(accepted=True, p_acc=1)
+                return half_finished_step(accepted=True, p_acc=1, weight=0,)
             else:
                 # we have a 'real' Markov chain, set p_acc=0 for non-TP
                 # this kicks them out of the MCStates iteration
-                return half_finished_step(accepted=False, p_acc=0)
+                return half_finished_step(accepted=False, p_acc=0, weight=1,)
         else:
             # its a TP, we will cut, concatenate and order it such that it goes
             # from lower idx state to higher idx state

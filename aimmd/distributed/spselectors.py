@@ -299,11 +299,14 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
         self.equilibrium_weights = equilibrium_weights
 
     # TODO: is this correct?!
-    #       we normalize by using the sum of biases from the reservoir ensemble (self.trajectories)
-    #       but I think we must normalize to get \sum_i 1 / p_bias(x_i) correct
-    #       if we do not normalize we get a factor len(traj) * Z in the weight that depends on the trajectory length....
+    #       we normalize by using the sum of biases from the reservoir ensemble
+    #       (e.e. from self.trajectories)
+    #       I think we must normalize to get [\sum_i p_bias(x_i)]^-1 correct,
+    #       if we do not normalize we run into trouble when the network
+    #       predictions change (and with it the selection biases and Z_bias)
     #       (I [hejung] think this is the best we can do because it assumes
-    #        the new points (on the trajectory) come from the reservoir ensemble)
+    #        the new points (on the trajectory) come from the reservoir
+    #        ensemble and are already included in the normalizing sum [Z_bias])
     async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
                           model, **kwargs) -> float:
         # get bias according to current model estimate of TSE
@@ -311,9 +314,10 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
                                                         model=model)
                                             for t in self.trajectories + [trajectory])
                                           )
-        all_biases, biases_for_new_traj = all_biases
-        sum_bias = np.sum(all_biases)
-        return np.sum(sum_bias / biases_for_new_traj)
+        biases_for_SP_ensemble = all_biases[:-1]
+        biases_for_new_traj = all_biases[-1]
+        Z_bias = np.sum(biases_for_SP_ensemble)
+        return Z_bias / np.sum(biases_for_new_traj)
 
     async def pick(self, outfile: str, frame_extractor: FrameExtractor, model,
                    **kwargs) -> Trajectory:
@@ -326,7 +330,7 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
         # get effective weight (which corrects for possible non-EQ frequency of
         # configurations in self.trajectories)
         effective_weights = all_biases * self.equilibrium_weights
-        # now pick an index according to effective weight
+        # now pick an index (in the full ensemble) according to effective weight
         index = self._rng.choice(effective_weights.shape[0], size=None,
                                  p=effective_weights/np.sum(effective_weights),
                                  )
