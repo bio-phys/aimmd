@@ -42,7 +42,6 @@ class BrainTask(abc.ABC):
 
     @abc.abstractmethod
     def run(self, brain, mcstep: MCstep, sampler_idx):
-        # TODO: find a smart way to pass the sampler result (if we even want to?)
         pass
 
 
@@ -59,6 +58,7 @@ class SaveTask(BrainTask):
         # this only runs when total_steps % interval == 0
         # i.e. we can just save when we run
         async with _SEMAPHORES["BRAIN_MODEL"]:
+            self.storage.save_brain(brain=brain)
             self.storage.save_trainset(self.trainset)
             savename = f"{self.name_prefix}_after_step{brain.total_steps}"
             self.storage.rcmodels[savename] = self.model
@@ -452,9 +452,6 @@ class Brain:
             await self._run_tasks(mcstep=mcstep,
                                   sampler_idx=sampler_idx,
                                   )
-        # save self at the end
-        self.storage.save_brain(self)
-        # TODO: save model and trainset too?!
 
     async def run_for_n_steps(self, n_steps):
         # run for n_steps total in all samplers combined
@@ -494,9 +491,6 @@ class Brain:
             await self._run_tasks(mcstep=mcstep,
                                   sampler_idx=sampler_idx,
                                   )
-        # save self at the end
-        self.storage.save_brain(self)
-        # TODO: save model and trainset too?!
 
     async def _run_tasks(self, mcstep, sampler_idx):
         for t in self.tasks:
@@ -505,9 +499,6 @@ class Brain:
                             sampler_idx=sampler_idx)
 
 
-# TODO: rename to (Path)ChainSampler?
-#       rename chainstore -> mcstep_collection?
-#       
 class PathChainSampler:
     # the single TPS simulation object:
     #   - keeps track of a single markov chain
