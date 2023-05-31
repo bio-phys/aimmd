@@ -445,8 +445,10 @@ class MCstepMemory(MutableObjectShelf):
             mover_modelstore = mover.modelstore
             # check if they use the same hdf5 group, the RCModelshelf objects
             # do not need to be the same (and most often often are not)
-            if mover_modelstore._group != self._modelstore._group:
-                logger.error("saving a mcstep with a 'foreign' modelstore")
+            if mover.modelstore is not None:
+                # movers that have been pickled can have modelstore=None
+                if mover_modelstore._group != self._modelstore._group:
+                    logger.error("saving a mcstep with a 'foreign' modelstore")
             mcstep.mover.modelstore = None
         super().save(obj=mcstep, overwrite=False, buffsize=2**22)
         if isinstance(mover, ModelDependentPathMover):
@@ -616,7 +618,7 @@ class ChainSamplerStore(MutableObjectShelf):
             if isinstance(mover, ModelDependentPathMover):
                 if mover.modelstore._group != self.modelstore._group:
                     logger.error("Saving a mover in the PathSamplingChain with"
-                                 + " a different modelstore.")
+                                 " a different modelstore.")
                 mover_modelstores += [mover.modelstore]
                 mover.modelstore = None
             else:

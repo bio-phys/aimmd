@@ -123,7 +123,13 @@ class PathMover(abc.ABC):
     # takes an (usually accepted) in-MCstep and
     # produces an out-MCstep (not necessarily accepted)
     @abc.abstractmethod
-    async def move(self, instep, stepnum, wdir, **kwargs):
+    async def move(self, instep, stepnum, wdir, continuation=False, **kwargs):
+        # NOTE: all movers should be able to continue an interrupted step
+        #       (at least if their steps are computationally expensive,
+        #        otherwise it might be ok to cleanup and start a new step from
+        #        scratch when given continuation=True, but then you might have
+        #        to clean up files from a previous run of the same mover in the
+        #        same wdir)
         raise NotImplementedError
 
     # NOTE: (this is used in MCStep.__str__ so it should not be too long)
@@ -197,13 +203,15 @@ class ModelDependentPathMover(PathMover):
         model_name = self._model_name(stepnum=stepnum)
         del self.modelstore[model_name]
 
-    async def move(self, instep, stepnum, wdir, model, **kwargs):
+    async def move(self, instep, stepnum, wdir, model, continuation=False,
+                   **kwargs):
         # this enables us to reuse the save/delete logic for every
         # modeldependant pathmover
         await self._pre_move(instep=instep, stepnum=stepnum, wdir=wdir,
                              model=model, **kwargs)
         outstep = await self._move(instep=instep, stepnum=stepnum, wdir=wdir,
-                                   model=model, **kwargs)
+                                   model=model, continuation=continuation,
+                                   **kwargs)
         await self._post_move(instep=instep, stepnum=stepnum, wdir=wdir,
                               model=model, **kwargs)
         return outstep
@@ -321,29 +329,59 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         super().__setstate__(state)
         self._build_extracts_and_propas()
 
-    async def _move(self, instep, stepnum, wdir, model, **kwargs):
+    async def _move(self, instep, stepnum, wdir, model, continuation, **kwargs):
         model = self.get_model(stepnum=stepnum)
         fw_sp_name = os.path.join(wdir, f"{self.forward_deffnm}_SP.trr")
         # instep can be None if we shoot from an ensemble of points
         inpath = instep.path if instep is not None else None
-        fw_startconf = await self.sp_selector.pick(
+        if continuation:
+            if inpath is None:
+                fw_struct_file = os.path.join(wdir, f"{self.forward_deffnm}.tpr")
+            else:
+                fw_struct_file = inpath.structure_file
+            if os.path.isfile(fw_sp_name) and os.path.isfile(fw_struct_file):
+                # if the forward SP (and struct file for no inpath case)
+                # have not yet been written it should be save to assume that we
+                # can just start from scratch without loosing anything
+                fw_startconf = Trajectory(trajectory_files=fw_sp_name,
+                                          structure_file=fw_struct_file)
+            else:
+                continuation = False
+        # pick a SP if we are not doing a continuation
+        if not continuation:
+            fw_startconf = await self.sp_selector.pick(
                                     outfile=fw_sp_name,
                                     frame_extractor=self.frame_extractors["fw"],
                                     trajectory=inpath,
                                     model=model,
-                                                   )
+                                                       )
         # NOTE: we do not apply constraints as we select from a trajectory that
         #       is produced by the engine which applies the correct constraints
         #       i.e. the configurations are alreayd constrained
         bw_sp_name = os.path.join(wdir, f"{self.backward_deffnm}_SP.trr")
-        # we only invert the fw SP
-        bw_startconf = self.frame_extractors["bw"].extract(outfile=bw_sp_name,
-                                                           traj_in=fw_startconf,
-                                                           idx=0)
+        if continuation:
+            if os.path.isfile(bw_sp_name):
+                # if the backward SP has not yet been written it should be save
+                # to assume we did not yet start the trial generation for
+                # either fw or bw, so we set continuation=False
+                bw_startconf = Trajectory(trajectory_files=bw_sp_name,
+                                          structure_file=fw_startconf.structure_file)
+            else:
+                continuation = False
+        # create the backwards SP if we have not yet done so
+        if not continuation:
+            # we only invert the fw SP
+            bw_startconf = self.frame_extractors["bw"].extract(
+                                                        outfile=bw_sp_name,
+                                                        traj_in=fw_startconf,
+                                                        idx=0,
+                                                               )
+        # propagate the two trial trajectories forward and backward in time
         trial_tasks = [asyncio.create_task(p.propagate(
                                                 starting_configuration=sconf,
                                                 workdir=wdir,
                                                 deffnm=deffnm,
+                                                continuation=continuation,
                                                        )
                                            )
                        for p, sconf, deffnm in zip(self.propagators,
@@ -387,7 +425,10 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                          ]
         concats = await asyncio.gather(*(
                         p.cut_and_concatenate(trajs=trajs,
-                                              tra_out=traj_out)
+                                              tra_out=traj_out,
+                                              # if we continue the traj might
+                                              # already be there
+                                              overwrite=continuation)
                         for p, trajs, traj_out in zip(self.propagators,
                                                       [fw_trajs, bw_trajs],
                                                       out_tra_names,
@@ -445,7 +486,8 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                             minus_trajs=minus_trajs, minus_state=minus_state,
                             plus_trajs=plus_trajs, plus_state=plus_state,
                             state_funcs=self.states, tra_out=tra_out,
-                            struct_out=None, overwrite=False,
+                            # if we continue the traj might already be there
+                            struct_out=None, overwrite=continuation,
                                                                              )
             if self.sp_selector.probability_is_ensemble_weight:
                 # Build an unordered ensemble of transitions with weights

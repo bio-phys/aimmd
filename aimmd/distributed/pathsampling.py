@@ -17,9 +17,11 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 # logic code to steer a distributed (T)PS simulations
 import os
 import abc
+import pickle
 import typing
 import asyncio
 import logging
+import datetime
 import numpy as np
 
 from asyncmd.mdengine import EngineError, EngineCrashedError
@@ -211,7 +213,7 @@ class Brain:
     #   NOTe: opposed to ops our tasks are an ordered list that gets done in deterministic order (at least the checking)
     #   Note: (this way one could also see the last task that is run as a pre-step task...?)
     #   TODO: make it possible to pass task state?
-    sampler_directory_prefix = "sampler"
+    sampler_directory_prefix = "sampler_"
 
     def __init__(self, model, workdir, storage, movers_per_sampler,
                  sampler_to_mcstepcollection,
@@ -265,10 +267,10 @@ class Brain:
         # we expect
         self._sampler_idxs_for_steps = []  # one sampler idx for each step done in the order they have finished
         # sampler-setup
-        swdirs = [os.path.join(self.workdir, f"{self.sampler_directory_prefix}_{i}")
+        swdirs = [os.path.join(self.workdir, f"{self.sampler_directory_prefix}{i}")
                   for i in range(len(movers_per_sampler))]
-        # make the dirs (TODO: this fails if the dirs already exist!)
-        [os.mkdir(d) for d in swdirs]
+        # make the dirs (dont fail if the dirs already exist!)
+        [os.makedirs(d, exist_ok=True) for d in swdirs]
         self.storage.mcstep_collections.n_collections = len(movers_per_sampler)
         if mover_weights_per_sampler is None:
             # let each PathChainSampler generate equal weigths for its movers
@@ -365,6 +367,10 @@ class Brain:
         if any(c.current_step is not None for c in self.samplers):
             raise ValueError("Can only seed if all managed samplers have no "
                              + "current_step set.")
+        if self.total_steps > 0:
+            raise ValueError("Can only seed initial steps if no steps have "
+                             "been finished yet, but total_steps=%d.",
+                             self.total_steps)
         if weights is not None:
             if len(weights) != len(trajectories):
                 raise ValueError("trajectories and weights must have the same"
@@ -378,35 +384,96 @@ class Brain:
                                      replace=replace,
                                      p=weights)
         # put a (dummy) MCstep with the trajectory into every PathSampling sim
-        for idx, sampler in zip(traj_idxs, self.samplers):
-            # assume that we can get dir from first trajectory_file, i.e. dont
-            # check (and dont care) if the structure_file is somewhere else
-            sdir, _ = os.path.split(trajectories[idx].trajectory_files[0])
-            s = MCstep(mover=None, stepnum=0, directory=sdir,  # required
+        for sidx, (idx, sampler) in enumerate(zip(traj_idxs, self.samplers)):
+            # save the first dummy step to its own dir as step 0!
+            # we just create the dir and save only the picklesuch that we can
+            # know about the initial traj/path for the chain when using
+            # reinitialize_from_workdir
+            step_dir = os.path.join(
+                        self.workdir,
+                        f"{self.sampler_directory_prefix}{sidx}",
+                        f"{sampler.mcstep_foldername_prefix}{sampler._stepnum}"
+                                    )
+            os.mkdir(step_dir)
+            s = MCstep(mover=None, stepnum=0, directory=step_dir,  # required
                        # our initial seed path for this sampler
                        path=trajectories[idx],
                        # initial step must be an accepted MCstate
                        accepted=True,
                        p_acc=1,
                        )
-            sampler.current_step = s
-            # save the initial step to storage
-            sampler.mcstep_collection.append(s)
+            # set the step as current step and adds it to samplers storage
+            # also save it as step zero
+            sampler._store_finished_step(step=s, save_step_pckl=True,
+                                         make_symlink=False)
 
-    # TODO?NOTE: is this todo still relevant? or are the functions we have on
-    #            storage side enough, i.e. can the two funcs below go?
-    # TODO:! write this to save the brain and its chains!
-    #        only need to take care of the movers (but those should be pickleable?!)
-    #        and the chainstores + brain.storage
-    #        and the model and the tasks?
-    #        then we can use the usual AimmdShelfs, i.e. pickle
-    def object_for_pickle(self, group, overwrite):
-        # currently overwrite will always be True
-        return self
+    # TODO: Document!
+    async def reinitialize_from_workdir(self, run_tasks=True):
+        # TODO: better name for run_tasks
+        # (for the user the most relevant part will be if the model is trained or not?)
+        if self.total_steps > 0:
+            raise ValueError("Can only reinitialize brain object if no steps "
+                             "have been done yet, but total_steps="
+                             f"{self.total_steps}.")
+        # first we find all finished steps for each sampler
+        # then we order them by finish-time, add them to storage in that order
+        steps_by_samplers = [s._finished_steps_from_workdir()
+                             for s in self.samplers]
+        steptimes_by_samplers = [sorted(steps.keys())
+                                 for steps in steps_by_samplers]
+        steptimes_sorted = sorted(sum(steptimes_by_samplers, []))
+        # add the finished steps in the right order
+        while len(steptimes_sorted) > 0:
+            st = steptimes_sorted.pop(0)
+            # find the index of the sampler it comes from
+            for sidx, steptimes in enumerate(steptimes_by_samplers):
+                if st in steptimes:
+                    step = steps_by_samplers[sidx][st]
+                    # remove this time from this sampler (so we would get the
+                    #  next sampler with exactly the same time if that ever
+                    #  happens)
+                    steptimes_by_samplers[sidx].remove(st)
+                    # store the finished step for the sampler it came from
+                    self.samplers[sidx]._store_finished_step(
+                                                        step=step,
+                                                        save_step_pckl=False,
+                                                        make_symlink=False,
+                                                             )
+                    # Note that our initial seeded steps have mover=None,
+                    # they should not trigger stepnum increase or task
+                    # execution and are also not included in the list to
+                    # mapp steps to samplers
+                    if step.mover is not None:
+                        # increase the samplers step counter
+                        self.samplers[sidx]._stepnum += 1
+                        # add the step to self
+                        self._sampler_idxs_for_steps += [sidx]
+                        if run_tasks:
+                            await self._run_tasks(mcstep=step, sampler_idx=sidx)
 
-    def complete_from_h5py_group(self, group):
-        return self
+        # now we should only have unfinished steps left
+        # we run them by running finish_step in each sampler, it finishes and
+        # returns the step or returns None if no unfinished steps are present
+        sampler_tasks = [asyncio.create_task(s.finish_step(self.model))
+                         for s in self.samplers]
+        # run them all and get the results in the order they are done
+        pending = sampler_tasks
+        while len(pending) > 0:
+            done, pending = await asyncio.wait(sampler_tasks,
+                                               return_when=asyncio.FIRST_COMPLETED)
+            for result in done:
+                sampler_idx = sampler_tasks.index(result)
+                mcstep = await result
+                if mcstep is None:
+                    # no unfinished steps in this sampler, go to next result
+                    continue
+                self._sampler_idxs_for_steps += [sampler_idx]
+                # run tasks/hooks
+                await self._run_tasks(mcstep=mcstep,
+                                      sampler_idx=sampler_idx,
+                                      )
 
+    # TODO: Document!
     async def run_for_n_accepts(self, n_accepts):
         # run for n_accepts in total over all samplers
         acc = 0
@@ -436,23 +503,27 @@ class Brain:
                 # that just finished
                 _ = sampler_tasks.pop(sampler_idx)
                 sampler_tasks.insert(sampler_idx, asyncio.create_task(
-                                     self.samplers[sampler_idx].run_step(self.model)
+                                        self.samplers[sampler_idx].run_step(self.model)
                                                                       )
                                      )
-        # now that we have enough accepts finish all steps that are still pending
-        done, pending = await asyncio.wait(sampler_tasks,
-                                           return_when=asyncio.ALL_COMPLETED)
-        for result in done:
-            sampler_idx = sampler_tasks.index(result)
-            mcstep = await result
-            self._sampler_idxs_for_steps += [sampler_idx]
-            if mcstep.accepted:
-                acc += 1
-            # run tasks/hooks
-            await self._run_tasks(mcstep=mcstep,
-                                  sampler_idx=sampler_idx,
-                                  )
+        # now that we have enough accepts finish all that are still pending
+        # get the remaining steps in the order the steps finish
+        pending = sampler_tasks
+        while len(pending) > 0:
+            done, pending = await asyncio.wait(pending,
+                                               return_when=asyncio.FIRST_COMPLETED)
+            for result in done:
+                sampler_idx = sampler_tasks.index(result)
+                mcstep = await result
+                self._sampler_idxs_for_steps += [sampler_idx]
+                if mcstep.accepted:
+                    acc += 1
+                # run tasks/hooks
+                await self._run_tasks(mcstep=mcstep,
+                                      sampler_idx=sampler_idx,
+                                      )
 
+    # TODO: DOCUMENT!
     async def run_for_n_steps(self, n_steps):
         # run for n_steps total in all samplers combined
         sampler_tasks = [asyncio.create_task(s.run_step(self.model))
@@ -479,18 +550,20 @@ class Brain:
                                                                       )
                                      )
                 n_started += 1
-
         # enough started, finish steps that are still pending
-        done, pending = await asyncio.wait(sampler_tasks,
-                                           return_when=asyncio.ALL_COMPLETED)
-        for result in done:
-            sampler_idx = sampler_tasks.index(result)
-            mcstep = await result
-            self._sampler_idxs_for_steps += [sampler_idx]
-            # run tasks/hooks
-            await self._run_tasks(mcstep=mcstep,
-                                  sampler_idx=sampler_idx,
-                                  )
+        # get them in the order the steps finish
+        pending = sampler_tasks
+        while len(pending) > 0:
+            done, pending = await asyncio.wait(pending,
+                                               return_when=asyncio.FIRST_COMPLETED)
+            for result in done:
+                sampler_idx = sampler_tasks.index(result)
+                mcstep = await result
+                self._sampler_idxs_for_steps += [sampler_idx]
+                # run tasks/hooks
+                await self._run_tasks(mcstep=mcstep,
+                                      sampler_idx=sampler_idx,
+                                      )
 
     async def _run_tasks(self, mcstep, sampler_idx):
         for t in self.tasks:
@@ -512,6 +585,7 @@ class PathChainSampler:
                              # after a crash, 'depending threads' are e.g. the
                              # conjugate trials in a two way simulation,
                              # in seconds!
+    restart_info_fname = ".restart_info.pckl"
     # TODO: make this saveable!? together with its brain!
     # TODO: make it possible to run post-processing 'hooks'?!
     # TODO: initialize from directory structure?
@@ -561,36 +635,139 @@ class PathChainSampler:
     def accepts(self):
         return self._accepts.copy()
 
+    def _finished_steps_from_workdir(self):
+        # we iterate over all possible stepdir, this might be a bit wasteful
+        # if there is other stuff in the workdir (TODO: break the loop when we
+        #  encounter the first non finished step?)
+        # we can have only maximally as many steps done as we have entries
+        max_num = len(os.listdir(self.workdir))
+        all_possible_stepdirs = [os.path.join(self.workdir,
+                                              self.mcstep_foldername_prefix
+                                              + f"{stepnum}")
+                                 for stepnum in range(max_num + 1)]
+        all_steps_by_time = {}
+        for stepdir in all_possible_stepdirs:
+            if os.path.isdir(stepdir):
+                try:
+                    s = MCstep.load(directory=stepdir)
+                except FileNotFoundError:
+                    # this step is (probably) not done yet
+                    pass
+                else:
+                    mtime = os.path.getmtime(os.path.join(stepdir,
+                                                          s.default_savename)
+                                             )
+                    mtime = datetime.datetime.fromtimestamp(mtime)
+                    all_steps_by_time[mtime] = s
+
+        return all_steps_by_time
+
+    def _store_finished_step(self, step: MCstep,
+                             save_step_pckl: bool = False,
+                             make_symlink: bool = False,
+                             instep: typing.Optional[MCstep] = None,
+                             ):
+        self.mcstep_collection.append(step)
+        if save_step_pckl:
+            step.save()  # write it to a pickle file next to the trajectories
+        if step.accepted:
+            self._accepts.append(1)
+            self.current_step = step
+            if make_symlink:
+                os.symlink(step.directory, os.path.join(
+                                                self.workdir,
+                                                f"{self.mcstate_name_prefix}"
+                                                + f"{self._stepnum}"
+                                                        )
+                           )
+        else:
+            self._accepts.append(0)
+            if make_symlink:
+                # link the old state as current/accepted state
+                os.symlink(instep.directory,
+                           os.path.join(self.workdir,
+                                        f"{self.mcstate_name_prefix}"
+                                        + f"{self._stepnum}"
+                                        )
+                           )
+
+    async def finish_step(self, model):
+        # _run_step increases the _stepnum, so we are looking for the next step
+        step_dir = os.path.join(self.workdir,
+                                    f"{self.mcstep_foldername_prefix}"
+                                    + f"{self._stepnum+1}"
+                                    )
+        restart_file = os.path.join(step_dir, self.restart_info_fname)
+        if os.path.isfile(restart_file):
+            with open(restart_file, "rb") as pf:
+                restart_info = pickle.load(pf)
+            instep = restart_info["instep"]
+            mover = restart_info["mover"]
+            if isinstance(mover, ModelDependentPathMover):
+                # (re)set the modelstore and sampler idx
+                mover.modelstore = self.modelstore
+                mover.sampler_idx = self.sampler_idx
+            # finish the step and return it
+            return await self._run_step(model=model, instep=instep,
+                                        mover=mover, continuation=True)
+        # no restart file means no unfinshed step
+        # we return None
+        return None
+
     async def run_step(self, model):
         # run one MCstep from current_step
         # takes a model for SP selection
-        # first choose a mover
         instep = self.current_step
         if instep is None:
             logger.warning("Sampler %d: Instep is None."
                            " This will only work with sampling schemes that"
                            " generate their own shooting points.",
                            self.sampler_idx)
-        self._stepnum += 1
-        done = False
-        n_crash = 0
-        n_maxlen = 0
+        # choose a mover
         mover = self._rng.choice(self.movers, p=self.mover_weights)
+        # and run the step
+        return await self._run_step(model=model, instep=instep, mover=mover,
+                                    continuation=False)
+
+    async def _run_step(self, model, mover: PathMover,
+                        instep: typing.Optional[MCstep],
+                        continuation: bool):
+        self._stepnum += 1
+        step_dir = os.path.join(self.workdir,
+                                f"{self.mcstep_foldername_prefix}{self._stepnum}"
+                                )
+        if continuation:
+            n_crash = 0
+            n_maxlen = 0
+            # get the number of times we crashed/reached max length
+            while os.path.isdir(step_dir + f"_max_len{n_maxlen+1}"):
+                n_maxlen += 1
+            while os.path.isdir(step_dir + f"_crash{n_crash+1}"):
+                n_crash += 1
+        else:
+            n_crash = 0
+            n_maxlen = 0
+        done = False
         while not done:
-            step_dir = os.path.join(self.workdir,
-                                    f"{self.mcstep_foldername_prefix}"
-                                    + f"{self._stepnum}"
-                                    )
-            os.mkdir(step_dir)
+            if not continuation:
+                os.mkdir(step_dir)
+                # write restart info to every newly created stepdir
+                with open(os.path.join(step_dir, self.restart_info_fname),
+                          "wb") as pf:
+                    pickle.dump({"instep": instep, "mover": mover}, pf)
+            # and do the actual step
             try:
                 outstep = await mover.move(instep=instep, stepnum=self._stepnum,
-                                           wdir=step_dir, model=model)
+                                           wdir=step_dir, model=model,
+                                           continuation=continuation,
+                                           )
             except MaxStepsReachedError as e:
                 # error raised when any trial takes "too long" to commit
                 logger.error(f"Sampler {self.sampler_idx}: MaxStepsReachedError, "
                              + "retrying MC step from scratch.")
                 os.rename(step_dir, step_dir + f"_max_len{n_maxlen+1}")
                 n_maxlen += 1
+                continuation = False
             except EngineCrashedError as e:
                 # catch error raised when gromacs crashes
                 if n_crash < self.max_retries_on_crash:
@@ -604,28 +781,16 @@ class PathChainSampler:
                     # move stepdir and retry
                     os.rename(step_dir, step_dir + f"_crash{n_crash+1}")
                     n_crash += 1
+                    continuation = False
                 else:
                     # reached maximum tries, raise the error and crash the sampling :)
                     raise e from None
             else:
+                # remove the restart file
+                os.remove(os.path.join(step_dir, self.restart_info_fname))
                 done = True
 
-        self.mcstep_collection.append(outstep)
-        outstep.save()  # write it to a pickle file next to the trajectories
-        if outstep.accepted:
-            self._accepts.append(1)
-            self.current_step = outstep
-            os.symlink(step_dir, os.path.join(self.workdir,
-                                              f"{self.mcstate_name_prefix}"
-                                              + f"{self._stepnum}"
-                                              )
-                       )
-        else:
-            self._accepts.append(0)
-            # link the old state as current/accepted state
-            os.symlink(instep.directory,
-                       os.path.join(self.workdir, f"{self.mcstate_name_prefix}"
-                                                  + f"{self._stepnum}"
-                                    )
-                       )
+        self._store_finished_step(outstep, save_step_pckl=True,
+                                  make_symlink=True, instep=instep,
+                                  )
         return outstep
