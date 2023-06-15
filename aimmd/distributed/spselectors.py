@@ -52,8 +52,7 @@ class SPSelector(abc.ABC):
         # take a trajectory
         # For SPSelectors that draw from a predefined ensemble this does not
         # necessarily need any arguments except the output path for the drawn
-        # snapshot (but if an RCModel selects the points it needs the potential
-        # shooting snapshots to predict the committors to bias accordingly)
+        # snapshot
         raise NotImplementedError
 
 

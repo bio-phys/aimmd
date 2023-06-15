@@ -860,12 +860,12 @@ class PathChainSampler:
         self.sampler_idx = sampler_idx
         self.movers = movers
         for mover in self.movers:
+            mover.sampler_idx = self.sampler_idx
             # set the store for all ModelDependentpathMovers
             # this way we can initialize them without a store
             # also set the sampler_idx such that they can save the rcmodels
             if isinstance(mover, ModelDependentPathMover):
                 mover.modelstore = self.modelstore
-                mover.sampler_idx = self.sampler_idx
         if mover_weights is None:
             self.mover_weights = [1/len(movers) for _ in range(len(movers))]
         else:

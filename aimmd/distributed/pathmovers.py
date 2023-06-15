@@ -119,7 +119,11 @@ class MCstep:
         return obj
 
 
+# TODO: DOCUMENT!
 class PathMover(abc.ABC):
+    def __init__(self) -> None:
+        self._rng = np.random.default_rng()  # numpy newstyle RNG, one per Mover
+
     # takes an (usually accepted) in-MCstep and
     # produces an out-MCstep (not necessarily accepted)
     @abc.abstractmethod
@@ -138,40 +142,42 @@ class PathMover(abc.ABC):
         raise NotImplementedError
 
 
-#TODO: DOCUMENT
+# TODO: DOCUMENT
 class ModelDependentPathMover(PathMover):
     # PathMover that takes a model at the start of the move
     # the model would e.g. used to select the shooting point
-    # here lives the code that saves the model state at the start of the step
+    # here lives the code that saves the model state at the start of the step,
     # this enables us to do the accept/reject (at the end) with the initially
     # saved model
-    # TODO: make it possible to use without an arcd.Storage?!
     savename_prefix = "RCModel"
     delete_cached_model = True  # wheter to delete the model after accept/reject
 
     def __init__(self, modelstore=None, sampler_idx=None):
+        super().__init__()
         # NOTE: modelstore - aimmd.storage.RCModelRack
-        #       this should enable us to use the same arcd.Storage for multiple
-        #       MC chains at the same time, if we have/create multiple RCModelRacks (in Brain?)
-        # NOTE : we set it to None by default because it will be set through
-        #        PathChainSampler.__init__ for all movers it owns to the
-        #        rcmodel-store associated with the chainstore
-        # NOTE: same for sampler_idx (which is used to create a unique savename
+        #       we set it to None by default because it will be set through
+        #       PathChainSampler.__init__ for all movers it owns to the
+        #       rcmodel-store associated with it,
+        #       same for sampler_idx (which is used to create a unique savename
         #       for the saved models)
         self.modelstore = modelstore
         self.sampler_idx = sampler_idx
-        self._rng = np.random.default_rng()  # numpy newstyle RNG, one per Mover
 
-    # NOTE: we take care of the modelstore in storage to
-    #       enable us to set the mover as MCstep attribute directly
-    #       (instead of an identifying string)
-    # NOTE 2: when saving a MCstep we ensure that the modelstore is the correct
-    #         (as in associated with that MCchain) RCModel rack
-    #         and when loading a MCstep we (can) set the movers.modelstore
-    #         subclasses can still use __getstate__ and __setstate__ to create
-    #         their runtime attributes but need to call the super classes
-    #         __getstate__ and __setstate__ as usual for subclasses
-    #         (see the TwoWayShooting for an example)
+    # NOTE: we take care of the modelstore in storage (and
+    #       PathChainSampler.__init__) to enable us to set the mover object as
+    #       MCstep attribute (instead of an identifying string) and still be
+    #       able to be pickle the steps.
+    #       When saving a MCstep we ensure that the modelstore is the correct
+    #       (as in associated with that mcstep_collection) RCModel store and
+    #       when loading a MCstep we set the movers .modelstore attribute
+    #       to the modelstore associated with the mcstep_collection.
+    #       For pickling we just set the modelstore to None when pickling,
+    #       this is why e.g. the PathChainSampler also sets the modelstore for
+    #       all the movers it loads to continue steps.
+    #       Subclasses can still use __getstate__ and __setstate__ to create
+    #       their runtime attributes but need to call the super classes
+    #       __getstate__ and __setstate__ as usual (see the TwoWayShooting for
+    #       an example).
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -237,6 +243,13 @@ class ModelDependentPathMover(PathMover):
 
 
 # TODO: DOCUMENT
+# TODO: make this a Mixin such that we can use it with SP selectors that dont
+#       need a model?! We would then have two classes, one TwoWayShootingPathMover
+#       and a TwoWayShootingPathMover_SansModel (or similar) which would not
+#       (need to) save the model before every step
+#       The caveat is that this puts the burden on the user to choose the right
+#       class when picking an SPselector (at least when they want to profit
+#       from the increased performance by not unnecessarily storing the model),
 class TwoWayShootingPathMover(ModelDependentPathMover):
     # for TwoWay shooting moves until any state is reached
     forward_deffnm = "forward"  # engine deffnm for forward shot
@@ -315,7 +328,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                             for _ in range(2)
                             ]
 
-    # TODO: improve?!
+    # TODO: improve?! e.g. add a description of the SP selector?!
     def __str__(self) -> str:
         return "TwoWayShootingPathMover"
 
@@ -520,14 +533,16 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                 # acceptance probability (such that the SPSelector does not
                 # need to calculate p_{EQ}(x_{SP}))
                 # accept or reject?
-                p_sel_old = await self.sp_selector.probability(
+                p_sel_old, p_sel_new = await asyncio.gather(
+                                                self.sp_selector.probability(
                                                         snapshot=fw_startconf,
                                                         trajectory=instep.path,
-                                                        model=model)
-                p_sel_new = await self.sp_selector.probability(
+                                                        model=model),
+                                                self.sp_selector.probability(
                                                         snapshot=fw_startconf,
                                                         trajectory=path_traj,
-                                                        model=model)
+                                                        model=model),
+                                                            )
                 # p_acc = ((p_sel_new * p_mod_sp_new_to_old * p_eq_sp_new)
                 #          / (p_sel_old * p_mod_sp_old_to_new * p_eq_sp_old)
                 #          )
