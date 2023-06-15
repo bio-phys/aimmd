@@ -228,7 +228,7 @@ class DensityCollectionTask(BrainTask):
     async def _run_p_x_TP(self, brain, mcstep: MCstep, sampler_idx):
         if brain.storage is None:
             logger.error("Density collection/adaptation is currently only "
-                         + "possible for simulations with attached storage."
+                         "possible for simulations with attached storage."
                          )
             return
         if self._has_never_run:
@@ -303,7 +303,17 @@ class DensityCollectionTask(BrainTask):
                                    sampler_idx=sampler_idx)
 
 
-# TODO: DOCUMENT!
+# TODO: DOCUMENT! Directly write a paragraph of documentation for use with sphinx!?
+#       We would need:
+#        - a few words on the folder structure with mcsteps and symlinks to the
+#          accepts
+#       - a few words on the saved pickles for each step (which contain the
+#         mcstep object)
+#       - the idea that the brain steers many samplers and how to define them
+#         using the PathMover lists (and weights), i.e. that a random mover is
+#         drawn (with given weight) and that this mover then does the move to
+#         get the Markov chain one step forward (thereby keeping detailed
+#         balance if every mover keeps it on its own)
 class Brain:
     """
     The `Brain` of the path sampling simulation.
@@ -443,36 +453,61 @@ class Brain:
             counters[cidx] += 1
         return accepts
 
-    # TODO: DOCUMENT!
     @classmethod
     def samplers_from_moverlist(cls, model, workdir, storage, n_sampler,
-                                movers_cls, movers_kwargs,
+                                movers_cls, movers_kwargs, mover_weights=None,
                                 samplers_use_same_stepcollection=False,
-                                mover_weights=None,
                                 tasks=[], **kwargs):
         """
-        Initialize `self` with n_sampler PathChainSamplers with given movers.
+        Initialize :class:`Brain` with n_sampler identical `PathChainSampler`s.
 
-        Convienience function to set up a brain with multiple identical samplers,
-        each sampler is created with movers defined by movers_cls, movers_kwargs
-        (and the optional mover_weights).
-        If samplers_use_same_stepcollection = True all sampler will use the 
-        same mcstepcollection, i.e. the first one.
-        If it is False each sampler will use its own, i.e.
+        This is a convienience function to set up a brain with multiple
+        identical samplers, each sampler is created with the movers defined by
+        `movers_cls`, `movers_kwargs` (and the optional `mover_weights`).
+        If `samplers_use_same_stepcollection = True`, all sampler will use the
+        same mcstepcollection with index 0, i.e. the first one.
+        If it is False each sampler will use its own mcstepcollection, i.e.
         `sampler_to_mcstepcollection = [i for i in range(n_sampler)]`.
-        All other arguments are directly passed to `self.__init__()`.
+        All other arguments are directly passed to `Brain.__init__()`.
+
+        Parameters
+        ----------
+        model : aimmd.rcmodel.RCModel
+            The reaction coordinate model (potentially) selecting shooting
+            points.
+        workdir : str
+            The directory in which the simulation should take place.
+        storage : aimmd.Storage
+            The storage to save the results to.
+        n_sampler : int
+            The number of (identical) `PathChainSampler`s to create.
+        movers_cls : list[PathMover_classes]
+            A list of (uninitialzed) `PathMover` classes defining the sampling
+            scheme.
+        movers_kwargs : list[dict]
+            The keyword arguments used to initialize each of the mover classes
+            in the list above.
+        mover_weights : list[float] or None
+            A list defining the weights for the movers. The entries in the list
+            must be probabilities, i.e. must sum to 1. If None, we will use
+            equal probabilities for all movers. By default None.
+        samplers_use_same_stepcollection : bool
+            Whether all `PathChainSampler`s use the same mcstepcollection, if
+            False each sampler will use its own collection, by default False.
+        tasks : list[BrainTask]
+            List of `BrainTask` objects to run at their specified intervals,
+            tasks will be checked if they should run in the order they are in
+            the list after any one TPS sim has finished a trial.
         """
-        movers_per_sampler = [[mov(**kwargs) for mov, kwargs in zip(movers_cls,
-                                                                    movers_kwargs
-                                                                    )
-                               ]
-                              for _ in range(n_sampler)
+        movers_per_sampler = [
+            [mov(**kwargs) for mov, kwargs in zip(movers_cls, movers_kwargs)]
+            for _ in range(n_sampler)
                               ]
         mover_weights_per_sampler = [mover_weights] * n_sampler
         if samplers_use_same_stepcollection:
-            sampler_to_mcstepcollection = [0 for _ in range(n_sampler)]
+            sampler_to_mcstepcollection = [0] * n_sampler
         else:
-            sampler_to_mcstepcollection = [i for i in range(n_sampler)]
+            sampler_to_mcstepcollection = list(range(n_sampler))
         return cls(model=model, workdir=workdir, storage=storage,
                    movers_per_sampler=movers_per_sampler,
                    sampler_to_mcstepcollection=sampler_to_mcstepcollection,
@@ -480,22 +515,27 @@ class Brain:
                    tasks=tasks, **kwargs,
                    )
 
-    # TODO: better func name? (seed_initial_paths() or seed_initial-mcsteps()?)
     def seed_initial_paths(self, trajectories, weights=None, replace=True):
         """
-        Initialize all PathChainSamplers from given trajectories.
+        Initialize all `PathChainSampler`s from given trajectories.
 
         Creates initial MonteCarlo steps for each PathChainSampler containing
-        one of the given transitions drawn at random (with given weights).
+        one of the given transitions drawn at random (with the given weights).
 
-        Parameters:
+        Parameters
         ----------
-        trajectories - list of `aimmd.distributed.Trajectory`
-        weights - None or list of weights, one for each trajectory
-        replace - bool, whether to draw the trajectories with replacement
+        trajectories : list[asyncmd.Trajectory]
+            The input paths to use.
+        weights : None or list[float]
+            The weights to use, must have one entry for each trajectory. If
+            None we will use equal weights for all trajectories.
+        replace : bool, optional
+            Whether to draw the trajectories with replacement, by default True.
         """
         # TODO: should we check/make the movers check if the choosen traj
-        #       satistfies the correct ensemble?!
+        #       satistfies the correct ensemble?! (For this we would need to
+        #       know the states and maybe more, which has the caveats discussed
+        #       above at Brain.__init__)
         if any(c.current_step is not None for c in self.samplers):
             raise ValueError("Can only seed if all managed samplers have no "
                              + "current_step set.")
@@ -790,9 +830,10 @@ class Brain:
                             sampler_idx=sampler_idx)
 
 
+# TODO: DOCUMENT!
 class PathChainSampler:
-    # the single TPS simulation object:
-    #   - keeps track of a single markov chain
+    # Keeps track of a single markov chain or produces samples for a shared
+    # ensemble, but in both cases runs independent of other samplers
 
     mcstep_foldername_prefix = "mcstep_"  # name = prefix + str(stepnum)
     mcstate_name_prefix = "mcstate_"  # name for symlinks to folders with
@@ -804,9 +845,11 @@ class PathChainSampler:
                              # conjugate trials in a two way simulation,
                              # in seconds!
     restart_info_fname = ".restart_info.pckl"
-    # TODO: make this saveable!? together with its brain!
-    # TODO: make it possible to run post-processing 'hooks'?!
-    # TODO: initialize from directory structure?
+    # TODO: make it possible to run post-processing 'hooks'/tasks?!
+    #       this would be similar to what we have with the Brain but here we
+    #       would pass in the MCstep as done by the PathMover and then let the
+    #       hook/task alter it (e.g. add/calculate additional data) and then
+    #       pass on the ammended MCstep to the Brain for storing/training/etc
 
     def __init__(self, workdir: str, mcstep_collection, modelstore,
                  sampler_idx: int, movers: list[PathMover],
@@ -981,19 +1024,20 @@ class PathChainSampler:
                                            )
             except MaxStepsReachedError as e:
                 # error raised when any trial takes "too long" to commit
-                logger.error(f"Sampler {self.sampler_idx}: MaxStepsReachedError, "
-                             + "retrying MC step from scratch.")
+                logger.error("Sampler %d: MaxStepsReachedError, retrying MC "
+                             "step from scratch.", self.sampler_idx,
+                             )
                 os.rename(step_dir, step_dir + f"_max_len{n_maxlen+1}")
                 n_maxlen += 1
                 continuation = False
             except EngineCrashedError as e:
                 # catch error raised when gromacs crashes
                 if n_crash < self.max_retries_on_crash:
-                    logger.error(f"Sampler {self.sampler_idx}: MD engine crashed"
-                                 + f"for the {n_crash + 1}th time, "
-                                 + "retrying MC step for another "
-                                 + f"{self.max_retries_on_crash - n_crash} "
-                                 + "times.")
+                    logger.error("Sampler %d: MD engine crashed for the %dth "
+                                 "time, retrying for another %d times.",
+                                 self.sampler_idx, n_crash + 1,
+                                 self.max_retries_on_crash - n_crash,
+                                 )
                     # wait a bit for everything to finish the cleanup
                     await asyncio.sleep(self.wait_time_on_crash)
                     # move stepdir and retry
