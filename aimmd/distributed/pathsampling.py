@@ -36,27 +36,62 @@ from .utils import accepted_trajs_from_aimmd_storage
 logger = logging.getLogger(__name__)
 
 
-# TODO: DOCUMENT!
 class BrainTask(abc.ABC):
-    """All BrainTasks should subclass this."""
+    """
+    Abstract base class for all `BrainTask`s.
+
+    `BrainTask`s are run at the specifed interval after a step is done. They
+    can be used to keep track of simulation results and alter the behavior of
+    the simulation easily. See e.g. the `SaveTask` or `TrainingTask` (which
+    adds the steps to a training set and trains the model). They are similar
+    to openpathsampling hooks.
+    """
+
     def __init__(self, interval=1):
         self.interval = interval
 
     @abc.abstractmethod
-    def run(self, brain, mcstep: MCstep, sampler_idx):
+    def run(self, brain, mcstep: MCstep, sampler_idx: int):
+        """
+        This method is called by the `Brain` every `interval` steps.
+
+        It is called with the brain performing the simulation, the mcstep that
+        just finished and the sampler index if the sampler that did the step.
+        """
         pass
 
 
 class SaveTask(BrainTask):
+    """Save the model and trainset at given interval (in steps) to storage."""
+
     def __init__(self, storage, model, trainset: TrainSet,
                  interval=100, name_prefix="Central_RCModel"):
+        """
+        Initialize a :class:`SaveTask`.
+
+        Parameters
+        ----------
+        storage : aimmd.Storage
+            The storage to save to.
+        model : aimmd.rcmodel.RCModel
+            The reaction coordinate model to save.
+        trainset : TrainSet
+            The trainset to save.
+        interval : int, optional
+            Save interval in simulation steps, by default 100
+        name_prefix : str, optional
+            Save name prefix for the reaction coordinate model, savename will
+            be `f"{name_prefix}_after_step{step_num}"`,
+            by default "Central_RCModel"
+        """
         super().__init__(interval=interval)
         self.storage = storage
         self.model = model
         self.trainset = trainset
         self.name_prefix = name_prefix
 
-    async def run(self, brain, mcstep: MCstep, sampler_idx):
+    async def run(self, brain, mcstep: MCstep, sampler_idx: int):
+        """This method is called by the `Brain` every `interval` steps."""
         # this only runs when total_steps % interval == 0
         # i.e. we can just save when we run
         async with _SEMAPHORES["BRAIN_MODEL"]:
@@ -67,13 +102,32 @@ class SaveTask(BrainTask):
 
 
 class TrainingTask(BrainTask):
-    # add stuff to trainset + call model trainhook
-    def __init__(self, model, trainset: TrainSet, interval=1):
-        super().__init__(interval=interval)
+    """
+    Update trainingset and train model.
+
+    This task adds the shooting results of the finished steps to the given
+    trainingset and train the model (or better: let the model decide if it
+    wants to train).
+    """
+
+    def __init__(self, model, trainset: TrainSet):
+        """
+        Initialize a :class:`TrainingTask`.
+
+        Parameters
+        ----------
+        model : aimmd.rcmodel.RCModel
+            The reaction coordinate model to train.
+        trainset : TrainSet
+            The trainset to which we add the shooting results.
+        """
+        # interval must be 1 otherwise we dont add every step to the trainset
+        super().__init__(interval=1)
         self.trainset = trainset
         self.model = model
 
-    async def run(self, brain, mcstep: MCstep, sampler_idx):
+    async def run(self, brain, mcstep: MCstep, sampler_idx: int):
+        """This method is called by the `Brain` every `interval` steps."""
         try:
             states_reached = mcstep.states_reached
             shooting_snap = mcstep.shooting_snap
@@ -95,27 +149,81 @@ class TrainingTask(BrainTask):
                 self.model.train_hook(self.trainset)
 
 
-# TODO: DOCUMENT
 class DensityCollectionTask(BrainTask):
-    # do density collection
-    def __init__(self, model, first_collection=100,
-                 recreate_interval=500, interval=10,
-                 mode="p_x_TP", trajectories=None, trajectory_weights=None,
+    """
+    Perform density collection and update the estimate as requested.
+
+    Density collection keeps track of the density of potential shooting points
+    projected into the space of the committor. This enables flattening the
+    shooting point distribution and the biasing towards the transition state is
+    not influenced by non-uniform distribution of points in committor space.
+
+    This class supports different `modes` which refer to the distribution that
+    should be flattened (and which should match the the shooting point
+    distribution):
+
+        - "p_x_TP" flattens the density of points along transitions, p(x|TP),
+          useful if your shooting points are selected from the last accepted
+          transition
+
+        - "custom" flattens the density of points from a given list of
+          trajectories, optionally with associated weights provided as a list
+          of np.ndarrays. They are provided at initialization as `trajectories`
+          and `trajectory_weights` respectively.
+    """
+
+    def __init__(self, model, first_collection: int = 100,
+                 recreate_interval: int = 500, mode: str = "p_x_TP",
+                 trajectories=None, trajectory_weights=None,
                  ):
-        super().__init__(interval=interval)
+        """
+        Initialize a :class:`DensityCollectionTask`.
+
+        Parameters
+        ----------
+        model : aimmd.rcmodel.RCModel
+            The reaction coordinate model for which we should do density
+            collection.
+        first_collection : int, optional
+            After how many simulation steps we should do the first collection,
+            by default 100
+        recreate_interval : int, optional
+            After how many simulation steps should we use the current model to
+            update the estimate of the density (because the model predictions
+            have changed sufficiently enough), by default 500
+        mode : str, optional
+            Which distribution of points should we try to flatten, can be one
+            of "p_x_TP" or "custom", by default "p_x_TP"
+        trajectories : list[Trajectory], optional
+            Only relevant for mode "custom", the configurations of the ensemble
+            of points we want to flatten, by default None
+        trajectory_weights : list[np.ndarray], optional
+            Only relevant for mode "custom", the optional weights for the
+            configurations provided as `trajectories`, by default None
+        """
+        # we use interval=1 because we check for first_collection and recreate
+        super().__init__(interval=1)
         self.model = model
         self.first_collection = first_collection
         self.recreate_interval = recreate_interval
         self._last_collection = None  # starting step values for collections
         self._has_never_run = True
-        # TODO: make mode a property and check if it is one of our known opts
-        #       when setting
-        # TODO: document what we do in which mode!
-        self._mode = mode
-        # TODO: check that trajectories and trajctory_weights are not None when
+        self.mode = mode
+        # TODO: check that trajectories and trajectory_weights are not None if
         #       we are in "custom" mode?!
         self._trajectories = trajectories
         self._trajectory_weights = trajectory_weights
+
+    @property
+    def mode(self):
+        return self._mode
+
+    @mode.setter
+    def mode(self, val: str):
+        allowed = ["p_x_TP", "custom"]
+        if val not in allowed:
+            raise ValueError(f"`mode` must be one of {allowed} (was {val}).")
+        self._mode = val
 
     async def _run_p_x_TP(self, brain, mcstep: MCstep, sampler_idx):
         if brain.storage is None:
@@ -125,8 +233,9 @@ class DensityCollectionTask(BrainTask):
             return
         if self._has_never_run:
             # get the start values from a possible previous simulation
-            self._last_collection = [len(mcstep_collection)
-                                     for mcstep_collection in brain.storage.mcstep_collections
+            self._last_collection = [
+                    len(mcstep_collection)
+                    for mcstep_collection in brain.storage.mcstep_collections
                                      ]
             # minus the step we just finished before we ran
             collection_idx = brain.sampler_to_mcstepcollection[sampler_idx]
@@ -135,7 +244,7 @@ class DensityCollectionTask(BrainTask):
         dc = self.model.density_collector
         if brain.total_steps - self.first_collection >= 0:
             if ((brain.total_steps % self.interval == 0)
-                or (brain.total_steps - self.first_collection == 0)):
+                    or (brain.total_steps - self.first_collection == 0)):
                 trajs, counts = accepted_trajs_from_aimmd_storage(
                                                 storage=brain.storage,
                                                 per_mcstep_collection=False,
@@ -147,8 +256,9 @@ class DensityCollectionTask(BrainTask):
                                                           counts=counts,
                                                           )
                 # remember the start values for next time
-                self._last_collection = [len(mcstep_collection)
-                                         for mcstep_collection in brain.storage.mcstep_collections
+                self._last_collection = [
+                    len(mcstep_collection)
+                    for mcstep_collection in brain.storage.mcstep_collections
                                          ]
         # Note that this below is an if because reevaluation should be
         # independent of adding new TPs in the same MCStep
@@ -184,65 +294,80 @@ class DensityCollectionTask(BrainTask):
                     await dc.reevaluate_density(model=self.model)
 
     async def run(self, brain, mcstep: MCstep, sampler_idx):
-        if self._mode == "p_x_TP":
+        """This method is called by the `Brain` every `interval` steps."""
+        if self.mode == "p_x_TP":
             await self._run_p_x_TP(brain=brain, mcstep=mcstep,
                                    sampler_idx=sampler_idx)
-        elif self._mode == "custom":
+        elif self.mode == "custom":
             await self._run_custom(brain=brain, mcstep=mcstep,
                                    sampler_idx=sampler_idx)
 
 
-# TODO: rename chains -> samplers
-#       reset and rename chain_directory_prefix -> sampler_directory_prefix
-#       ...
-#       re the todo below: name would now be ChainSamplerBundle (since the PathSamplingChain is now ChainSampler)
-
-# (old) TODO: better name!? 'PathSamplingBundle'? 'PathSamplingChainBundle'?
-#       then we should also rename the storage stuff from 'central_memory'
-#       to 'distributed'? 'chainbundle'?
+# TODO: DOCUMENT!
 class Brain:
-    """The 'brain' of the simulation."""
-    # TODO: docstring + remove obsolete notes when we are done
-    # tasks should do basically what the hooks do in the ops case:
-    #   - call the models train_hook, i.e. let it decide if it wants to train
-    #   - keep track of the current model/ save it etc
-    #   - keep track of its workers/ store their results in the central trainset
-    #   - 'controls' the central aimmd-storage (with the 'main' model and the trainset in it)
-    #   - density collection should also be done (from) here
-    #   NOTE: we run the tasks at specified frequencies like the hooks in ops
-    #   NOTe: opposed to ops our tasks are an ordered list that gets done in deterministic order (at least the checking)
-    #   Note: (this way one could also see the last task that is run as a pre-step task...?)
-    #   TODO: make it possible to pass task state?
+    """
+    The `Brain` of the path sampling simulation.
+
+    This is the central user-facing object to run and analyze your simulation.
+    It controls multiple `PathChainSampler` objects simultaneously, running
+    trials in all of them at the same time. Depending on the settings, each
+    `PathChainSampler` represents and samples its own Markov Chain or multiple/
+    all samplers add their steps to the same collection with a known weight.
+    The possible trial moves performed in each `PathChainSampler` depend on the
+    list of `movers` (and `mover_weights`) associated with it.
+
+    See the classmethod :meth:`samplers_from_moverlist` to setup a `Brain` with
+    a given number of identical `PathChainSampler`s.
+
+    Attributes
+    ----------
+    sampler_directory_prefix : str
+        Prefix for sampler directories, by default "sampler_"
+    """
+
+    # TODO: make it possible to pass task state? (Do we even need that?)
     sampler_directory_prefix = "sampler_"
 
-    def __init__(self, model, workdir, storage, movers_per_sampler,
-                 sampler_to_mcstepcollection,
-                 mover_weights_per_sampler=None, tasks=[], **kwargs):
+    def __init__(self, model, workdir, storage, sampler_to_mcstepcollection,
+                 movers_per_sampler, mover_weights_per_sampler=None, tasks=[],
+                 **kwargs):
         """
-        Initialize an `aimmd.distributed.Brain`.
+        Initialize a :class:`Brain`.
 
-        Parameters:
+        Parameters
         ----------
-        model - the committor model
-        workdir - a directory
-        storage - aimmd.Storage
-        movers_per_sampler - list of list of (initialized) PathMovers
-        sampler_to_mcstepcollection - list of integers, one for each Sampler,
-                                      the int indicates the index of the
-                                      mcstepcollection this sampler adds its
-                                      produced steps to
-        mover_weights_per_sampler - None or list of list of floats, entries must
-                                  be probabilities, i.e. must sum to 1
-                                  if None we will take equal probabilities for
-                                  all movers
-        tasks - list of `BrainTask` objects,
-                tasks will be checked if they should run in the order they are
-                in the list after any one TPS sim has finished a trial,
-                note that tasks will only be ran at their specified intervals
+        model : aimmd.rcmodel.RCModel
+            The reaction coordinate model (potentially) selecting shooting
+            points.
+        workdir : str
+            The directory in which the simulation should take place.
+        storage : aimmd.Storage
+            The storage to save the results to.
+        sampler_to_mcstepcollection : list[int]
+            A list with one entry for each `PathChainSampler`, the int
+            indicates the index of the mcstepcollection this sampler uses to
+            store its produced MCsteps
+        movers_per_sampler : list[list[PathMover]]
+            The outer list contains a list for each PathChainSampler, defining
+            the movers this sampler should use. I.e. the outer list has the
+            same length as we have/want `PathChainSampler`s, the inner lists
+            can be of different lenght for each sampler and contain different
+            `PathMover`s (just take care that the weights match the movers).
+        mover_weights_per_sampler : None or list[list[float]]
+            The outer list contains a list for each PathChainSampler, defining
+            the weights for the movers in this sampler. For each sampler the
+            entries in the list must be probabilities, i.e. must sum to 1.
+            If None (or if one of the list for one of the samplers is None), we
+            will use equal probabilities for all movers (in this sampler).
+        tasks : list[BrainTask]
+            List of `BrainTask` objects to run at their specified intervals,
+            tasks will be checked if they should run in the order they are in
+            the list after any one TPS sim has finished a trial.
         """
-        # TODO: we expect movers/mover_weights to be lists of lists?
-        #       one for each sampler, this is lazy and put the setup burden on the user!
-        # TODO: descriptor_transform and states?!
+        # TODO: do we want descriptor_transform and states here at a central
+        #       place?! Has the benefit that we dont need to pass it to every
+        #       mover, but the big drawback of assuming we only ever want to do
+        #       *T*PS with this class
         self.model = model
         self.workdir = os.path.abspath(workdir)
         self.storage = storage
@@ -263,12 +388,14 @@ class Brain:
                                     + f"mismatching type ({type(value)}). "
                                     + f" Default type is {type(cval)}."
                                     )
-        # and we do all setup of counters etc after to make sure they are what
-        # we expect
-        self._sampler_idxs_for_steps = []  # one sampler idx for each step done in the order they have finished
+        # Keep track of which sampler did which step, we just have a list with
+        # one sampler idx for each step done in the order they have finished
+        self._sampler_idxs_for_steps = []
         # sampler-setup
-        swdirs = [os.path.join(self.workdir, f"{self.sampler_directory_prefix}{i}")
-                  for i in range(len(movers_per_sampler))]
+        swdirs = [
+            os.path.join(self.workdir, f"{self.sampler_directory_prefix}{i}")
+            for i in range(len(movers_per_sampler))
+                  ]
         # make the dirs (dont fail if the dirs already exist!)
         [os.makedirs(d, exist_ok=True) for d in swdirs]
         self.storage.mcstep_collections.n_collections = len(movers_per_sampler)
@@ -407,10 +534,42 @@ class Brain:
             sampler._store_finished_step(step=s, save_step_pckl=True,
                                          make_symlink=False)
 
-    # TODO: Document!
-    async def reinitialize_from_workdir(self, run_tasks=True):
-        # TODO: better name for run_tasks
-        # (for the user the most relevant part will be if the model is trained or not?)
+    async def reinitialize_from_workdir(self, run_tasks: bool = True):
+        """
+        Reinitialize the `Brain` from an existing working/simulation directory.
+
+        This method first finds all finished steps and adds them to the `Brain`
+        and storage in the order they have originally been produced (using the
+        mtime from the operating system). It then searches for any unfinished
+        steps and finishes them before adding them to the storage and `Brain`.
+
+        If `run_tasks` is True (the default) the `Brain` will run all attached
+        `BrainTask`s (like density collection and training) for all steps it
+        adds as if they would have been just simulated.
+
+        This method can be used to restart a crashed or otherwise prematurely
+        terminated simulation to a new storage. In this case the `Brain` should
+        be initialized exactly as at the start of the originial simulation when
+        calling this function, i.e. with `movers`, `workdir`, etc. set but no
+        steps have been performed yet.
+        This method can also be used to restart a simulation with a different
+        descriptor_transform and/or reaction coordinate model architecture.
+        Note that also in this case the `Brain` needs to be initialized very
+        similar to what you originaly had set when starting the simulation.
+        For more details on what can be changed and what not please consult the
+        example notebooks and the documentation.
+
+        Parameters
+        ----------
+        run_tasks : bool, optional
+            If we should run the `BrainTask`s, by default True
+
+        Raises
+        ------
+        ValueError
+            If the `Brain` has already started another simulation, i.e. if
+            `self.total_steps>0`
+        """
         if self.total_steps > 0:
             raise ValueError("Can only reinitialize brain object if no steps "
                              "have been done yet, but total_steps="
@@ -473,12 +632,28 @@ class Brain:
                                       sampler_idx=sampler_idx,
                                       )
 
-    # TODO: Document!
-    async def run_for_n_accepts(self, n_accepts):
+    async def run_for_n_accepts(self, n_accepts: int,
+                                print_progress: typing.Optional[int] = None):
+        """
+        Run simulation until `n_accepts` accepts have been produced.
+
+        `n_accepts` is counted over all samplers. Note that the concept of
+        accepts might not make too much sense for your sampling scheme, e.g.
+        when shooting from points with know equilibrium weights.
+
+        Parameters
+        ----------
+        n_accepts : int
+            Total number of accepts to produce.
+        print_progress : typing.Optional[int], optional
+            Print a short progress summary every `print_progress` steps,
+            print nothing if `print_progress=None`, by default None
+        """
         # run for n_accepts in total over all samplers
         acc = 0
         sampler_tasks = [asyncio.create_task(s.run_step(self.model))
                          for s in self.samplers]
+        n_done = 0
         while acc < n_accepts:
             done, pending = await asyncio.wait(sampler_tasks,
                                                return_when=asyncio.FIRST_COMPLETED)
@@ -499,6 +674,12 @@ class Brain:
                 await self._run_tasks(mcstep=mcstep,
                                       sampler_idx=sampler_idx,
                                       )
+                n_done += 1
+                if print_progress is not None:
+                    if n_done % print_progress == 0:
+                        pstr = f"{n_done} steps done."
+                        pstr += f" Produced {acc} accepts so far in this run."
+                        print(pstr)
                 # remove old task from list and start next step in the sampler
                 # that just finished
                 _ = sampler_tasks.pop(sampler_idx)
@@ -522,13 +703,32 @@ class Brain:
                 await self._run_tasks(mcstep=mcstep,
                                       sampler_idx=sampler_idx,
                                       )
+                n_done += 1
+                if print_progress is not None:
+                    if n_done % print_progress == 0:
+                        pstr = f"{n_done} steps done."
+                        pstr += f" Produced {acc} accepts so far in this run."
+                        print(pstr)
 
-    # TODO: DOCUMENT!
-    async def run_for_n_steps(self, n_steps):
-        # run for n_steps total in all samplers combined
+    async def run_for_n_steps(self, n_steps: int,
+                              print_progress: typing.Optional[int] = None):
+        """
+        Run path sampling simulation for `n_steps` steps.
+
+        `n_steps` is the total number of steps in all samplers combined.
+
+        Parameters
+        ----------
+        n_steps : int
+            Total number of steps (Monte Carlo trials) to run.
+        print_progress : typing.Optional[int], optional
+            Print a short progress summary every `print_progress` steps,
+            print nothing if `print_progress=None`, by default None
+        """
         sampler_tasks = [asyncio.create_task(s.run_step(self.model))
                          for s in self.samplers]
         n_started = len(sampler_tasks)
+        n_done = 0
         while n_started < n_steps:
             done, pending = await asyncio.wait(sampler_tasks,
                                                return_when=asyncio.FIRST_COMPLETED)
@@ -542,6 +742,13 @@ class Brain:
                 await self._run_tasks(mcstep=mcstep,
                                       sampler_idx=sampler_idx,
                                       )
+                n_done += 1
+                if print_progress is not None:
+                    if n_done % print_progress == 0:
+                        pstr = f"{n_done} (of {n_steps}) steps done."
+                        pstr += f" Produced {sum(self.accepts[-n_done:])}"
+                        pstr += " accepts so far in this run."
+                        print(pstr)
                 # remove old task from list and start next step in the sampler
                 # that just finished
                 _ = sampler_tasks.pop(sampler_idx)
@@ -564,6 +771,12 @@ class Brain:
                 await self._run_tasks(mcstep=mcstep,
                                       sampler_idx=sampler_idx,
                                       )
+                if print_progress is not None:
+                    if n_done % print_progress == 0:
+                        pstr = f"{n_done} (of {n_steps}) steps done."
+                        pstr += f" Produced {sum(self.accepts[-n_done:])}"
+                        pstr += " accepts so far in this run."
+                        print(pstr)
 
     async def _run_tasks(self, mcstep, sampler_idx):
         for t in self.tasks:
