@@ -398,10 +398,15 @@ class Brain:
                   ]
         # make the dirs (dont fail if the dirs already exist!)
         [os.makedirs(d, exist_ok=True) for d in swdirs]
-        self.storage.mcstep_collections.n_collections = len(movers_per_sampler)
+        # we create as many stepcollections as the maximum index in
+        # sampler_to_mcstepcollection makes us assume
+        n_collections = max(sampler_to_mcstepcollection) + 1  # 0 based index
+        self.storage.mcstep_collections.n_collections = n_collections
         if mover_weights_per_sampler is None:
             # let each PathChainSampler generate equal weigths for its movers
-            mover_weights_per_sampler = [None for _ in range(len(movers_per_sampler))]
+            mover_weights_per_sampler = [
+                        None for _ in range(len(movers_per_sampler))
+                                         ]
         collection_per_sampler = [self.storage.mcstep_collections[idx]
                                   for idx in self.sampler_to_mcstepcollection
                                   ]
