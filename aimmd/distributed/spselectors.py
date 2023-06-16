@@ -34,14 +34,16 @@ class SPSelector(abc.ABC):
         self._rng = np.random.default_rng()
 
     @abc.abstractmethod
-    async def probability(self, snapshot: Trajectory, **kwargs) -> float:
+    async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
+                          **kwargs) -> float:
         """
         Return the proposal probability for the given snapshot.
         """
         # For SPSelectors that draw a SP from an in-trajectory this method
         # should be called with (snapshot, trajectory)
-        # For SPSelectors that draw from an ensemble of SPs this function only
-        # needs the snapshot
+        # For SPSelectors that draw from an ensemble of SPs this function also
+        # needs the trajectory this snapshot now belongs to, otherwise we can
+        # not calculate the ensemble weight for the newly generated trajectory
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -170,7 +172,8 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
         # if False they will also not contribute to sum_bias and accept/reject
         self.exclude_first_last_frame = exclude_first_last_frame
 
-    async def probability(self, snapshot, trajectory, model):
+    async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
+                          model, **kwargs):
         """Return proposal probability of the snapshot for this trajectory."""
         # we expect that 'snapshot' is a len 1 trajectory!
         sum_bias, f_val = await asyncio.gather(

@@ -37,7 +37,8 @@ from asyncmd.trajectory.propagate import (
 from asyncmd.utils import ensure_mdconfig_options
 
 from ._config import _SEMAPHORES
-from .spselectors import RCModelSPSelector, RCModelSPSelectorFromTraj
+from .spselectors import (SPSelector, RCModelSPSelector,
+                          RCModelSPSelectorFromTraj, RCModelSPSelectorFromEQ)
 
 
 logger = logging.getLogger(__name__)
@@ -119,15 +120,17 @@ class MCstep:
         return obj
 
 
-# TODO: DOCUMENT!
 class PathMover(abc.ABC):
+    """Abstract base class defining the API for all `PathMovers`."""
+
     def __init__(self) -> None:
         self._rng = np.random.default_rng()  # numpy newstyle RNG, one per Mover
 
     # takes an (usually accepted) in-MCstep and
     # produces an out-MCstep (not necessarily accepted)
     @abc.abstractmethod
-    async def move(self, instep, stepnum, wdir, continuation=False, **kwargs):
+    async def move(self, instep: MCstep, stepnum: int, wdir: str,
+                   continuation: bool = False, **kwargs) -> MCstep:
         # NOTE: all movers should be able to continue an interrupted step
         #       (at least if their steps are computationally expensive,
         #        otherwise it might be ok to cleanup and start a new step from
@@ -142,19 +145,26 @@ class PathMover(abc.ABC):
         raise NotImplementedError
 
 
-# TODO: DOCUMENT
 class ModelDependentPathMover(PathMover):
+    """
+    This `Pathmover` uses a `SPselector` with a model to bias the selection.
+
+    This class takes care of saving and retrieving the model state to ensure
+    the same reaction coordinate model is used for the whole trial (i.e. SP
+    selection and accept/reject/ensemble weight assignment).
+    """
+
     # PathMover that takes a model at the start of the move
-    # the model would e.g. used to select the shooting point
+    # the model would e.g. be used to select the shooting point
     # here lives the code that saves the model state at the start of the step,
     # this enables us to do the accept/reject (at the end) with the initially
     # saved model
     savename_prefix = "RCModel"
-    delete_cached_model = True  # wheter to delete the model after accept/reject
+    delete_cached_model = True  # wheter to delete the model after step is done
 
-    def __init__(self, modelstore=None, sampler_idx=None):
+    def __init__(self, modelstore=None, sampler_idx=None) -> None:
         super().__init__()
-        # NOTE: modelstore - aimmd.storage.RCModelRack
+        # NOTE: The modelstore is an aimmd.storage.RCModelRack,
         #       we set it to None by default because it will be set through
         #       PathChainSampler.__init__ for all movers it owns to the
         #       rcmodel-store associated with it,
@@ -209,17 +219,16 @@ class ModelDependentPathMover(PathMover):
         model_name = self._model_name(stepnum=stepnum)
         del self.modelstore[model_name]
 
-    async def move(self, instep, stepnum, wdir, model, continuation=False,
-                   **kwargs):
+    async def move(self, instep: MCstep, stepnum: int, wdir: str, model,
+                   continuation: bool = False, **kwargs) -> MCstep:
         # this enables us to reuse the save/delete logic for every
         # modeldependant pathmover
         await self._pre_move(instep=instep, stepnum=stepnum, wdir=wdir,
                              model=model, **kwargs)
         outstep = await self._move(instep=instep, stepnum=stepnum, wdir=wdir,
-                                   model=model, continuation=continuation,
-                                   **kwargs)
+                                   continuation=continuation, **kwargs)
         await self._post_move(instep=instep, stepnum=stepnum, wdir=wdir,
-                              model=model, **kwargs)
+                              **kwargs)
         return outstep
 
     async def _pre_move(self, instep, stepnum, wdir, model, **kwargs):
@@ -228,17 +237,44 @@ class ModelDependentPathMover(PathMover):
         #  prediction accuracy in the close past to decide if we want to train)
         # [registering the sp with the model is done by the trainingtask, to
         #  this end we save the predicted committors for the sp with the MCStep]
+        # so we store the passed model and then load it in _move to have our
+        # own copy of the model that does not change during our trial move
         async with _SEMAPHORES["BRAIN_MODEL"]:
             self.store_model(model=model, stepnum=stepnum)
         # release the Semaphore, we load the stored model for accept/reject later
 
-    async def _post_move(self, instep, stepnum, wdir, model, **kwargs):
+    async def _post_move(self, instep, stepnum, wdir, **kwargs):
         if self.delete_cached_model:
             self.delete_model(stepnum=stepnum)
 
     # NOTE: the actual move! to be implemented by the subclasses
     @abc.abstractmethod
-    async def _move(self, instep, stepnum, wdir, model, **kwargs):
+    async def _move(self, instep: MCstep, stepnum: int, wdir: str,
+                    **kwargs) -> MCstep:
+        # Note that we dont pass the model here (you should load it with
+        # self.get_model() instead in self._move)
+        raise NotImplementedError
+
+
+# TODO: Document
+class PathMoverSansModel(PathMover):
+    """
+    This `Pathmover` does not use a `SPselector` with a model.
+
+    This class exists just so we can use the same trial propagation logic when
+    using SP selectors with and without model. In the case without a model
+    we dont have to save the model before the step (obviously).
+    """
+    def __init__(self, sampler_idx=None) -> None:
+        super().__init__()
+        self.sampler_idx = sampler_idx
+
+    async def move(self, instep, stepnum, wdir, continuation=False, **kwargs):
+        return await self._move(instep=instep, stepnum=stepnum, wdir=wdir,
+                                continuation=continuation, **kwargs)
+
+    @abc.abstractmethod
+    async def _move(self, instep, stepnum, wdir, continuation, **kwargs):
         raise NotImplementedError
 
 
@@ -250,7 +286,16 @@ class ModelDependentPathMover(PathMover):
 #       The caveat is that this puts the burden on the user to choose the right
 #       class when picking an SPselector (at least when they want to profit
 #       from the increased performance by not unnecessarily storing the model),
-class TwoWayShootingPathMover(ModelDependentPathMover):
+class TwoWayShootingPathMoverMixin:
+    """
+    TwoWayShootingPathMover
+
+    Produce new trials by propagating two trajectories from the selected
+    shooting point, one forward and one backward in time. To modify the
+    shooting point selection you can pass different `SPSelector` classes as
+    `sp_selector` (see module `aimmd.distributed.spselectors`).
+    """
+
     # for TwoWay shooting moves until any state is reached
     forward_deffnm = "forward"  # engine deffnm for forward shot
     backward_deffnm = "backward"  # same for backward shot
@@ -259,26 +304,38 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
     traj_to_state_suffix = "_traj_to_state"
 
     def __init__(self, states, engine_cls, engine_kwargs, walltime_per_part, T,
-                 sp_selector: typing.Optional[RCModelSPSelector] = None,
+                 sp_selector: SPSelector = RCModelSPSelectorFromTraj(),
                  max_steps: typing.Optional[int] = None):
         """
-        states - list of state functions, passed to Propagator
-        descriptor_transform - coroutine function used to calculate descriptors
-        engine_cls - the class of the molecular dynamcis engine to use
-        engine_kwargs - a dict with keyword arguments to initialize the given
-                        molecular dynamics engine
-        walltime_per_part - simulation walltime per trajectory part
-        T - temperature in degree K (used for velocity randomization)
-        sp_selector - `aimmd.distributed.pathmovers.RCModelSPSelector` or None,
-                      if None we will initialialize a selector with defaults
-        max_steps - int or None, maximum number of integration steps *per part*
-                    i.e. this bounds steps(TP) <= 2*max_steps.
-                    None means no upper length, i.e. trials can get "stuck".
-                    Note that if the maximum is reached in any direction the
-                    trial will be discarded and a new trial will be started
-                    from the last accepted MCStep.
+        Initialize a TwoWayShootingPathMover.
+
+        Parameters
+        ----------
+        states : list[asyncmd.trajectory.functionwrapper.TrajectoryFunctionWrapper]
+            State functions (stopping conditions) to use, passed to Propagator.
+        engine_cls :
+            The class of the molecular dynamics engine to use, we expect one of
+            the `asyncmd` engines.
+        engine_kwargs : dict
+            A dictionary with keyword arguments needed to initialize the given
+            molecular dynamics engine.
+        walltime_per_part : float
+            Simulation walltime per trajectory part in hours, directly passed
+            to the Propagator.
+        T : float
+            Temperature in degree K (used for velocity randomization).
+        sp_selector : aimmd.distributed.spselector.SPSelector, optional
+            The shooting point selector to use, by default we will use the
+            `aimmd.distributed.spselector.RCModelSPSelectorFromTraj` with its
+             default options.
+        max_steps : int or None, optional
+            The maximum number of integration steps *per part* (forward or
+            backward), i.e. this bounds steps(TP) <= 2*max_steps. If None we
+            will use no upper length, which means trials can get "stuck".
+            Note that if the maximum is reached in any direction the trial will
+            be discarded and a new trial will be started from the last accepted
+            MCStep.
         """
-        # NOTE: we expect state funcs to be coroutinefuncs!
         # TODO: check that we use the same T as GMX? or maybe even directly take T from GMX (mdp)?
         # TODO: we should make properties out of everything
         #       changing anything requires recreating the propagators!
@@ -342,8 +399,14 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         super().__setstate__(state)
         self._build_extracts_and_propas()
 
-    async def _move(self, instep, stepnum, wdir, model, continuation, **kwargs):
-        model = self.get_model(stepnum=stepnum)
+    async def _move(self, instep, stepnum, wdir, continuation, **kwargs):
+        if isinstance(self, ModelDependentPathMover):
+            # see if we need the model and load it only if we do
+            model = self.get_model(stepnum=stepnum)
+        else:
+            # otherwise we set the model to None, this makes it possible to use
+            # the same call to all SPselectors (including the model argument)
+            model = None
         fw_sp_name = os.path.join(wdir, f"{self.forward_deffnm}_SP.trr")
         # instep can be None if we shoot from an ensemble of points
         inpath = instep.path if instep is not None else None
@@ -451,13 +514,16 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
         # cut and concatenate returns (traj_to_state, first_state_reached)
         # but since we already know about the states we ignore them here
         (fw_traj, _), (bw_traj, _) = concats
-        # NOTE: this is actually not necessary as we already load our own
-        # private copy of the model at the beginning of this move
-        # load the selecting model for accept/reject
-        #model = self.get_model(stepnum=stepnum)
-        # use selecting model to predict the commitment probabilities for the SP
-        predicted_committors_sp = (await model(fw_startconf))[0]
-        # check if they end in different states
+        # NOTE: we already loaded our own private copy of the model at the
+        # beginning of this move, so we can jsut continue using it
+        if isinstance(self, ModelDependentPathMover):
+            # If we use a model, use selecting model to predict the commitment
+            # probabilities for the SP
+            predicted_committors_sp = (await model(fw_startconf))[0]
+        else:
+            # no model, we set the predicted pB to None as we can not know it
+            predicted_committors_sp = None
+        # check if the two trial trajectories end in different states
         if fw_state == bw_state:
             logger.info(f"Sampler {self.sampler_idx}: "
                         + f"Both trials reached state {fw_state}.")
@@ -513,6 +579,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                 # probability for the Path in itself and get an ensemble weight
                 # for each generated transition from the known p_{bias}(x)
                 # [See e.g. Falkner et al; arXiv 2207.14530]
+                # Note: if we dont use a model for selection, model=None
                 ensemble_weight = await self.sp_selector.probability(
                                                         snapshot=fw_startconf,
                                                         trajectory=path_traj,
@@ -533,6 +600,7 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                 # acceptance probability (such that the SPSelector does not
                 # need to calculate p_{EQ}(x_{SP}))
                 # accept or reject?
+                # Note: if we dont use a model for selection, model=None
                 p_sel_old, p_sel_new = await asyncio.gather(
                                                 self.sp_selector.probability(
                                                         snapshot=fw_startconf,
@@ -573,3 +641,23 @@ class TwoWayShootingPathMover(ModelDependentPathMover):
                           p_acc=p_acc,
                           weight=ensemble_weight,
                           )
+
+
+class TwoWayShootingPathMover(TwoWayShootingPathMoverMixin,
+                              ModelDependentPathMover):
+    # the TwoWayShooting class that uses a model (saves it before every step)
+    __doc__ = (TwoWayShootingPathMoverMixin.__doc__
+               + ModelDependentPathMover.__doc__
+               )
+    pass
+
+
+class TwoWayShootingPathMoverSansModel(TwoWayShootingPathMoverMixin,
+                                       PathMoverSansModel):
+    # the TwoWayShooting class that does not use a model (no saving done),
+    # (this will be faster if your SPselector does not use a reaction
+    #  coordinate model to bias the selection)
+    __doc__ = (TwoWayShootingPathMoverMixin.__doc__
+               + PathMoverSansModel.__doc__
+               )
+    pass
