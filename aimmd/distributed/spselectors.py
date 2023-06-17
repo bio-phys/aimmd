@@ -58,6 +58,49 @@ class SPSelector(abc.ABC):
         raise NotImplementedError
 
 
+# TODO: DOCUMENT
+class UniformSPSelector(SPSelector):
+    """Select shooting points uniformly from the given in-trajectory."""
+
+    def __init__(self, exclude_frames: int = 0) -> None:
+        """
+        Parameters
+        ----------
+        exclude_frames : int, optional
+            How many frames to exclude from the selection at the start and end
+            of the trajectory, e.g. if exclude_frames=2 we exclude the first
+            and last 2 frames, by default 0
+        """
+        super().__init__()
+        self.exclude_frames = exclude_frames
+
+    async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
+                          **kwargs) -> float:
+        # TODO? we currently dont check if the snapshot is in Trajectory, i.e.
+        #       if we could even pick this snapshot from the Trajectory
+        traj_len = len(trajectory)
+        if traj_len <= 2 * self.exclude_frames:
+            # can not pick a frame if the trajectory is too short!
+            return 0.
+        return 1 / (traj_len - 2 * self.exclude_frames)
+
+    async def pick(self, outfile: str, frame_extractor: FrameExtractor,
+                   trajectory: Trajectory, **kwargs) -> Trajectory:
+        traj_len = len(trajectory)
+        if traj_len <= 2 * self.exclude_frames:
+            raise ValueError("Can not pick a SP from a trajectory of len "
+                             f"{traj_len} while excluding {self.exclude_frames}"
+                             " at each end.")
+        chosen_idx = self._rng.integers(traj_len - 2 * self.exclude_frames)
+        logger.debug("Selected SP with idx %d on trajectory %s of len %d.",
+                     chosen_idx, trajectory, len(trajectory))
+        # get the frame from the trajectory and write it out
+        snapshot = await frame_extractor.extract_async(outfile=outfile,
+                                                       traj_in=trajectory,
+                                                       idx=chosen_idx)
+        return snapshot
+
+
 # TODO: Document!
 # TODO: (finish) make a superclass for both/all RCModelSelectors
 #       we should try to move all possible methods to the superclass
@@ -105,7 +148,7 @@ class RCModelSPSelector(SPSelector):
         any_nan = np.any(np.isnan(z_sel))
         if any_nan:
             logger.error('The model predicts NaNs. '
-                         + 'We used np.nan_to_num to proceed')
+                         'We used np.nan_to_num to proceed')
             z_sel = np.nan_to_num(z_sel)
         # casting to float makes errors when the np-array is not size-1,
         # i.e. we check that snapshot really was a len-1 trajectory
@@ -132,14 +175,11 @@ class RCModelSPSelector(SPSelector):
         return np.sum(biases)
 
     async def biases(self, trajectory, model):
-        return await self._biases(trajectory=trajectory, model=model)
-
-    async def _biases(self, trajectory, model):
         z_sels = await model.z_sel(trajectory)
         any_nan = np.any(np.isnan(z_sels))
         if any_nan:
             logger.error('The model predicts NaNs. '
-                         + 'We used np.nan_to_num to proceed')
+                         'We used np.nan_to_num to proceed')
             z_sels = np.nan_to_num(z_sels)
         ret = self._f_sel(z_sels)
         if self.density_adaptation:
@@ -188,8 +228,8 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
                 return 1. / len(trajectory)
         return f_val / sum_bias
 
-    async def _biases(self, trajectory, model):
-        ret = await super()._biases(trajectory=trajectory, model=model)
+    async def biases(self, trajectory, model):
+        ret = await super().biases(trajectory=trajectory, model=model)
         if self.exclude_first_last_frame:
             ret = ret[1:-1]
         return ret
@@ -251,30 +291,25 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
             prob += biases[idx]
         if self.exclude_first_last_frame:
             idx += 1
-        logger.debug(f"Selected SP with idx {idx} on trajectory {trajectory} "
-                     + f"of len {len(trajectory)}.")
+        logger.debug("Selected SP with idx %d on trajectory %s of len %d.",
+                     idx, trajectory, len(trajectory))
         # get the frame from the trajectory and write it out
-        snapshot = frame_extractor.extract(outfile=outfile,
-                                           traj_in=trajectory,
-                                           idx=idx)
+        snapshot = await frame_extractor.extract_async(outfile=outfile,
+                                                       traj_in=trajectory,
+                                                       idx=idx)
         return snapshot
 
 
 # TODO: DOCUMENT!
-# TODO/FIXME: think about density_adaptation!
-#       (it does not really make sense here as the points are not distributed
-#        according to p(x|TP), so correcting for it is useless...we would need
-#        to correct for the density of points in the given trajectories
-#        projected into pB/z_sel space!)
 class RCModelSPSelectorFromEQ(RCModelSPSelector):
     probability_is_ensemble_weight = True
-    # select SPs from a biased EQ distribtion so we can shot in parallel
+    # select SPs from a biased EQ distribtion so we can shoot in parallel
     # and get a weight for every mcstep (instead of an accept/reject)
     def __init__(self, trajectories: list[Trajectory],
                  equilibrium_weights: list[np.ndarray],
                  scale: float = 1,
                  distribution: str = "lorentzian",
-                 density_adaptation: bool = False) -> None:
+                 density_adaptation: bool = True) -> None:
         # NOTE: we expect equilibrium_weight to be the multiplicative factor by
         #       which the ensemble weight for the structure differs from
         #       equilibrium, e.g.:
@@ -302,7 +337,7 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
 
     # TODO: is this correct?!
     #       we normalize by using the sum of biases from the reservoir ensemble
-    #       (e.e. from self.trajectories)
+    #       (i.e. from self.trajectories)
     #       I think we must normalize to get [\sum_i p_bias(x_i)]^-1 correct,
     #       if we do not normalize we run into trouble when the network
     #       predictions change (and with it the selection biases and Z_bias)
@@ -343,10 +378,12 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
             index -= len(self.trajectories[traj_index])
             traj_index += 1
         # and write out the choosen snapshot using frame_extractor
-        logger.debug(f"Selected SP with idx {index} on trajectory "
-                     + f"{self.trajectories[traj_index]}.")
+        logger.debug("Selected SP with idx %d on trajectory %s.",
+                     index, self.trajectories[traj_index])
         # get the frame from the trajectory and write it out
-        snapshot = frame_extractor.extract(outfile=outfile,
-                                           traj_in=self.trajectories[traj_index],
-                                           idx=index)
+        snapshot = await frame_extractor.extract_async(
+                                        outfile=outfile,
+                                        traj_in=self.trajectories[traj_index],
+                                        idx=index,
+                                                       )
         return snapshot

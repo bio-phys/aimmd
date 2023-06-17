@@ -427,11 +427,11 @@ class CommittorSimulation:
                                               )
             extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
             try:
-                starting_conf_uc = extractor_fw.extract(
+                starting_conf_uc = await extractor_fw.extract_async(
                                     outfile=start_conf_name_uc,
                                     traj_in=self.starting_configurations[conf_num][0],
                                     idx=self.starting_configurations[conf_num][1],
-                                                       )
+                                                                    )
             except FileExistsError:
                 # if the unconstrained conf exists already but the constrained one not
                 # we empty the whole folder and start with a new unconstrained one
@@ -442,11 +442,11 @@ class CommittorSimulation:
                     elif os.path.isdir(fp):
                         shutil.rmtree(fp)
                 # and now extract again
-                starting_conf_uc = extractor_fw.extract(
+                starting_conf_uc = await extractor_fw.extract_async(
                                     outfile=start_conf_name_uc,
                                     traj_in=self.starting_configurations[conf_num][0],
                                     idx=self.starting_configurations[conf_num][1],
-                                                       )
+                                                                    )
             # this will now always work
             constraints_engine = self.engine_cls[conf_num](**self.engine_kwargs[conf_num])
             starting_conf = await constraints_engine.apply_constraints(
@@ -573,11 +573,11 @@ class CommittorSimulation:
                                                  )
             extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
             try:
-                starting_conf_fw_uc = extractor_fw.extract(
+                starting_conf_fw_uc = await extractor_fw.extract_async(
                                     outfile=start_conf_name_fw_uc,
                                     traj_in=self.starting_configurations[conf_num][0],
                                     idx=self.starting_configurations[conf_num][1],
-                                                       )
+                                                                       )
             except FileExistsError:
                 # if the unconstrained conf exists already but the constrained one not
                 # we empty the whole folder and start with a new unconstrained one
@@ -588,11 +588,11 @@ class CommittorSimulation:
                     elif os.path.isdir(fp):
                         shutil.rmtree(fp)
                 # and now extract again
-                starting_conf_fw_uc = extractor_fw.extract(
+                starting_conf_fw_uc = await extractor_fw.extract_async(
                                         outfile=start_conf_name_fw_uc,
                                         traj_in=self.starting_configurations[conf_num][0],
                                         idx=self.starting_configurations[conf_num][1],
-                                                       )
+                                                                       )
             # this will now always work, becasue we will always have an folder with just the unconstrained
             # starting configuration
             constraints_engine = self.engine_cls[conf_num](**self.engine_kwargs[conf_num])
@@ -642,11 +642,11 @@ class CommittorSimulation:
         if not continuation_bw:
             # write out the starting configuration if it is no continuation
             extractor_bw = InvertedVelocitiesFrameExtractor()
-            starting_conf_bw = extractor_bw.extract(
+            starting_conf_bw = await extractor_bw.extract_async(
                                   outfile=start_conf_name_bw,
                                   traj_in=starting_conf_fw,
                                   idx=0,
-                                                   )
+                                                                )
             n_bw = 0
         else:
             # wrap the existing starting configuration as aimmd trajectory if it is a continuation

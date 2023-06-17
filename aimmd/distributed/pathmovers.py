@@ -278,9 +278,18 @@ class PathMoverSansModel(PathMover):
     async def _move(self, instep, stepnum, wdir, continuation, **kwargs):
         raise NotImplementedError
 
+    # Need to implement getstate and setstate such that our ShootingMixins work
+    # with and without model...they assume that super().__getstate__ works...
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        return state
+
+    def __setstate__(self, state: dict):
+        self.__dict__ = state
+
 
 # TODO: DOCUMENT! Write a paragraph of (sphinx) documentation directly!
-class TwoWayShootingPathMoverMixin:
+class _TwoWayShootingPathMoverMixin:
     """
     TwoWayShootingPathMover
 
@@ -447,11 +456,11 @@ class TwoWayShootingPathMoverMixin:
         # create the backwards SP if we have not yet done so
         if not continuation:
             # we only invert the fw SP
-            bw_startconf = self.frame_extractors["bw"].extract(
+            bw_startconf = await self.frame_extractors["bw"].extract_async(
                                                         outfile=bw_sp_name,
                                                         traj_in=fw_startconf,
                                                         idx=0,
-                                                               )
+                                                                           )
         # propagate the two trial trajectories forward and backward in time
         trial_tasks = [asyncio.create_task(p.propagate(
                                                 starting_configuration=sconf,
@@ -660,27 +669,27 @@ class TwoWayShootingPathMoverMixin:
                           )
 
 
-class TwoWayShootingPathMover(TwoWayShootingPathMoverMixin,
+class TwoWayShootingPathMover(_TwoWayShootingPathMoverMixin,
                               ModelDependentPathMover):
     # the TwoWayShooting class that uses a model (saves it before every step)
-    __doc__ = (TwoWayShootingPathMoverMixin.__doc__
+    __doc__ = (_TwoWayShootingPathMoverMixin.__doc__
                + ModelDependentPathMover.__doc__
                )
     pass
 
 
-class TwoWayShootingPathMoverSansModel(TwoWayShootingPathMoverMixin,
+class TwoWayShootingPathMoverSansModel(_TwoWayShootingPathMoverMixin,
                                        PathMoverSansModel):
     # the TwoWayShooting class that does not use a model (no saving done),
     # (this will be faster if your SPselector does not use a reaction
     #  coordinate model to bias the selection)
-    __doc__ = (TwoWayShootingPathMoverMixin.__doc__
+    __doc__ = (_TwoWayShootingPathMoverMixin.__doc__
                + PathMoverSansModel.__doc__
                )
     pass
 
 
-class FixedLengthTwoWayShootingPathMoverMixin:
+class _FixedLengthTwoWayShootingPathMoverMixin:
     """
     FixedLengthTwoWayShootingPathMover
 
@@ -701,7 +710,6 @@ class FixedLengthTwoWayShootingPathMoverMixin:
     def __init__(self, n_steps: int, states, engine_cls, engine_kwargs: dict,
                  walltime_per_part: float, T: float,
                  sp_selector: SPSelector = RCModelSPSelectorFromTraj(),
-                 max_steps: typing.Optional[int] = None,
                  path_weight_func=None):
         """
         Initialize a FixedLengthTwoWayShootingPathMover.
@@ -728,13 +736,6 @@ class FixedLengthTwoWayShootingPathMoverMixin:
             The shooting point selector to use, by default we will use the
             `aimmd.distributed.spselector.RCModelSPSelectorFromTraj` with its
              default options.
-        max_steps : int or None, optional
-            The maximum number of integration steps *per part* (forward or
-            backward), i.e. this bounds steps(TP) <= 2*max_steps. If None we
-            will use no upper length, which means trials can get "stuck".
-            Note that if the maximum is reached in any direction the trial will
-            be discarded and a new trial will be started from the last accepted
-            MCStep.
         path_weight_func : asyncmd.trajectory.functionwrapper.TrajectoryFunctionWrapper
             Weight function for paths. Can be used to enhance the sampling of
             low probability transition mechanisms. Only makes sense when the
@@ -764,7 +765,6 @@ class FixedLengthTwoWayShootingPathMoverMixin:
         self.walltime_per_part = walltime_per_part
         self.T = T
         self.sp_selector = sp_selector
-        self.max_steps = max_steps
         self.path_weight_func = path_weight_func
         try:
             # see if it is set as engine_kwarg
@@ -798,7 +798,6 @@ class FixedLengthTwoWayShootingPathMoverMixin:
                                     engine_cls=self.engine_cls,
                                     engine_kwargs=self.engine_kwargs,
                                     walltime_per_part=self.walltime_per_part,
-                                    max_steps=self.max_steps,
                                                             )
                             for _ in range(2)
                             ]
@@ -867,11 +866,11 @@ class FixedLengthTwoWayShootingPathMoverMixin:
         # create the backwards SP if we have not yet done so
         if not continuation:
             # we only invert the fw SP
-            bw_startconf = self.frame_extractors["bw"].extract(
+            bw_startconf = await self.frame_extractors["bw"].extract_async(
                                                         outfile=bw_sp_name,
                                                         traj_in=fw_startconf,
                                                         idx=0,
-                                                               )
+                                                                           )
         # propagate the two trial trajectories forward and backward in time
         # first create the names for the concatenated output trajs
         out_tra_names = [os.path.join(
@@ -942,7 +941,7 @@ class FixedLengthTwoWayShootingPathMoverMixin:
             # find out which state/condition is fullfilled at the last frame
             # TODO: do we need to check if another state has been reached before?
             #       I (hejung) think no, because for fixed length TPS we only
-            #       need to make sure that the first/last frames are in states
+            #       need to make sure that the first/last frames are in states?!
             fw_state = np.where(condition_vals_fw[:, -1])
             bw_state = np.where(condition_vals_bw[:, -1])
             states_reached[fw_state] += 1
@@ -1078,23 +1077,23 @@ class FixedLengthTwoWayShootingPathMoverMixin:
 
 
 class FixewdLengthTwoWayShootingPathMover(
-                    FixedLengthTwoWayShootingPathMoverMixin,
+                    _FixedLengthTwoWayShootingPathMoverMixin,
                     ModelDependentPathMover):
     # the FixedLengthTwoWayShooting class that uses a model
     # (saves it before every step)
-    __doc__ = (FixedLengthTwoWayShootingPathMoverMixin.__doc__
+    __doc__ = (_FixedLengthTwoWayShootingPathMoverMixin.__doc__
                + ModelDependentPathMover.__doc__
                )
     pass
 
 
 class FixedLengthTwoWayShootingPathMoverSansModel(
-                    FixedLengthTwoWayShootingPathMoverMixin,
+                    _FixedLengthTwoWayShootingPathMoverMixin,
                     PathMoverSansModel):
     # FixedLengthTwoWayShooting class that does not use a model,
     # (this will be faster if your SPselector does not use a reaction
     #  coordinate model to bias the selection)
-    __doc__ = (FixedLengthTwoWayShootingPathMoverMixin.__doc__
+    __doc__ = (_FixedLengthTwoWayShootingPathMoverMixin.__doc__
                + PathMoverSansModel.__doc__
                )
     pass
