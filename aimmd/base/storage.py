@@ -431,7 +431,7 @@ class RCModelRack(collections.abc.MutableMapping):
 # distributed TPS storage
 class MCstepMemory(MutableObjectShelf):
     # stores one MCstep
-    # contains a sequence of trial trajectories (2 for TwoWayShooting)
+    # contains a sequence of trial trajectories, e.g. 2 for TwoWayShooting
     # *can* contain a path/transition
     def __init__(self, grp, modelstore, mcstep=None):
         super().__init__(group=grp)
@@ -463,10 +463,11 @@ class MCstepMemory(MutableObjectShelf):
 
 
 class MCStepCollection(collections.abc.Sequence):
-    # TODO: do we want Sequence behaivour for trials or for MCStates?!
+    # TODO: do we want Sequence behavior for trials or for MCStates?!
     #       (and have the other available via a method/methods)
-    # NOTE: we inherhit from Sequence (instead of MutableSequence) and write a custom .append method
-    #       this way we can easily make sure that trial data can not be reset
+    # NOTE: we inherhit from Sequence (instead of MutableSequence) and write a
+    #       custom .append method, this way we can easily make sure that trial
+    #       data can not be reset
     # store a single TPS chain
     # should behave like a list of trials?!
     # and have an `accepts` and a `transitions` method?!
@@ -515,7 +516,7 @@ class MCStepCollection(collections.abc.Sequence):
             raise TypeError("Keys must be int or slice.")
 
     def append(self, mcstep):
-        # create a new TPS trial and fill it with the given trajectories + transition
+        # add given mcstep to self, add it as active mcstate if it is accepted
         n = len(self)
         single_step_grp = self._mcsteps_grp.require_group(str(n))
         _ = MCstepMemory(single_step_grp,
@@ -548,12 +549,17 @@ class MCStepCollection(collections.abc.Sequence):
 
 
 class MCStepCollectionBundle(collections.abc.Sequence):
-    # should behave like a list of MCStepCollections
-    # TODO:
-    # optimally like a MCStepCollection if there is only one in the list?
-    # (we can get the behavior wanted in the line above by making the sequence
-    #  a storage property and checking if it has len==1 before returning!)
-    # (but then we can not access self.n_collections if len==1...)
+    # class to access a number of MCStepcollections as storage attribute
+    # behaves like a list of MCStepCollections
+    # allows (re)setting the number of collections, only increase possible to
+    # make sure no collections need to be deleted, but I (hejung) think this
+    # is something we anyway only set once when we create the store at the
+    # begining of a simulation
+    # TODO?
+    # should this behave like a MCStepCollection if there is only one stored?
+    # we could get that behavior by making the sequence a storage property and
+    # checking if it has len==1 before returning, but then we can not access
+    # self.n_collections if len==1
     def __init__(self, group, modelstore) -> None:
         self._group = group
         self._modelstore = modelstore
@@ -564,7 +570,8 @@ class MCStepCollectionBundle(collections.abc.Sequence):
     def __getitem__(self, key):
         if isinstance(key, (int, np.integer)):
             if key >= len(self):
-                raise IndexError(f"Key must be smaller than number of MCStepCollections ({len(self)}).")
+                raise IndexError("Key must be smaller than number of "
+                                 f"MCStepCollections ({len(self)}).")
             return MCStepCollection(root_grp=self._group[str(key)],
                                     modelstore=self._modelstore)
         elif isinstance(key, slice):
@@ -590,7 +597,8 @@ class MCStepCollectionBundle(collections.abc.Sequence):
             # nothing to do
             return
         if le != 0:
-            logger.info("Resetting the number of MCStepCollections for initialized storage.")
+            logger.info("Resetting the number of MCStepCollections for "
+                        "initialized storage.")
         if value < le:
             raise ValueError("Can only increase number of collections.")
         for i in range(le, value):
@@ -598,8 +606,7 @@ class MCStepCollectionBundle(collections.abc.Sequence):
 
 
 class ChainSamplerStore(MutableObjectShelf):
-    # class to store PathSamplingChain objects
-    # TODO: this also needs to know about the modelstore/storage!
+    # class to store single PathChainSampler objects
     def __init__(self, group, mcstep_collection, modelstore):
         super().__init__(group=group)
         self.mcstep_collection = mcstep_collection
@@ -608,10 +615,11 @@ class ChainSamplerStore(MutableObjectShelf):
     def save(self, obj, buffsize=2 ** 22):
         # set the stuff we cannot save to None after keeping a reference
         if obj.mcstep_collection._root_grp != self.mcstep_collection._root_grp:
-            logger.error("Saving a PathChainSampler associated with a different MCStepCollection.")
+            logger.error("Saving a PathChainSampler associated with a "
+                         "different MCStepCollection.")
         pcs_step_collection = obj.mcstep_collection
         obj.mcstep_collection = None
-        pcs_modelstore = obj.modelstore  # TODO: test and warn as below? (why do we even have this here twice?)
+        pcs_modelstore = obj.modelstore  # TODO: test and warn as below?
         obj.modelstore = None
         mover_modelstores = []
         for mover in obj.movers:
@@ -623,13 +631,10 @@ class ChainSamplerStore(MutableObjectShelf):
                 mover.modelstore = None
             else:
                 mover_modelstores += [None]
-        # TODO: do we even want that? or leave step set, i.e. not at none
-        #       and then just pickle the mcstep (this will ge rid of the modelstore
-        #         for the movers but we dont use them for restarting anyway?!)
-        #pcs_cur_step = obj.current_step
-        # TODO/FIXME: ensure that the step is the current step in this chain?!
-        # TODO: MCSteps should be pickleable anyway!, i.e. we should not need to set thme to None here!
-        #obj.current_step = None
+        # NOTE: we leave step set and then just pickle the mcstep
+        #       (this will ge rid of the modelstore for the movers but we dont
+        #        use the movers from the steps for restarting, so this does not
+        #        matter)
         # save the stripped down saveable object
         super().save(obj, overwrite=True, buffsize=buffsize)
         # and rebuild the object with the non-saveable objects
@@ -638,17 +643,14 @@ class ChainSamplerStore(MutableObjectShelf):
         for mover, mover_ms in zip(obj.movers, mover_modelstores):
             if isinstance(mover, ModelDependentPathMover):
                 mover.modelstore = mover_ms
-        #obj.current_step = pcs_cur_step
         return
 
     def load(self, buffsize=2 ** 22):
         obj = super().load(buffsize)
         obj.mcstep_collection = self.mcstep_collection
-        # set the current to the last accepted mcstep, i.e. last mcstate
-        # TODO: do we even want that? or just leave it at whatever it was when saving?!
-        #       and if we want to reuse the sampling object we know we need to set the current step anyway?
-        # TODO: MCSteps should be pickleable anyway!
-        #obj.current_step = self.mcstep_collection.mcstate(len(self.mcstep_collection) - 1)
+        # NOTE: we load the object with the mcstep set (the mover attached to
+        #       the step will not have a modelstore set anymore because it has
+        #       been pickled)
         for mover in obj.movers:
             if isinstance(mover, ModelDependentPathMover):
                 mover.modelstore = self.modelstore
@@ -657,6 +659,7 @@ class ChainSamplerStore(MutableObjectShelf):
 
 
 class ChainSamplerStoreBundle(collections.abc.Sequence):
+    # helper class to store a bunch of PathChainSamplers
     def __init__(self, group, mcstep_collections, modelstore) -> None:
         self.group = group
         # mcstep_collections is a list of mcstep collections, one for each
@@ -708,8 +711,6 @@ class ChainSamplerStoreBundle(collections.abc.Sequence):
             return
 
 
-# TODO: finish writing this! (first we need to sort out how the brain knows about which chain uses which store!)
-#       we can probably just use a similar thing as the array we save here but as a proeprty/attribute of the brain?!
 class BrainStore(MutableObjectShelf):
     # class to save distributed Brain objects
     def __init__(self, group, storage):
@@ -721,9 +722,6 @@ class BrainStore(MutableObjectShelf):
             # it is a 1d int array, each sampler has the idx of its collection
             "sampler_to_stepcollection": "PSChainSamplers_to_MCStepCollections",
             }
-        # mcstep_collections is a list of mcstep collections, one for each
-        # PathSamplingChain in Brain (can be the same entry for all though)
-        #self._mcstep_collections = mcstep_collections
         self._sampler_stores_grp = self.group.require_group(
                                                 self._h5py_paths["samplers"]
                                                             )
@@ -752,8 +750,6 @@ class BrainStore(MutableObjectShelf):
             del self.group[self._h5py_paths["sampler_to_stepcollection"]]
         self.group.create_dataset(name=self._h5py_paths["sampler_to_stepcollection"],
                                   data=val,
-                                  # TODO: which version is smarter? cast to np.int64 for sure or let the user decide (and mess up) the dtype?
-                                  #dtype=val.dtype,
                                   dtype=np.int64)
 
     def save(self, obj, buffsize=2 ** 22):
@@ -766,14 +762,11 @@ class BrainStore(MutableObjectShelf):
         tasks = obj.tasks
         obj.tasks = None
         samplers = obj.samplers
-        ########################################################################################
-        # TODO: here we need to sort out how the brain stores its sampler to stepcollection mapping
         sampler_to_stepcollection = obj.sampler_to_mcstepcollection
         mcstep_collections = [self._storage.mcstep_collections[idx]
                               for idx in sampler_to_stepcollection]
         # save the mapping for when we load the brain
         self._sampler_to_stepcollection = sampler_to_stepcollection
-        ########################################################################################
         sampler_stores = ChainSamplerStoreBundle(
                                         group=self._sampler_stores_grp,
                                         mcstep_collections=mcstep_collections,
@@ -805,6 +798,8 @@ class BrainStore(MutableObjectShelf):
                                         modelstore=self._storage.rcmodels,
                                                  )
         # TODO: reset sampler_to_mcstepcollection?!
+        #       I (hejung) think we dont need to as it is saved with the brain
+        #       (and therefore now restored) anyway
         obj.samplers = [ss.load() for ss in sampler_stores]
         return obj
 
