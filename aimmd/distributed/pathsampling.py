@@ -816,6 +816,7 @@ class Brain:
                 await self._run_tasks(mcstep=mcstep,
                                       sampler_idx=sampler_idx,
                                       )
+                n_done += 1
                 if print_progress is not None:
                     if n_done % print_progress == 0:
                         pstr = f"{n_done} (of {n_steps}) steps done."

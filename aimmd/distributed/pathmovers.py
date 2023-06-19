@@ -306,6 +306,8 @@ class _TwoWayShootingPathMoverMixin:
     path_filename = "path"  # filename for produced transitions
     # trajs to state will be named e.g. $forward_deffnm$traj_to_state_suffix
     traj_to_state_suffix = "_traj_to_state"
+    # remove the trajectory parts when the trial is done (also logs)
+    remove_temp_trajs = True
 
     def __init__(self, states, engine_cls, engine_kwargs, walltime_per_part, T,
                  sp_selector: SPSelector = RCModelSPSelectorFromTraj(),
@@ -539,8 +541,19 @@ class _TwoWayShootingPathMoverMixin:
             #       This would be useful for VIE-TPS analyses of the produced
             #       ensemble, where we need the A->A and B->B paths to estimate
             #       the equilibrium distribution
-            logger.info(f"Sampler {self.sampler_idx}: "
-                        + f"Both trials reached state {fw_state}.")
+            #       It would also possibly enable us to restructure the code
+            #       here such that we have the same code path for transitions
+            #       and not (similar to what we do for the FixedLengthTPS where
+            #        we just set the weight of the new path to zero if it is
+            #        not a transition), note however that we would then either
+            #       need to give up ordering transitions from low to higher
+            #       index state as we do here (or we will still have two code
+            #        paths: one for transitions where we can do the ordering
+            #        and one for the trials without a transition, which we
+            #        cand only order as [backward, forward] independent of
+            #        where they went)
+            logger.info("Sampler %d: Both trials reached state %d.",
+                        self.sampler_idx, fw_state)
             half_finished_step = functools.partial(
                                     MCstep,
                                     mover=self,
@@ -553,6 +566,18 @@ class _TwoWayShootingPathMoverMixin:
                                     #       i.e. the traj segments (or is the concatenated enough)
                                     trial_trajectories=[fw_traj, bw_traj],
                                     )
+            # (potentially) remove the temporary files
+            if self.remove_temp_trajs:
+                await asyncio.gather(*(p.remove_parts(
+                                            workdir=wdir,
+                                            deffnm=n,
+                                            file_endings_to_remove=["trajectories",
+                                                                    "log"])
+                                       for p, n in zip(self.propagators,
+                                                       [self.forward_deffnm,
+                                                        self.backward_deffnm])
+                                       )
+                                     )
             if self.sp_selector.probability_is_ensemble_weight:
                 # We have/are creating an unordered ensemble of TP with weights
                 # need to 'accept' all trials, in this case with weight=0
@@ -654,6 +679,18 @@ class _TwoWayShootingPathMoverMixin:
                     log_str += " Trial was accepted."
             # In both cases: log and return the MCstep
             logger.info(log_str)
+            # (potentially) remove the temporary files on the way too
+            if self.remove_temp_trajs:
+                await asyncio.gather(*(p.remove_parts(
+                                            workdir=wdir,
+                                            deffnm=n,
+                                            file_endings_to_remove=["trajectories",
+                                                                    "log"])
+                                       for p, n in zip(self.propagators,
+                                                       [self.forward_deffnm,
+                                                        self.backward_deffnm])
+                                       )
+                                     )
             return MCstep(mover=self,
                           stepnum=stepnum,
                           directory=wdir,
@@ -706,6 +743,8 @@ class _FixedLengthTwoWayShootingPathMoverMixin:
     forward_deffnm = "forward"  # engine deffnm for forward shot
     backward_deffnm = "backward"  # same for backward shot
     path_filename = "path"  # filename for produced trajectories
+    # remove the trajectory parts when the trial is done (also logs)
+    remove_temp_trajs = True
 
     def __init__(self, n_steps: int, states, engine_cls, engine_kwargs: dict,
                  walltime_per_part: float, T: float,
@@ -1062,6 +1101,18 @@ class _FixedLengthTwoWayShootingPathMoverMixin:
                 log_str += " Trial was accepted."
         # In both cases: log and return the MCstep
         logger.info(log_str)
+        # (potentially) remove the temporary trajectory files
+        if self.remove_temp_trajs:
+            await asyncio.gather(*(p.remove_parts(
+                                        workdir=wdir,
+                                        deffnm=n,
+                                        file_endings_to_remove=["trajectories",
+                                                                "log"])
+                                   for p, n in zip(self.propagators,
+                                                   [self.forward_deffnm,
+                                                    self.backward_deffnm])
+                                   )
+                                 )
         return MCstep(mover=self,
                       stepnum=stepnum,
                       directory=wdir,
