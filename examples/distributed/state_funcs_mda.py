@@ -32,6 +32,11 @@ def alpha_R(traj, skip=1):
     for f, ts in enumerate(u.trajectory[::skip]):
         phi[f] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimensions)
         psi[f] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimensions)
+    # make sure MDAnalysis closes the underlying trajectory files directly
+    # (otherwise we might need to wait until the next garbage collection and
+    #  if that happens to be after we want to apply this func to many trajs
+    #  we will run into the number of open files limit)
+    u.trajectory.close()
     # phi: -pi -> 0
     # psi: > -50 but smaller 30 degree
     deg = 180/np.pi
@@ -57,6 +62,11 @@ def C7_eq(traj, skip=1):
     for f, ts in enumerate(u.trajectory[::skip]):
         phi[f] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimensions)
         psi[f] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimensions)
+    # make sure MDAnalysis closes the underlying trajectory files directly
+    # (otherwise we might need to wait until the next garbage collection and
+    #  if that happens to be after we want to apply this func to many trajs
+    #  we will run into the number of open files limit)
+    u.trajectory.close()
     # phi: -pi -> 0
     # psi: 120 -> 200 degree
     deg = 180/np.pi
@@ -105,6 +115,11 @@ def descriptor_func_ic(traj, molecule_selection="protein", skip=1, use_SI=True):
         calc_bonds(bonds[0].positions, bonds[1].positions, box=ts.dimensions, result=bond_vals[f])
         calc_angles(*(angles[i].positions for i in range(3)), box=ts.dimensions, result=angle_vals[f])
         calc_dihedrals(*(dihedrals[i].positions for i in range(4)), box=ts.dimensions, result=dihedral_vals[f])
+    # make sure MDAnalysis closes the underlying trajectory files directly
+    # (otherwise we might need to wait until the next garbage collection and
+    #  if that happens to be after we want to apply this func to many trajs
+    #  we will run into the number of open files limit)
+    u.trajectory.close()
 
     # capture perdiodicity
     angle_vals = 0.5 * (1. + np.cos(angle_vals))
@@ -131,6 +146,11 @@ def descriptor_func_psi_phi(traj, skip=1):
     for f, ts in enumerate(u.trajectory[::skip]):
         phi[f, 0] = calc_dihedrals(*(at.position for at in phi_ag), box=ts.dimensions)
         psi[f, 0] = calc_dihedrals(*(at.position for at in psi_ag), box=ts.dimensions)
+    # make sure MDAnalysis closes the underlying trajectory files directly
+    # (otherwise we might need to wait until the next garbage collection and
+    #  if that happens to be after we want to apply this func to many trajs
+    #  we will run into the number of open files limit)
+    u.trajectory.close()
 
     return np.concatenate((psi, phi), axis=1)
     #return 1 + 0.5*np.concatenate([np.sin(psi), np.cos(psi), np.sin(phi), np.cos(phi)], axis=1)
