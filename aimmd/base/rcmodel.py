@@ -689,7 +689,7 @@ class TrajectoryDensityCollector:
         multiplicity - int (default=1), weight for trajectory in ensemble,
                        can also be 1d numpy.array with len=len(tra_descriptors)
         """
-        if isinstance(multiplicity, (int, np.int)):
+        if isinstance(multiplicity, (int, np.integer)):
             multiplicity = np.full((tra_descriptors.shape[0]), multiplicity)
         self._append(tra_descriptors, multiplicity)
 

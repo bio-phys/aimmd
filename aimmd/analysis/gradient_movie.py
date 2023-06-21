@@ -331,7 +331,7 @@ class GradientMovieMaker:
         if isinstance(traj, paths.Trajectory):
             traj = traj.to_mdtraj()
         if atom_indices is not None:
-            if isinstance(atom_indices[0], (np.integer, int)):
+            if isinstance(atom_indices[0], (int, np.integer)):
                 atom_indices = np.asarray(atom_indices, dtype=np.int_)
                 # make it possible to pass separate atom_indices for each frame
                 # or just one array but then take it for the whole tra
