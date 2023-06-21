@@ -855,8 +855,6 @@ class _FixedLengthTwoWayShootingPathMoverMixin:
         super().__setstate__(state)
         self._build_extracts_and_propas()
 
-    # TODO: can we use the same acceptance criterion?! I think yes!
-    #       What about when we are shooting from EQ points?!
     async def _move(self, instep, stepnum, wdir, continuation, **kwargs):
         if isinstance(self, ModelDependentPathMover):
             # see if we need the model and load it only if we do
@@ -1127,7 +1125,7 @@ class _FixedLengthTwoWayShootingPathMoverMixin:
                       )
 
 
-class FixewdLengthTwoWayShootingPathMover(
+class FixedLengthTwoWayShootingPathMover(
                     _FixedLengthTwoWayShootingPathMoverMixin,
                     ModelDependentPathMover):
     # the FixedLengthTwoWayShooting class that uses a model

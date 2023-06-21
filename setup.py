@@ -148,9 +148,9 @@ setup(
 
         # Specify the Python versions you support here. In particular, ensure
         # that you indicate whether you support Python 2, Python 3 or both.
-        'Programming Language :: Python :: 3.6',
-        'Programming Language :: Python :: 3.7',
-        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        # NOTE: we use asyncio features and type annotations that need >= 3.10
         # NOTE: we use f-strings and therfore require python >= 3.6
         # NOTE: even without f-strings python 2 will not work as intended:
         # 1. we did not take care of integer division vs float division
@@ -177,15 +177,18 @@ setup(
         'numpy>=1.17.0',  # v>=1.17.0 because we use 'new-style' RNGs
         'cython',
         'scipy',
-        'mdanalysis',  # trajectory/frame handling in distributed
         'openpathsampling',
         'mdtraj',
         'networkx',
-        #'dcgpy',
-        'sympy',  # only used for dcgpy atm
+        #'dcgpy',  # dont install dcgpy automatically as it should best be
+                   # installed from conda-forge
+        'sympy',  # only used with dcgpy atm, but not a dcgpy dependency, so
+                  # to take care of installing ourselfs
         # for aimmd.Storage (and for old loading/saving of keras models)
         'h5py>=3',  # need >=3 for the 'new' string handling
         'asyncmd',  # needed for distributed
+        'mdanalysis',  # needed for distributed examples, but is an asyncmd
+                       # dependency anyway
     ],
 
     # List additional groups of dependencies here (e.g. development
