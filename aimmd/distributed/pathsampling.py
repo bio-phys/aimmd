@@ -655,6 +655,8 @@ class Brain:
                         if run_tasks:
                             await self._run_tasks(mcstep=step, sampler_idx=sidx)
 
+        print("After adding all finished steps we have a total of "
+              f"{self.total_steps} steps. Now working on the unfinished ones.")
         # now we should only have unfinished steps left
         # we run them by running finish_step in each sampler, it finishes and
         # returns the step or returns None if no unfinished steps are present
@@ -663,7 +665,7 @@ class Brain:
         # run them all and get the results in the order they are done
         pending = sampler_tasks
         while len(pending) > 0:
-            done, pending = await asyncio.wait(sampler_tasks,
+            done, pending = await asyncio.wait(pending,
                                                return_when=asyncio.FIRST_COMPLETED)
             for result in done:
                 sampler_idx = sampler_tasks.index(result)
@@ -965,10 +967,11 @@ class PathChainSampler:
                 restart_info = pickle.load(pf)
             instep = restart_info["instep"]
             mover = restart_info["mover"]
+            # (re)set the sampler idx
+            mover.sampler_idx = self.sampler_idx
             if isinstance(mover, ModelDependentPathMover):
-                # (re)set the modelstore and sampler idx
+                # (re)set the modelstore
                 mover.modelstore = self.modelstore
-                mover.sampler_idx = self.sampler_idx
             # finish the step and return it
             return await self._run_step(model=model, instep=instep,
                                         mover=mover, continuation=True)
