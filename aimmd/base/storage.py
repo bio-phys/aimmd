@@ -604,6 +604,18 @@ class MCStepCollectionBundle(collections.abc.Sequence):
         for i in range(le, value):
             _ = self._group.create_group(str(i))
 
+    def delete_all_collections(self):
+        """
+        Delete all MCStep collections and set self.n_collections to zero.
+
+        Can be useful if we are using Brain.reinitialize_from_workdir and
+        want to keep the cached CV values (and dont care for the old storage).
+        The mcstep_collections new need to be initialized as usual by setting
+        `self.n_collections` to the desired value.
+        """
+        for i in range(0, len(self)):
+            del self._group[str(i)]
+
 
 class ChainSamplerStore(MutableObjectShelf):
     # class to store single PathChainSampler objects
