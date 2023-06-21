@@ -49,35 +49,69 @@ class CommittorSimulation:
     Note that the `CommittorSimulation` allows for the simulation of different
     ensembles per starting configuration (see the `__init__` docstring).
 
-    Notable functions:
-    ------------------
-        - `run(n_per_struct)` performs/adds `n_per_struct` committor trials for
-          every starting configuration
-        - `reinitialize_from_workdir()` populates the results counters from the
-          current workdir, possibly with new/different states and additional
-          twoway shooting performed if `self.two_way == True`
+    Attributes
+    ----------
+    states_reached : np.ndarray(shape=(n_conf, n_states))
+        Return states_reached as a np.array with shape (n_conf, n_states),
+        where the entries give the counts of states reached, i.e. the format is
+        as in an `aimmd.TrainSet`.
+    states_reached_per_shot : np.ndarray(shape=(n_conf, n_shots, n_states))
+        A np.array shape (n_conf, n_shots, n_states), where the entries
+        give the counts of states reached for every single shot, i.e. summing
+        over the states axis will always give 1 (or 2 if twoway=True).
+    shot_counter : int
+        Number of trial shots done per configuration so far.
+    trajs_to_state : list[list[asyncmd.Trajectory]]
+        All produced trajectories until the first state is reached, for each
+        configuration seperately.
+    trajs_to_state_bw : list[list[asyncmd.Trajectory]]
+        All produced trajectories until the first state is reached for the
+        backwards (inverted velocity) shot if `two_way=True`, also for each
+        configuration seperately.
+    transitions : list[list[asyncmd.Trajectory]]
+        If `two_way=True` and the forward and backward trial end in different
+        states a transition was produced. Also sorted by configuration,
+        transitions go from the lower index state to the higher index state.
+    fname_traj_to_state : str
+        The name to use for the concatenated trajectory until the first state
+        is reached.
+    fname_traj_to_state_bw : str
+        The name to use for the concatenated trajectory until the first state
+        is reached in the backwards trial (if `two_way=True`).
+    fname_transition_traj : str
+        The filename to use for the potentially produced transitions (if
+        `two_way=True`).
+    deffnm_engine_out : str
+        The deffnm to use for the molecular dynamics engine.
+    deffnm_engine_out_bw : str
+        The deffnm to use for the molecular dynamics engine in the backwards
+        trial (if `two_way=True`).
+    max_retries_on_crash : int
+        How many times we should retry a trial if the molecular dynamics engine
+        crashed.
 
-    Notable properties:
-    -------------------
-        - `states_reached`, `states_reached_per_shot` and `shot_counter` keep
-          track of the results of the running simulation
-        - `trajs_to_state`, `trajs_to_state_bw` and `transitions` give access
-          to the resulting concatenated trajectories
-
-    Notable attributes:
-    -------------------
-        - `fname_traj_to_state`, `fname_traj_to_state`, `fname_transition_traj`
-          `deffnm_engine_out` and `deffnm_engine_out_bw` can be used to control
-          the names of the output files
-        - `max_retries_on_crash`
+    Methods
+    -------
+    run(n_per_struct)
+        Performs `n_per_struct` (additional) committor trials for every
+        starting configuration.
+    reinitialize_from_workdir(overwrite=False)
+        Restore self into the state as if we would have ran all exisiting
+        committor trials found in workdir (potentially finishing unfinsihed
+        ones and adding missing ones) but honoring a potentially changed state
+        definition, i.e. extending trials and returning shorter trajectories to
+        the states where needed. Additional (missing) twoway shoots are also
+        performed if `self.two_way == True`.
     """
 
     # NOTE: the defaults here will results in the layout:
     # $WORKDIR/configuration_$CONF_NUM/shot_$SHOT_NUM,
     # where $WORKDIR is the workdir given at init, and $CONF_NUM, $SHOT_NUM are
-    # the index to the input list starting_configurations and a counter for the shots
+    # the index to the input list starting_configurations and a counter for the
+    # shots respectively
     # Note that configuration_dir_prefix is only used if no names are given for
-    # the configurations
+    # the configurations, if the configuration has a name we will use it
+    # instead of the configuration_$CONF_NUM part
     configuration_dir_prefix = "configuration_"
     shot_dir_prefix = "shot_"
     # together with deffnm this results in "start_conf_trial_bw.trr" and
@@ -87,7 +121,7 @@ class CommittorSimulation:
     fname_traj_to_state_bw = "traj_to_state_bw.trr"  # only in TwoWay
     fname_transition_traj = "transition_traj.trr"  # only in TwoWay
     deffnm_engine_out = "trial_fw"
-    deffnm_engine_out_bw = "trial_bw"  # only in twoway (for runs with inverted v)
+    deffnm_engine_out_bw = "trial_bw"  # only in TwoWay
     max_retries_on_crash = 2  # maximum number of *retries* on MD engine crash
                               # i.e. setting to 1 means *retry* once on crash
 
@@ -97,40 +131,41 @@ class CommittorSimulation:
         """
         Initialize a `CommittorSimulation`.
 
-        Parameters:
-        -----------
-        workdir - str, absolute or relative path to an existing working directory
-        starting_configurations - list of iterables, each entry in the list is
-                                  describing a starting configuration and must
-                                  have at least the two entries:
-                                   (`asyncmd.Trajectory`,
-                                    `index_of_conf_in_traj`)
-                                  It can optionally have the form:
-                                   (`asyncmd.Trajectory`,
-                                    `index_of_conf_in_traj`,
-                                    `name_for_configuration`)
-        states - A list of state functions, preferably wrapped using any
-                 `asyncmd.trajectory.TrajectoryFunctionWrapper`
-        engine_cls - a subclass of `aimmd.distributed.MDEngine`, the molecular
-                     dynamics engine to use
-        engine_kwargs - a dictionary with keyword arguments that can be used
-                        to instantiate the engine given in `engine_cls`
-        T - float, the temperature to use when generating Maxwell-Boltzmann
-            velocities
-        walltime_per_part - float, walltime per trajectory segment in hours,
-                            note that this does not limit the maximum length of
-                            the combined trajectory but only the size/time per
-                            single trajectory segment
-        n_max_concurrent - int, the maximum number of trials to propagate
-                           concurrently, note that for two way simulations you
-                           will run 2*`n_max_concurrent` molecular dynamic
-                           simulations in parallel
-        two_way - bool, wheter to run molecular dynamcis forwards and backwards
-                  in time
-        max_steps - int or None, the maximum number of integration steps to
-                    perform in total per trajectory, note that for two way
-                    simulations the combined maximum length of the resulting
-                    trajectory will be 2*`max_steps`
+        Parameters
+        ----------
+        workdir : str
+            Absolute or relative path to an existing working directory.
+        starting_configurations : list of iterables
+            Each entry in the list is describing a starting configuration and
+            must have at least the two entries:
+                (`asyncmd.Trajectory`, `index_of_conf_in_traj`)
+            It can optionally have the form:
+                (`asyncmd.Trajectory`, `index_of_conf_in_traj`,
+                 `name_for_configuration`)
+        states : list[asyncmd.trajectory.TrajectoryFunctionWrapper]
+            A list of state functions, preferably wrapped using any
+            `asyncmd.trajectory.TrajectoryFunctionWrapper`.
+        engine_cls : A subclass of `aimmd.distributed.MDEngine` or list therof
+            The molecular dynamics engine to use.
+        engine_kwargs : dict or list[dict]
+            A dictionary with keyword arguments that can be used to instantiate
+            the engine given as `engine_cls`.
+        T : float or list[float]
+            The temperature to use when generating Maxwell-Boltzmann velocities
+        walltime_per_part : float
+            Walltime per trajectory segment in hours, note that this does not
+            limit the maximum length of the combined trajectory but only the
+            size/time per single trajectory segment.
+        n_max_concurrent : int
+            The maximum number of trials to propagate concurrently, note that
+            for two way simulations you will run 2*`n_max_concurrent` molecular
+            dynamics simulations in parallel.
+        two_way : bool or list[bool]
+            Wheter to run molecular dynamcis forwards and backwards in time.
+        max_steps : int or None
+            The maximum number of integration steps to perform in total per
+            trajectory, note that for two way simulations the combined maximum
+            length of the resulting trajectory will be 2*`max_steps`.
 
         Note that all attributes can be set at intialization by passing keyword
         arguments with their name.
@@ -213,8 +248,10 @@ class CommittorSimulation:
                 conf, idx, name = vals
                 conf_dir = os.path.join(self.workdir, f"{name}")
             else:
-                conf_dir = os.path.join(self.workdir,
-                                        f"{self.configuration_dir_prefix}{str(i)}")
+                conf_dir = os.path.join(
+                                    self.workdir,
+                                    f"{self.configuration_dir_prefix}{str(i)}",
+                                        )
             self._conf_dirs.append(conf_dir)
             if not os.path.isdir(conf_dir):
                 # if its not a directory it either exists (then we will err)
@@ -229,11 +266,11 @@ class CommittorSimulation:
     @property
     def states_reached(self):
         """
-        states_reached per configuration (i.e. summed over shots)
+        Return states_reached per configuration (i.e. summed over shots).
 
         Return states_reached as a np.array with shape (n_conf, n_states),
         where the entries give the counts of states reached, i.e. the format is
-        as in an `arcd.TrainSet`.
+        as in an `aimmd.TrainSet`.
         """
         ret = np.zeros((len(self.starting_configurations), len(self.states)))
         for i, results_for_conf in enumerate(self._states_reached):
@@ -245,7 +282,7 @@ class CommittorSimulation:
     @property
     def states_reached_per_shot(self):
         """
-        states_reached per shot (i.e. single trial results)
+        Return states_reached per shot (i.e. single trial results).
 
         Return a np.array shape (n_conf, n_shots, n_states), where the entries
         give the counts of states reached for every single shot, i.e. summing
@@ -327,7 +364,7 @@ class CommittorSimulation:
         len=n_starting_configurations and the inner lists then just contains
         all transitions for the respective configuration and can also be empty.
         """
-        if not self.two_way:
+        if not any(self.two_way):
             # can not have transitions
             return [[] for _ in range(len(self._conf_dirs))]
         transitions = []
@@ -363,16 +400,21 @@ class CommittorSimulation:
         # make sure we set everything to zero before we start!
         self._shot_counter = 0
         self._states_reached = [[] for _ in range(len(self.starting_configurations))]
-        # find out how many shots we did per configuration, for now we assume
-        # that everything went well and we have an equal number of shots per configuration
+        # find out how many shots we did per configuration, the first
+        # configuration should be the one with the most directories created
+        # even if we failed/crashed before everything was created, the run
+        # function will then take care of creating the directories for the
+        # configurations with higher index from scratch. This way we will end
+        # up with as many shots done in each configuration as in the first one
         dir_list = os.listdir(os.path.join(self.workdir, self._conf_dirs[0]))
         # build a list of all possible dir names
         # (these will be too many if there are other files in conf dir)
         possible_dirnames = [f"{self.shot_dir_prefix}{i}"
                              for i in range(len(dir_list))
                              ]
-        # now filter to check that only stuff that is a dir and in possible names
-        # will be taken, then count them: this is the number of shots done already
+        # now filter to check that only stuff that is a dir and in possible
+        # names will be taken, then count them: this is the number of shots
+        # we have done already
         filtered = [d for d in dir_list
                     if (d in possible_dirnames
                         and os.path.isdir(os.path.join(self.workdir, self._conf_dirs[0], d))
@@ -402,28 +444,31 @@ class CommittorSimulation:
                                         + f"{self.deffnm_engine_out}.trr"),
                                        )
         if not os.path.isfile(start_conf_name):
-            # NOTE: I (hejung) think this is a bit overkill since we sort out the continuation issue
-            #       at the level of the _run_single_trial function
-            #       BUT: we'll leave it here for now, such that we can streamline the whole ocmmittor simulation at once
-            #            and maybe get away without the run_single_trial function?! or rewrite trial_tw as using two trial oneway?
-            # if the starting configuration does not exist that probably means we never
-            # started this particular trial, i.e. if we have continuation=True that means we
-            # did a correspondign trial/shotnum for a lower index configuration, but not yet
-            # for this one here, so just reset continuation to False and do this trial from scratch
+            # NOTE: I (hejung) think this is a bit overkill since we sort out
+            #       the continuation issue in the _run_single_trial function
+            #       BUT: we'll leave it here for now, just to be sure and in
+            #            case it will be useful in a future (needed) refactor
+            # if the starting configuration does not exist that probably means
+            # we never started this particular trial, i.e. if we have
+            # continuation=True that means we did a corresponding trial/shotnum
+            # for a lower index configuration, but not yet for this one here,
+            # so just reset continuation to False and do this trial from
+            # scratch
             if continuation:
-                logger.info(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
-                            + f"shot {shot_num}, deffnm {self.deffnm_engine_out} "
-                            + f"but no starting_configuration found ({start_conf_name})."
-                            + "Starting this particular trial from scratch, "
-                            + "i.e. setting continuation=False for this trial."
+                logger.info("continuation=True for configuration %s, shot %d, "
+                            "deffnm %s but no starting configuration found (%s"
+                            "). Starting this particular trial from scratch, "
+                            "i.e. setting continuation=False for this trial.",
+                            self._conf_dirs[conf_num], shot_num,
+                            self.deffnm_engine_out,
+                            start_conf_name
                             )
                 continuation = False
         if not continuation:
             # get starting configuration and write it out with random velocities
-            start_conf_name_uc = os.path.join(step_dir,
-                                              (f"{self.start_conf_name_prefix}"
-                                               + "unconstrained_"
-                                               + f"{self.deffnm_engine_out}.trr"),
+            start_conf_name_uc = os.path.join(
+                    step_dir, (f"{self.start_conf_name_prefix}unconstrained_"
+                               + f"{self.deffnm_engine_out}.trr"),
                                               )
             extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
             try:
@@ -433,8 +478,9 @@ class CommittorSimulation:
                                     idx=self.starting_configurations[conf_num][1],
                                                                     )
             except FileExistsError:
-                # if the unconstrained conf exists already but the constrained one not
-                # we empty the whole folder and start with a new unconstrained one
+                # if the unconstrained conf exists already but the constrained
+                # one does not we empty the whole folder and start with a new
+                # unconstrained configuration
                 for fn in os.listdir(step_dir):
                     fp = os.path.join(step_dir, fn)
                     if os.path.isfile(fp) or os.path.islink(fp):
