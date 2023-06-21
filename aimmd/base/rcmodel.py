@@ -341,6 +341,7 @@ class RCModelAsyncMixin:
     Has awaitable __call__, q, z_sel, ..., i.e. everything that involves the
     descriptor_transform. Parent class docstring:
     """
+
     __doc__ += RCModel.__doc__  # and add the rest of the docstring
     # NOTE: we "steal" the method docstrings from the RCModel as they are
     #       the same (except for async/non-async)
@@ -355,19 +356,23 @@ class RCModelAsyncMixin:
                                         cache_file=self.density_collector.cache_file,
                                                                  )
 
-    # FIXME/ makeme/ IMPLEMENT:!!??
-    # TODO: how do we sort out the expected efficiency for the SPs in
-    #       the distributed/async case?
-    #       I think when we save p_B/the probs with the step when selecting
-    #       and then append the probs to expected_p in the same order, i.e.
-    #       as and when we add them to the trainset (in BrainTask), then we
-    #       can just continue to use the expected_eff functions we have on the
-    #       trainset
-    # Todo: should we then remove the function below?! yes!
-    #def register_sp(self, shoot_snap, use_transform=True):
-    #    """Will be called by arcd.RCModelSelector after selecting a SP."""
-    #    self.expected_q.append(self.q(shoot_snap, use_transform)[0])
-    #    self.expected_p.append(self(shoot_snap, use_transform)[0])
+    # overwrite the register_sp func for the async model to raise an error and
+    # make sure people are warned
+    def register_sp(self, shoot_snap, use_transform=True):
+        """
+        Will be called by aimmd.RCModelSelector after selecting a SP.
+
+        NOTE: The expected efficiency for the SPs in the async case is done by
+              the usual functions, except that the SPs and their expected probs
+              are added to the model by the TrainingTask, which also adds them
+              to the training set in the same order (which allows us to easily
+              make sure the orders match even if we have many samplers running
+              in parallel).
+        """
+        raise NotImplementedError("Registering shooting points for the "
+                                  "expected efficiency calculation is done by "
+                                  "the `TrainingTask`. See the docstring of "
+                                  "this method for more.")
 
     async def _apply_descriptor_transform(self, descriptors):
         if self.descriptor_transform is not None:
