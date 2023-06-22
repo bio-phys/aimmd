@@ -836,7 +836,10 @@ class Storage:
     #_compatibility_version = parse_version("0.8")
     ## renamed arcd -> aimmd
     _compatibility_version = parse_version("0.8.1")
-    # TODO: increase version when we merge distributed!
+    # Note that we did not increase the compatibility version for distributed,
+    # because we can read the 'old' (v0.8.1) storages (distributed storage can
+    # even be added to 'old' pre-distributed storage together with ops stuff,
+    # except that we can only ever store one trainingset)
 
     # TODO: should we require descriptor_dim as input on creation?
     #       to make clear that you can not change it?!

@@ -53,6 +53,10 @@ There is none (yet). Please read the example notebooks, the docstrings and the c
 
 Tests use pytest. Use e.g. `pytest .` while in the toplevel directory of the repository to run them.
 
+## Contributions
+
+Contributions are welcome! Please feel free to open an [issue](https://github.com/bio-phys/aimmd/issues) or [pull request](https://github.com/bio-phys/aimmd/pulls) if you discover any bugs or want to propose a missing feature.
+
 ## License
 
 GPL v3
