@@ -24,12 +24,14 @@ logger = logging.getLogger(__name__)
 from .__about__ import (__version__, __title__, __author__,
                         __license__, __copyright__
                         )
-from . import ops, coords, analysis
+from .base import rcmodel
 from .base.trainset import TrainSet
 from .base.storage import Storage
 from .base.utils import (emulate_production_from_trainset,
                          emulate_production_from_storage,
                          )
+from . import ops, coords, analysis
+
 
 try:
     from . import pytorch

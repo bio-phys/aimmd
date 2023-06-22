@@ -14,15 +14,16 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
+import asyncio
 import logging
-import copy
 import numpy as np
 from openpathsampling.engines.snapshot import BaseSnapshot as OPSBaseSnapshot
 from openpathsampling.engines.trajectory import Trajectory as OPSTrajectory
 from openpathsampling.collectivevariable import CollectiveVariable
 from openpathsampling import Volume
 from abc import ABC, abstractmethod
-from .storage import Storage
+
+from . import _H5PY_PATH_DICT
 
 
 logger = logging.getLogger(__name__)
@@ -90,8 +91,10 @@ class RCModel(ABC):
         self.states = states
         self._n_out = n_out
         self.descriptor_transform = descriptor_transform
+        # list of expected committment probabilities,
+        # should be in the same order as the trainset
+        # will be added when selecting a shooting point
         self.expected_p = []
-        self.expected_q = []
         self.density_collector = TrajectoryDensityCollector(
                                         n_dim=self.n_out,
                                         bins=self.density_collection_n_bins,
@@ -207,13 +210,12 @@ class RCModel(ABC):
                                   for j in range(i + 1, self.n_out)
                                   ])
         factor = (1 - n_tp_true / n_tp_ex)**2
-        logger.info('Calculcated expected efficiency factor '
+        logger.info('Calculated expected efficiency factor '
                     + '{:.3e} over {:d} points.'.format(factor, n_points))
         return min(1, factor)
 
     def register_sp(self, shoot_snap, use_transform=True):
         """Will be called by aimmd.RCModelSelector after selecting a SP."""
-        self.expected_q.append(self.q(shoot_snap, use_transform)[0])
         self.expected_p.append(self(shoot_snap, use_transform)[0])
 
     def _apply_descriptor_transform(self, descriptors):
@@ -275,29 +277,18 @@ class RCModel(ABC):
         If batch_size is None we will try to get a default value from the
         models training parameters.
         """
-        if self.n_out == 1:
-            return self._p_binom(descriptors,
+        log_prob = self.log_prob(descriptors,
                                  use_transform=use_transform,
-                                 batch_size=batch_size,
-                                 )
-        return self._p_multinom(descriptors,
-                                use_transform=use_transform,
-                                batch_size=batch_size,
-                                )
+                                 batch_size=batch_size)
+        if self.n_out == 1:
+            return self._p_binom(log_prob)
+        return self._p_multinom(log_prob)
 
-    def _p_binom(self, descriptors, use_transform, batch_size):
-        q = self.q(descriptors,
-                   use_transform=use_transform,
-                   batch_size=batch_size,
-                   )
-        return 1/(1 + np.exp(-q))
+    def _p_binom(self, log_prob):
+        return 1/(1 + np.exp(-log_prob))
 
-    def _p_multinom(self, descriptors, use_transform, batch_size):
-        exp_log_p = np.exp(self.log_prob(descriptors,
-                                         use_transform=use_transform,
-                                         batch_size=batch_size,
-                                         )
-                           )
+    def _p_multinom(self, log_probs):
+        exp_log_p = np.exp(log_probs)
         return exp_log_p / np.sum(exp_log_p, axis=1, keepdims=True)
 
     def z_sel(self, descriptors, use_transform=True, batch_size=None):
@@ -305,7 +296,8 @@ class RCModel(ABC):
         Return the value of the selection coordinate z_sel.
 
         It is zero at the most optimal point conceivable.
-        For n_out=1 this is simply the unnormalized log probability.
+        For n_out = 1 this is simply the unnormalized log probability.
+        For n_out > 1 see method `self._z_sel_multinom`.
         If batch_size is None we will try to get a default value from the
         models training parameters.
         """
@@ -313,7 +305,7 @@ class RCModel(ABC):
             return self.q(descriptors,
                           use_transform=use_transform,
                           batch_size=batch_size,
-                          )
+                          )[:, 0]  # make z_sel 1d!
         return self._z_sel_multinom(descriptors,
                                     use_transform=use_transform,
                                     batch_size=batch_size,
@@ -330,10 +322,9 @@ class RCModel(ABC):
         We can therefore select the point for which this
         expression is closest to zero as the optimal SP.
         """
-        p = self._p_multinom(descriptors,
-                             use_transform=use_transform,
-                             batch_size=batch_size,
-                             )
+        p = self(descriptors,
+                 use_transform=use_transform,
+                 batch_size=batch_size)
         # the prob to be on any TP is 1 - the prob to be on no TP
         # to be on no TP means beeing on a "self transition" (A->A, etc.)
         reactive_prob = 1 - np.sum(p * p, axis=1)
@@ -341,6 +332,115 @@ class RCModel(ABC):
                 (self.z_sel_scale / (1 - 1 / self.n_out))
                 * (1 - 1 / self.n_out - reactive_prob)
                 )
+
+
+class RCModelAsyncMixin:
+    """
+    RCModelAsync for coroutine descriptor transforms.
+
+    Has awaitable __call__, q, z_sel, ..., i.e. everything that involves the
+    descriptor_transform. Parent class docstring:
+    """
+
+    __doc__ += RCModel.__doc__  # and add the rest of the docstring
+    # NOTE: we "steal" the method docstrings from the RCModel as they are
+    #       the same (except for async/non-async)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # use the async version of the density collector
+        # we just overwrite what __init__ set before
+        self.density_collector = TrajectoryDensityCollectorAsync(
+                                        n_dim=self.n_out,
+                                        bins=self.density_collection_n_bins,
+                                        cache_file=self.density_collector.cache_file,
+                                                                 )
+
+    # overwrite the register_sp func for the async model to raise an error and
+    # make sure people are warned
+    def register_sp(self, shoot_snap, use_transform=True):
+        """
+        Will be called by aimmd.RCModelSelector after selecting a SP.
+
+        NOTE: The expected efficiency for the SPs in the async case is done by
+              the usual functions, except that the SPs and their expected probs
+              are added to the model by the TrainingTask, which also adds them
+              to the training set in the same order (which allows us to easily
+              make sure the orders match even if we have many samplers running
+              in parallel).
+        """
+        raise NotImplementedError("Registering shooting points for the "
+                                  "expected efficiency calculation is done by "
+                                  "the `TrainingTask`. See the docstring of "
+                                  "this method for more.")
+
+    async def _apply_descriptor_transform(self, descriptors):
+        if self.descriptor_transform is not None:
+            # Note: I think we dont need to check if it is an ops snapshot,
+            #       those should only be a thing for non-async models
+            descriptors = await self.descriptor_transform(descriptors)
+        return descriptors
+
+    async def log_prob(self, descriptors, use_transform=True, batch_size=None):
+        if use_transform:
+            descriptors = await self._apply_descriptor_transform(descriptors)
+        return self._log_prob(descriptors, batch_size=batch_size)
+
+    log_prob.__doc__ = RCModel.log_prob.__doc__
+
+    async def q(self, descriptors, use_transform=True, batch_size=None):
+        if self.n_out == 1:
+            return await self.log_prob(descriptors,
+                                       use_transform=use_transform,
+                                       batch_size=batch_size)
+        else:
+            log_prob = await self.log_prob(descriptors,
+                                           use_transform=use_transform,
+                                           batch_size=batch_size)
+            rc = [(log_prob[..., i:i+1]
+                   - np.log(np.sum(np.exp(np.delete(log_prob, [i], axis=-1)),
+                                   axis=-1, keepdims=True
+                                   )
+                            )
+                   ) for i in range(log_prob.shape[-1])]
+            return np.concatenate(rc, axis=-1)
+
+    q.__doc__ = RCModel.q.__doc__
+
+    async def __call__(self, descriptors, use_transform=True, batch_size=None):
+        log_prob = await self.log_prob(descriptors,
+                                       use_transform=use_transform,
+                                       batch_size=batch_size)
+        if self.n_out == 1:
+            return self._p_binom(log_prob)
+        return self._p_multinom(log_prob)
+
+    __call__.__doc__ = RCModel.__call__.__doc__
+
+    async def z_sel(self, descriptors, use_transform=True, batch_size=None):
+        if self.n_out == 1:
+            return (await self.q(descriptors,
+                                 use_transform=use_transform,
+                                 batch_size=batch_size))[:, 0]  # make z_sel 1d
+        return await self._z_sel_multinom(descriptors,
+                                          use_transform=use_transform,
+                                          batch_size=batch_size)
+
+    z_sel.__doc__ = RCModel.z_sel.__doc__
+
+    async def _z_sel_multinom(self, descriptors, use_transform, batch_size):
+        p = await self(descriptors,
+                       use_transform=use_transform,
+                       batch_size=batch_size)
+        # the prob to be on any TP is 1 - the prob to be on no TP
+        # to be on no TP means beeing on a "self transition" (A->A, etc.)
+        reactive_prob = 1 - np.sum(p * p, axis=1)
+        return (
+                (self.z_sel_scale / (1 - 1 / self.n_out))
+                * (1 - 1 / self.n_out - reactive_prob)
+                )
+
+    _z_sel_multinom.__doc__ = RCModel._z_sel_multinom.__doc__
 
 
 class TrajectoryDensityCollector:
@@ -352,6 +452,10 @@ class TrajectoryDensityCollector:
     The inverse of the estimate of the density of points on TPs can be used as
     an additional factor in the shooting point selection to flatten the
     distribution of proposed shooting points in commitment probability space.
+    This class calculates descriptors from trajectories using the
+    descriptor_transform of a given RCModel and caches the results for future
+    reevaluations when/if the model predictions change and therefore result in
+    a different density of points when projected to committor space.
 
     """
 
@@ -437,7 +541,7 @@ class TrajectoryDensityCollector:
             # and ONLY ONCE, so it is probably best to have them defined in
             # storage.py (?) as constants and import them from there
             traDC_cache_grp = cache_file.require_group(
-                                        Storage.h5py_path_dict["tra_dc_cache"]
+                                        _H5PY_PATH_DICT["tra_dc_cache"]
                                                        )
             if copy_from is None:
                 # nothing to copy, create empty group
@@ -494,6 +598,29 @@ class TrajectoryDensityCollector:
                 if cache_file_mode != "r":
                     # delete cache h5py group (if file is not open in read-only)
                     del self._cache.parent[self._cache.name]
+
+    def _reset_descriptors_cached(self) -> None:
+        if self._descriptors is not None:
+            self._counts.resize(0, axis=0)
+            self._descriptors.resize(0, axis=0)
+            self._fill_pointer = 0
+
+    def _reset_descriptors(self) -> None:
+        if self._descriptors is not None:
+            descriptor_dim = self._descriptors.shape[1]
+            self._descriptors = np.zeros((0, descriptor_dim),
+                                         dtype=np.float64)
+            self._counts = np.zeros((0,), dtype=np.float64)
+            self._fill_pointer = 0
+
+    def reset_density_and_descriptors(self) -> None:
+        """Reset stored density estimate and remove all stored descriptors."""
+        if self.cache_file is None:
+            self._reset_descriptors()
+        else:
+            self._reset_descriptors_cached()
+        self.density_histogram = np.zeros(tuple(self.bins
+                                                for _ in range(self.n_dim)))
 
     def _extend_if_needed_cached(self, tra_len, descriptor_dim, add_entries=4000):
         """Extend cache if next trajectory would not fit."""
@@ -567,7 +694,7 @@ class TrajectoryDensityCollector:
         multiplicity - int (default=1), weight for trajectory in ensemble,
                        can also be 1d numpy.array with len=len(tra_descriptors)
         """
-        if isinstance(multiplicity, (int, np.int)):
+        if isinstance(multiplicity, (int, np.integer)):
             multiplicity = np.full((tra_descriptors.shape[0]), multiplicity)
         self._append(tra_descriptors, multiplicity)
 
@@ -632,11 +759,10 @@ class TrajectoryDensityCollector:
 
         """
         # add descriptors to self
-        if counts is None:
-            counts = len(trajectories) * [1.]
-        for tra, c in zip(trajectories, counts):
-            descriptors = model.descriptor_transform(tra)
-            self.append(tra_descriptors=descriptors, multiplicity=c)
+        # this also adds them to the density, but we reevaluate anyway...
+        self.add_density_for_trajectories(model=model,
+                                          trajectories=trajectories,
+                                          count=counts)
         # get current density estimate for all stored descriptors
         self.reevaluate_density(model=model)
 
@@ -701,3 +827,61 @@ class TrajectoryDensityCollector:
         dens = self.get_counts(probabilities)
         norm = np.sum(self.density_histogram)
         return (norm + self._n_allowed_bins) / (dens + 1)
+
+
+class TrajectoryDensityCollectorAsync(TrajectoryDensityCollector):
+    # NOTE: Take the docstrings of the superclass (i.e. the non-async version)
+    __doc__ = ("Async version of the TrajectoryDensityCollector \n"
+               + "Parent class docstring: \n"
+               + TrajectoryDensityCollector.__doc__
+               )
+    # NOTE: "steal" docstrings also for the methods we overwrite, they can
+    #        (and should) be taken from TrajectoryDensityCollector
+
+    async def add_density_for_trajectories(self, model, trajectories, counts=None):
+        len_before = self._fill_pointer
+        # add descriptors to self
+        if counts is None:
+            counts = len(trajectories) * [1.]
+        all_descriptors = await asyncio.gather(*(model.descriptor_transform(tra)
+                                                 for tra in trajectories))
+        for descriptors, c in zip(all_descriptors, counts):
+            self.append(tra_descriptors=descriptors, multiplicity=c)
+        # now predict for the newly added
+        pred = await model(self._descriptors[len_before:self._fill_pointer],
+                           use_transform=False)
+        histo, edges = np.histogramdd(sample=pred,
+                                      bins=self.bins,
+                                      range=[[0., 1.]
+                                             for _ in range(self.n_dim)],
+                                      weights=self._counts[len_before:self._fill_pointer]
+                                      )
+        # and add to self.histogram
+        self.density_histogram += histo
+
+    add_density_for_trajectories.__doc__ = TrajectoryDensityCollector.add_density_for_trajectories.__doc__
+
+    async def reevaluate_density_add_trajectories(self, model, trajectories, counts=None):
+        # add descriptors to self
+        # this also adds them to the density, but we reevaluate anyway...
+        await self.add_density_for_trajectories(model=model,
+                                                trajectories=trajectories,
+                                                count=counts)
+        # get current density estimate for all stored descriptors
+        await self.reevaluate_density(model=model)
+
+    reevaluate_density_add_trajectories.__doc__ = TrajectoryDensityCollector.reevaluate_density_add_trajectories.__doc__
+
+    async def reevaluate_density(self, model):
+        pred = await model(self._descriptors[:self._fill_pointer],
+                           use_transform=False)
+        histo, edges = np.histogramdd(
+                            sample=pred,
+                            bins=self.bins,
+                            range=[[0., 1.]
+                                   for _ in range(self.n_dim)],
+                            weights=self._counts[:self._fill_pointer]
+                                      )
+        self.density_histogram = histo
+
+    reevaluate_density.__doc__ = TrajectoryDensityCollector.reevaluate_density.__doc__

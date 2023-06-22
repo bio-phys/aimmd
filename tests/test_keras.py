@@ -16,7 +16,8 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import pytest
 
-tf = pytest.importorskip("tensorflow")
+tf = pytest.importorskip("tensorflow",
+                         reason="No tensorflow installation found.")
 # we use this to be able to run tests when GPU in use
 if tf.version.VERSION.startswith('2.'):
     # tell tf to use only the GPU mem it needs

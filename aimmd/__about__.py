@@ -51,7 +51,7 @@ def _get_git_version():
     return git_revision
 
 
-base_version = "0.8.1"
+base_version = "0.9.0"
 git_version = _get_git_version()
 if git_version is None:
     # no git installed
@@ -65,7 +65,10 @@ else:
 
 
 __title__ = "aimmd"
+__description__ = ("AI for Molecular Mechanism Discovery: Machine learning the"
+                   + " reaction coordinate from shooting results.")
+__url__ = "https://github.com/bio-phys/aimmd"
 __author__ = "Hendrik Jung"
 __author_email__ = "hendrik.jung@biophys.mpg.de"
 __license__ = "GNU GENERAL PUBLIC LICENSE v3"
-__copyright__ = "2019-2021 {:s}".format(__author__)
+__copyright__ = "2019-2023 {:s}".format(__author__)

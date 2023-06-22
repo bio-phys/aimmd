@@ -52,8 +52,9 @@ class Test_RCModel:
         # the probabilities should be interchanged
         assert np.allclose(q_trans, -q_notrans)
         assert np.allclose(p_B_trans, 1 - p_B_notrans)
-        # make sure z_sel is q_B
-        assert np.allclose(q_trans, model.z_sel(descriptors))
+        # make sure z_sel is q_B but has shape=(len(descriptors),) and not
+        # shape=(len(descriptors), 1)
+        assert np.allclose(q_trans[:, 0], model.z_sel(descriptors))
         # basic shape checks
         assert p_B_trans.shape[0] == n_points
         assert p_B_trans.shape[1] == 1
@@ -75,10 +76,15 @@ class Test_RCModel:
         assert np.allclose(q_trans, -q_notrans)
         assert np.allclose(p_trans, 1 - p_notrans)
         # check multinomial z_sel
-        # p_A = 1 - p_B = exp(200) / (exp(200) + exp(-200))
-        descriptors = np.array([[100, 100],
-                                [0., 0.]])  # p_A = p_B = 0.5
-        z_sel = np.array([model.z_sel_scale, 0.])
+        descriptors = np.array([
+                        # p_A = 1 - p_B = exp(-200) / (exp(200) + exp(-200))
+                        [100, 100],
+                        # p_A = 1 - p_B = exp(200) / (exp(200) + exp(-200))
+                        [-100, -100],
+                        # p_A = p_B = 0.5 = exp(0) / (exp(0) + exp(0))
+                        [0., 0.],
+                                ])
+        z_sel = np.array([model.z_sel_scale, model.z_sel_scale, 0.])
         assert np.allclose(z_sel, model.z_sel(descriptors))
         # basic shape checks
         assert p_trans.shape[0] == n_points

@@ -11,7 +11,7 @@ LOGCONFIG = {'version': 1,
              'disable_existing_loggers': False,
              'formatters': {'standardFormatter': {
                                'class': 'logging.Formatter',
-                               'format': '(%(levelname)s)%(name)s: %(message)s'
+                               'format': '(%(levelname)s)%(name)s %(funcName)s: %(message)s'
                                                   },
                             'msgOnly': {
                                   'class': 'logging.Formatter',
@@ -47,9 +47,18 @@ LOGCONFIG = {'version': 1,
              # need to name root logger '' to update the default root logger
              # at least inside an ipython notebook
              'loggers': {'': {
-                              'level': 'INFO',
-                              'handlers': ['stdf', 'warnout']
+                              'level': 'WARN',
+                              'handlers': ['stdf', 'warnout'],
                               },
+                         'aimmd': {
+                                   'level': 'INFO',
+                                   # this will **add** the handlers to the ones
+                                   # inherited from the root-logger!
+                                   #'handlers': ['stdf', 'warnout'],
+                                   },
+                         'openpathsampling': {
+                                              'level': 'INFO',
+                                              },
                          'openpathsampling.initialization': {
                                 'level': 'INFO',
                                 'handlers': ['initf'],

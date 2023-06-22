@@ -20,7 +20,7 @@ import torch
 import numpy as np
 from abc import abstractmethod
 from ..base import Properties
-from ..base.rcmodel import RCModel
+from ..base.rcmodel import RCModel, RCModelAsyncMixin
 from ..base.rcmodel_train_decision import (_train_decision_funcs,
                                            _train_decision_defaults,
                                            _train_decision_docs)
@@ -149,7 +149,8 @@ class PytorchRCModel(RCModel):
         super().__init__(states=states,
                          descriptor_transform=descriptor_transform,
                          cache_file=cache_file,
-                         n_out=n_out)
+                         n_out=n_out,
+                         )
         self.nnet = nnet  # a pytorch.nn.Module
         # any pytorch.optim optimizer, model parameters need to be registered already
         self.optimizer = optimizer
@@ -223,8 +224,9 @@ class PytorchRCModel(RCModel):
         ret_obj.__dict__.update(state)
         # and call supers object_for_pickle in case there is something left
         # in ret_obj.__dict__ that we can not pickle
-        return super(PytorchRCModel,
-                     ret_obj).object_for_pickle(group, overwrite=overwrite, **kwargs)
+        return super(__class__, ret_obj).object_for_pickle(group,
+                                                            overwrite=overwrite,
+                                                            **kwargs)
 
     def complete_from_h5py_group(self, group, device=None):
         """
@@ -257,7 +259,7 @@ class PytorchRCModel(RCModel):
         #opt_sdict = optimizer_state_to_device(self.optimizer, device)
         optimizer.load_state_dict(optim_state)
         self.optimizer = optimizer
-        return super(PytorchRCModel, self).complete_from_h5py_group(group)
+        return super().complete_from_h5py_group(group)
 
     @abstractmethod
     def train_decision(self, trainset):
@@ -362,7 +364,12 @@ class PytorchRCModel(RCModel):
         return np.concatenate(predictions, axis=0)
 
 
-class EEScalePytorchRCModel(PytorchRCModel):
+# the async version is the same, it just uses the async mixin class
+class PytorchRCModelAsync(RCModelAsyncMixin, PytorchRCModel):
+    pass
+
+
+class EEScalePytorchRCModelMixin:
     """Expected efficiency scale PytorchRCModel."""
     __doc__ += _train_decision_docs['EEscale']
 
@@ -370,10 +377,11 @@ class EEScalePytorchRCModel(PytorchRCModel):
                  ee_params=_train_decision_defaults['EEscale'],
                  descriptor_transform=None, loss=None, cache_file=None,
                  n_out=None):
-        super().__init__(nnet=nnet, optimizer=optimizer, states=states,
-                         descriptor_transform=descriptor_transform,
-                         loss=loss, cache_file=cache_file, n_out=n_out,
-                         )
+        super().__init__(
+                                nnet=nnet, optimizer=optimizer, states=states,
+                                descriptor_transform=descriptor_transform,
+                                loss=loss, cache_file=cache_file, n_out=n_out,
+                                         )
         # make it possible to pass only the altered values in dictionary
         defaults = copy.deepcopy(_train_decision_defaults['EEscale'])
         defaults.update(ee_params)
@@ -382,7 +390,15 @@ class EEScalePytorchRCModel(PytorchRCModel):
     train_decision = _train_decision_funcs['EEscale']
 
 
-class EERandPytorchRCModel(PytorchRCModel):
+class EEScalePytorchRCModel(EEScalePytorchRCModelMixin, PytorchRCModel):
+    pass
+
+
+class EEScalePytorchRCModelAsync(EEScalePytorchRCModelMixin, PytorchRCModelAsync):
+    pass
+
+
+class EERandPytorchRCModelMixin:
     """Expected efficiency randomized PytorchRCModel."""
     __doc__ += _train_decision_docs['EErand']
 
@@ -390,10 +406,11 @@ class EERandPytorchRCModel(PytorchRCModel):
                  ee_params=_train_decision_defaults['EErand'],
                  descriptor_transform=None, loss=None, cache_file=None,
                  n_out=None):
-        super().__init__(nnet=nnet, optimizer=optimizer, states=states,
-                         descriptor_transform=descriptor_transform,
-                         loss=loss, cache_file=cache_file, n_out=n_out,
-                         )
+        super().__init__(
+                                nnet=nnet, optimizer=optimizer, states=states,
+                                descriptor_transform=descriptor_transform,
+                                loss=loss, cache_file=cache_file, n_out=n_out,
+                                         )
         # make it possible to pass only the altered values in dictionary
         defaults = copy.deepcopy(_train_decision_defaults['EErand'])
         defaults.update(ee_params)
@@ -401,6 +418,14 @@ class EERandPytorchRCModel(PytorchRCModel):
         self._decisions_since_last_train = 0
 
     train_decision = _train_decision_funcs['EErand']
+
+
+class EERandPytorchRCModel(EERandPytorchRCModelMixin, PytorchRCModel):
+    pass
+
+
+class EERandPytorchRCModelAsync(EERandPytorchRCModelMixin, PytorchRCModelAsync):
+    pass
 
 
 # (Bayesian) ensemble RCModel

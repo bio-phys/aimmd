@@ -14,6 +14,8 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
-from .rcmodel import (EEScaleKerasRCModel, EERandKerasRCModel,
-                      EEScaleKerasRCModelAsync, EERandKerasRCModelAsync)
-from .utils import create_resnet, create_snn
+import asyncio
+
+from ._config import _SEMAPHORES
+
+_SEMAPHORES["BRAIN_MODEL"] = asyncio.BoundedSemaphore(1)

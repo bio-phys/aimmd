@@ -10,7 +10,7 @@ Usage:
 Or (not recommended) with:
    python setup.py
 
-If you want linetrace for the tests
+If you want linetraceing for the tests of cython functions
 give --install-option='--linetrace' to pip install
 or --global-option='--linetrace' to pip install
 or --linetrace option to setup.py
@@ -40,7 +40,7 @@ import sys
 from setuptools import setup, find_packages
 from setuptools.extension import Extension
 
-# sort out if we'll use linetracing
+# sort out if we'll use linetracing for cython
 if '--linetrace' in sys.argv:
     LINETRACE = True
     sys.argv.remove('--linetrace')
@@ -92,7 +92,6 @@ if LINETRACE:
 # always recompile
 EXT_MODULES = cythonize(CY_EXTS, force=True)
 
-
 # Get the long description from the README file
 HERE = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(HERE, 'README.md'), encoding='utf-8') as f:
@@ -103,97 +102,103 @@ about_dct = {'__file__': __file__}
 with open(os.path.join(HERE, "aimmd/__about__.py"), 'r') as fp:
     exec(fp.read(), about_dct)
 
-
-setup(
-    name="aimmd",
-    packages=find_packages(),
-    ext_modules=EXT_MODULES,
-
-    # Versions should comply with PEP440.  For a discussion on single-sourcing
-    # the version across setup.py and the project code, see
-    # https://packaging.python.org/en/latest/single_source_version.html
-    version=about_dct['__version__'],
-
-    description='''
-                AI for Molecular Mechanism Discovery:
-                Machine learning the reaction coordinate from shooting results.
-                ''',
-
-    long_description=LONG_DESCRIPTION,
-
-    # The project's main homepage.
-    url='https://github.com/bio-phys/aimmd',
-
-    # Author details
-    author=about_dct['__author__'],
-    author_email=about_dct['__author_email__'],
-
-    # Choose your license
-    license=about_dct['__license__'],
-
-    # See https://pypi.python.org/pypi?%3Aaction=list_classifiers
-    classifiers=[
+# Define the remaining arguments for setup
+NAME = about_dct["__title__"]
+PACKAGES = find_packages()
+VERSION = about_dct['__version__']
+DESCRIPTION = about_dct["__description__"]
+URL = about_dct["__url__"]
+AUTHOR = about_dct['__author__']
+AUTOR_EMAIL = about_dct['__author_email__']
+LICENSE = about_dct['__license__']
+CLASSIFIERS = [  # See https://pypi.python.org/pypi?%3Aaction=list_classifiers
         # How mature is this project? Common values are
         #   3 - Alpha
         #   4 - Beta
         #   5 - Production/Stable
-        'Development Status :: 3 - Alpha',
-
+        'Development Status :: 4 - Beta',
         # Indicate who your project is intended for
         'Intended Audience :: Scientists',
         'Topic :: Science :: Molecular Dynamics',
-
-        # Pick your license as you wish (should match "license" above)
+        'Topic :: Science :: Enhanced Sampling'
+        # License
         'License :: OSI Approved :: GNU GENERAL PUBLIC LICENSE',
-
-        # Specify the Python versions you support here. In particular, ensure
-        # that you indicate whether you support Python 2, Python 3 or both.
-        'Programming Language :: Python :: 3.6',
-        'Programming Language :: Python :: 3.7',
-        'Programming Language :: Python :: 3.8',
+        # Supported python versions
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        # NOTE: we use asyncio features and type annotations that need >= 3.9
         # NOTE: we use f-strings and therfore require python >= 3.6
         # NOTE: even without f-strings python 2 will not work as intended:
         # 1. we did not take care of integer division vs float division
         # 2. we use binary pickle formats for storing the trainers
         # 3. we use cython with language_level=3
-    ],
-
-    # What does your project relate to?
-    keywords='science md integrators path sampling development',
-
-    # List setup dependencies here.
-    # If you need them at run-time you have to add them to install_requires too
-    # Be aware of: https://github.com/pypa/setuptools/issues/209
-    setup_requires=[
-        'numpy',
+               ]
+KEYWORDS = ["science", "MD", "Molecular Dynamics", "Path Sampling",
+            "Transition Path Sampling", "TPS", "Machine Learning", "ML",
+            "committor", "commitment probability", "reaction coordinate", "RC",
+            ]
+# List setup dependencies here.
+# If you need them at run-time you have to add them to install_requires too
+# Be aware of: https://github.com/pypa/setuptools/issues/209
+SETUP_REQUIRES = [
+        'numpy>=1.17.0',
         'cython',
-    ],
-
-    # List run-time dependencies here. These will be installed by pip when
-    # your project is installed. For an analysis of "install_requires" vs pip's
-    # requirements files see:
-    # https://packaging.python.org/en/latest/requirements.html
-    install_requires=[
-        'numpy',
+                  ]
+# List run-time dependencies here. These will be installed by pip when
+# your project is installed. For an analysis of "install_requires" vs pip's
+# requirements files see:
+# https://packaging.python.org/en/latest/requirements.html
+INSTALL_REQUIRES = [
+        'numpy>=1.17.0',  # v>=1.17.0 because we use 'new-style' RNGs
         'cython',
+        'scipy',
         'openpathsampling',
         'mdtraj',
         'networkx',
-        #'dcgpy',
-        'sympy',  # only used for dcgpy atm
-        'h5py',  # for asrcd.Storage and for old loading/saving of keras models
-    ],
+        #'dcgpy',  # dont install dcgpy automatically as it should best be
+                   # installed from conda-forge
+        'sympy',  # only used with dcgpy atm, but not a dcgpy dependency, so
+                  # to take care of installing ourselfs
+        # for aimmd.Storage (and for old loading/saving of keras models)
+        'h5py>=3',  # need >=3 for the 'new' string handling
+        'asyncmd',  # needed for distributed
+        'mdanalysis',  # needed for distributed examples, but is an asyncmd
+                       # dependency anyway
+                    ]
+# List additional groups of dependencies here (e.g. development
+# dependencies). You can install these using the following syntax,
+# for example:
+# $ pip install -e .[test]
+EXTRAS_REQUIRE = {
+        "test": ['pytest', 'pytest-asyncio']
+                  }
+EXTRAS_REQUIRE["dev"] = (EXTRAS_REQUIRE["test"]
+                         + ['coverage', 'pytest-cov',
+                            'flake8', 'flake8-alfred', 'flake8-comprehensions',
+                            'flake8-docstrings', 'flake8-if-statements',
+                            'flake8-logging-format', 'flake8-todo',
+                            ]
+                         )
 
-    # List additional groups of dependencies here (e.g. development
-    # dependencies). You can install these using the following syntax,
-    # for example:
-    # $ pip install -e .[test]
+# run the setup
+setup(
+    name=NAME,
+    packages=PACKAGES,
+    ext_modules=EXT_MODULES,
+    version=VERSION,
+    description=DESCRIPTION,
+    long_description=LONG_DESCRIPTION,
+    url=URL,
+    author=AUTHOR,
+    author_email=AUTOR_EMAIL,
+    license=LICENSE,
+    classifiers=CLASSIFIERS,
+    keywords=KEYWORDS,
+    setup_requires=SETUP_REQUIRES,
+    install_requires=INSTALL_REQUIRES,
     extras_require={
-        'test': ['pytest'],
-        'dev': ['coverage', 'pytest', 'pytest-cov',
-                'flake8', 'flake8-alfred', 'flake8-comprehensions',
-                'flake8-docstrings', 'flake8-if-statements',
-                'flake8-logging-format', 'flake8-todo'
-                ],
-    }
+        'test': EXTRAS_REQUIRE["test"],
+        'dev': EXTRAS_REQUIRE["dev"],
+                    }
 )

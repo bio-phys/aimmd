@@ -14,6 +14,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
-from .rcmodel import (EEScaleKerasRCModel, EERandKerasRCModel,
-                      EEScaleKerasRCModelAsync, EERandKerasRCModelAsync)
-from .utils import create_resnet, create_snn
+# same layout idea as in asyncmd, so a verbatim copy of the comment there:
+# NOTE: This file **only** contains the dictionaries with the values
+#       and **no** functions to set them, the funcs all live in 'config.py'.
+#       The idea here is that we can then without any issues import additional
+#       stuff (like the config functions from 'slurm.py') in 'config.py'
+#       without risking circular imports becasue all asyncmd files should only
+#       need to import the _CONFIG and _SEMAPHORES dicts from '_config.py'.
+
+_SEMAPHORES = {}
