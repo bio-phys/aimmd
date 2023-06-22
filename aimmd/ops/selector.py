@@ -172,7 +172,7 @@ class RCModelSelector(ShootingPointSelector):
         any_nan = np.any(np.isnan(z_sels))
         if any_nan:
             logger.warning('The model predicts NaNs. '
-                           + 'We used np.nan_to_num to proceed')
+                           'We used np.nan_to_num to proceed')
             z_sels = np.nan_to_num(z_sels)
         ret = self._f_sel(z_sels)
         if self.density_adaptation:
@@ -182,7 +182,7 @@ class RCModelSelector(ShootingPointSelector):
             density_fact = self.model.density_collector.get_correction(
                                                             committor_probs
                                                                        )
-            ret *= density_fact.reshape((len(trajectory), self.model.n_out))
+            ret *= density_fact
         return ret
 
     def pick(self, trajectory):
