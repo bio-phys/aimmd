@@ -177,7 +177,8 @@ class GradientMovieMaker:
     def movie_around_xyz(self, xyz, outfile, unitcell_vectors,
                          atom_indices=None, anchor_mols=None,
                          overwrite=True, normalize=True,
-                         gradient_proportional=True):
+                         gradient_proportional=True,
+                         mass_normalized=True):
         """
         Write out pdb gradient movie around given xyz coordinates.
 
@@ -199,6 +200,9 @@ class GradientMovieMaker:
         gradient_proportional - bool, wheter to output the movie additionally
                                 with atom movements proportional to the
                                 gradient magnitudes
+        mass_normalized - bool, whether to output the movie additionally with
+                          atom movements proportional to the gradient magnitude
+                          but scaled with the inverse atom mass
 
         """
         if (anchor_mols is None) and (atom_indices is not None):
@@ -211,6 +215,9 @@ class GradientMovieMaker:
         dq_ddescript = self.gradients_model_q(descriptors)
         ddescript_dx = self.gradients_descriptor_transform(tra, atom_indices)
         dq_dx = np.sum(dq_ddescript[0] * ddescript_dx, axis=-1)
+        if mass_normalized:
+            # get the masses if we need them
+            masses = np.array([a.element.mass for a in self.topology.atoms])
         # we divide by the zero gradient values and then replace the NaNs
         # with zeros where the gradient was zero
         norm = np.sqrt(np.sum(dq_dx**2, axis=-1, keepdims=True))
@@ -255,9 +262,31 @@ class GradientMovieMaker:
             tra_out = tra_out.image_molecules(anchor_molecules=anchor_mols)
             # (very naively) handle file ending...works only for '.pdb'
             if outfile.endswith('.pdb'):
-                outfile = outfile[:-4]
-            outfile += '_gradient_proportional_movements.pdb'
-            tra_out.save_pdb(outfile, force_overwrite=overwrite,
+                outfile_prop = (outfile[:-4]
+                                + '_gradient_proportional_movements.pdb')
+            tra_out.save_pdb(outfile_prop, force_overwrite=overwrite,
+                             bfactors=bfacts
+                             )
+        if mass_normalized:
+            # write out the gradient proportional movement trajectory
+            # calculation is the same as before, just different dq_dx magnitude
+            xyz_out = np.zeros((self.n_frames, xyz.shape[1], 3))
+            xyz_out[:] = xyz[0]
+            xyz_out += (dq_dx_prop / masses
+                        * self.amplitude * np.sin(omega * t_frame))
+            tra_out = md.Trajectory(xyz_out, self.topology)
+            tra_out.unitcell_vectors = unitcell_vectors
+            tra_out = tra_out.image_molecules(anchor_molecules=anchor_mols)
+            # (very naively) handle file ending...works only for '.pdb'
+            if outfile.endswith('.pdb'):
+                outfile_mass_norm = (outfile[:-4]
+                                     + '_mass_normalized_gradient_proportional_movements.pdb')
+            # use mass normalized bfactors here too
+            bfacts /= masses
+            if normalize:
+                # renormalize to be in [0, 99.99]
+                bfacts *= 99.99/np.max(bfacts)
+            tra_out.save_pdb(outfile_mass_norm, force_overwrite=overwrite,
                              bfactors=bfacts
                              )
 
@@ -291,6 +320,7 @@ class GradientMovieMaker:
     def color_by_gradient(self, traj, outfile, atom_indices=None,
                           anchor_mols=None, overwrite=True,
                           normalize=True,
+                          mass_normalized=True,
                           normalize_per_frame=False,
                           single_frames=False):
         """
@@ -306,6 +336,8 @@ class GradientMovieMaker:
         overwrite - bool, wheter to overwrite existing files with given name
         normalize - bool, wheter to normalize the calcuated Bfactors to [0., 99.99],
                     the PDB-format requires them to be in (-10, 100)
+        mass_normalized - bool, whether to additionally write out a trajectory
+                          with gradients normalized by the mass of each atom
         normalize_per_frame - bool, wheter to additionally write out a
                               trajectory with gradients normalized per frame
         single_frames - bool, wheter to output a series of single frame pbds
@@ -347,8 +379,13 @@ class GradientMovieMaker:
                                                 axis=0)
                                  )
                 anchor_mols = self.anchor_mols_from_atom_indices(at_idx_set)
+        if mass_normalized:
+            # get the masses if we need them
+            masses = np.array([a.element.mass for a in self.topology.atoms])
 
         Bfactors = []
+        if mass_normalized:
+            Bfactors_mass_normalized = []
         if normalize_per_frame:
             Bfactors_normalized = []
         descriptors = self.descriptor_transform.cv_callable(
@@ -360,6 +397,8 @@ class GradientMovieMaker:
                                                                atom_indices[f])
             dq_dx = np.sum(dq_ddescript[f] * ddescript_dx, axis=-1)
             Bfactors.append(np.sqrt(np.sum(dq_dx**2, axis=-1)))
+            if mass_normalized:
+                Bfactors_mass_normalized.append(Bfactors[-1] / masses)
             if normalize_per_frame:
                 norm = 99.99/np.max(np.sqrt(np.sum(dq_dx**2, axis=-1)))
                 Bfactors_normalized.append(np.sqrt(np.sum(dq_dx**2, axis=-1))
@@ -375,6 +414,14 @@ class GradientMovieMaker:
                         + ' are higher. Normalizing to [0., 99.99].')
             Bfactors *= 99.99/np.max(Bfactors)
         traj_out = traj.image_molecules(anchor_molecules=anchor_mols)
+        if mass_normalized:
+            Bfactors_mass_normalized = np.array(Bfactors_mass_normalized)
+            if normalize:
+                Bfactors_mass_normalized *= 99.99 / np.max(Bfactors_mass_normalized)
+            elif np.max(Bfactors_mass_normalized) >= 100:
+                logger.warn('The Bfactors must be < 100, but calculated gradients'
+                            + ' are higher. Normalizing to [0., 99.99].')
+                Bfactors_mass_normalized *= 99.99/np.max(Bfactors_mass_normalized)
         if normalize_per_frame:
             Bfactors_normalized = np.array(Bfactors_normalized)
         # NOTE: visualizing the created movie can be done by writing the
@@ -384,16 +431,22 @@ class GradientMovieMaker:
         # see the VMD script @ examples/resources/pdbbfactor.tcl
         if single_frames:
             write_single_frames(traj_out, Bfactors, outfile, overwrite)
+            if mass_normalized:
+                outfile_mod = strip_pdb_suffix(outfile) + '_mass_normalized'
+                write_single_frames(traj_out, Bfactors_mass_normalized,
+                                    outfile_mod, overwrite)
             if normalize_per_frame:
-                outfile = strip_pdb_suffix(outfile)
-                outfile = outfile + '_frame_normalized'
+                outfile_mod = strip_pdb_suffix(outfile) + '_frame_normalized'
                 write_single_frames(traj_out, Bfactors_normalized,
-                                    outfile, overwrite)
+                                    outfile_mod, overwrite)
         else:
             traj_out.save_pdb(outfile, force_overwrite=overwrite,
                               bfactors=Bfactors)
+            if mass_normalized:
+                outfile_mod = strip_pdb_suffix(outfile) + '_mass_normalized.pdb'
+                traj_out.save_pdb(outfile_mod, force_overwrite=overwrite,
+                                  bfactors=Bfactors_mass_normalized)
             if normalize_per_frame:
-                outfile = strip_pdb_suffix(outfile)
-                outfile = outfile + '_frame_normalized.pdb'
+                outfile_mod = strip_pdb_suffix(outfile) + '_frame_normalized.pdb'
                 traj_out.save_pdb(outfile, force_overwrite=overwrite,
                                   bfactors=Bfactors_normalized)
