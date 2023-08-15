@@ -272,7 +272,7 @@ class GradientMovieMaker:
             # calculation is the same as before, just different dq_dx magnitude
             xyz_out = np.zeros((self.n_frames, xyz.shape[1], 3))
             xyz_out[:] = xyz[0]
-            xyz_out += (dq_dx_prop / masses
+            xyz_out += (dq_dx_prop / np.reshape(masses, (masses.shape[0], 1))
                         * self.amplitude * np.sin(omega * t_frame))
             tra_out = md.Trajectory(xyz_out, self.topology)
             tra_out.unitcell_vectors = unitcell_vectors
