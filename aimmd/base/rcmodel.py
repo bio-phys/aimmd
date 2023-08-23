@@ -519,8 +519,11 @@ class TrajectoryDensityCollector:
             # create cache, also replaces self._descriptors
             self._create_h5py_cache(val)
             self._cache_file = val
-            self._fill_pointer = 0  # reset fill pointer so we can use append
-            self.append(tra_descriptors=descriptors, multiplicity=counts)
+            if self._fill_pointer > 0:
+                # append only if there is something to append
+                # (otherwise we would create the h5py dsets with descriptor_dim=0
+                self._fill_pointer = 0  # reset fill pointer so we can use append
+                self.append(tra_descriptors=descriptors, multiplicity=counts)
 
     def _create_h5py_cache(self, cache_file, copy_from=None):
         # the next line looks weird, but ensures the user can pass either
