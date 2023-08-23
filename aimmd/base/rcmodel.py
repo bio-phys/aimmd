@@ -648,7 +648,7 @@ class TrajectoryDensityCollector:
                                             name="counts",
                                             shape=(add,),
                                             maxshape=(None,),
-                                            dtype="i8",
+                                            dtype="f",
                                                       )
         else:
             # possibly extend existing datasets
