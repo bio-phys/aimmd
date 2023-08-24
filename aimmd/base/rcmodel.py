@@ -827,27 +827,22 @@ class TrajectoryDensityCollector:
         """
         Return the 'flattening factor' for the observed density of points.
 
-        The factor is calculated as
-         (total_count + n_allowed_bins) / (counts[probabilities] + 1),
-        i.e. the factor is 1 / rho(probabilities),
-        but we use the Laplace-m-estimator / Add-one-smoothing
-        to make sure we do not have zero density anywhere.
-
+        The factor is calculated as total_count / counts[probabilities],
+        i.e. the factor is 1 / rho(probabilities).
+        Note that we replace the potential infinite values appearing if
+        the counts in a bin are zero by a large but finite value.
+        I.e. instead of our estimated rho=0 we use 0 < rho << 1.
         """
         dens = self.get_counts(probabilities)
         norm = np.sum(self.density_histogram)
-        # NOTE: since allow for weights (instead of counts) to be added to the histogram
-        #       we must make sure that if norm << n_bins we still get a density
-        #       determined by the histogram instead of getting a uniform density always
-        #        because 1/n_bin dominates dens/norm
-        # the easiest (quick fix) is to just multiply both norm and dens by the number of
-        # points in the cache, such that we make sure that if we have 1000 points over which
-        # we calculate the density correction we will get norm=1000 again
-        n_points = self._fill_pointer  # number of points in cache
-        # scale both norm and dens by the same fact
-        norm *= n_points / norm   # == n_points always
-        dens *= n_points / norm
-        return (norm + self._n_allowed_bins) / (dens + 1)
+        with np.errstate(divide="ignore"):
+            # ignore errors through division by zero
+            factor = norm / dens
+        # and replace all infs by large (but finite) values in the array
+        # TODO: Do we want to use the largest finite value occuring in array instead?
+        #       Currently we just use the numpy default (a "very large number")
+        factor = np.nan_to_num(factor)
+        return factor
 
 
 class TrajectoryDensityCollectorAsync(TrajectoryDensityCollector):
