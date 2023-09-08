@@ -579,7 +579,7 @@ class Brain:
             sampler._store_finished_step(step=s, save_step_pckl=True,
                                          make_symlink=False)
 
-    async def reinitialize_from_workdir(self, run_tasks: bool = True):
+    async def reinitialize_from_workdir(self, run_tasks: bool = True, finish_steps: bool = True):
         """
         Reinitialize the `Brain` from an existing working/simulation directory.
 
@@ -608,6 +608,17 @@ class Brain:
         ----------
         run_tasks : bool, optional
             If we should run the `BrainTask`s, by default True
+        finish_steps : bool, optional
+            If we should finish the unfinished steps, by default True.
+            If False, we will put the unfinished steps int othe respective
+            samplers and finish/continue them as soon as we run again.
+            NOTE, that it can be beneficial to set finish_steps=False if you
+            intend to add more steps than the unfinished ones.
+            You would then call `run_for_n_steps` or `run_for_n_accepts` directly
+            after this function with the amount of steps/accepts you want to add.
+            The benefit of this strategy is that the new and the unfinished steps
+            will then be done concurrently, instead of waiting for the unfinished
+            steps to be done and then after they are all done start the new steps.
 
         Raises
         ------
@@ -655,8 +666,13 @@ class Brain:
                         if run_tasks:
                             await self._run_tasks(mcstep=step, sampler_idx=sidx)
 
-        print("After adding all finished steps we have a total of "
-              f"{self.total_steps} steps. Now working on the unfinished ones.")
+        info_str = f"After adding all finished steps we have a total of {self.total_steps} steps."
+        if finish_steps:
+            info_str += " Now working on the unfinished ones."
+        print(info_str)
+        if not finish_steps:
+            # get out of here if we dont want to finish the steps (but do more)
+            return
         # now we should only have unfinished steps left
         # we run them by running finish_step in each sampler, it finishes and
         # returns the step or returns None if no unfinished steps are present
@@ -982,6 +998,24 @@ class PathChainSampler:
     async def run_step(self, model):
         # run one MCstep from current_step
         # takes a model for SP selection
+        # NOTE: we check if there is an unfinished step in here and do finsh it
+	#       if yes (this enables us to call run_for_n_steps method on a brain
+	#	with some unfinished steps, do all wnated steps in parallel,
+	#	i.e unfinshed and new without having to wait for the unfinished
+	#       steps first)
+        # _run_step increases the _stepnum, so we are looking for the next step
+        step_dir = os.path.join(self.workdir,
+                                    f"{self.mcstep_foldername_prefix}"
+                                    + f"{self._stepnum+1}"
+                                    )
+        restart_file = os.path.join(step_dir, self.restart_info_fname)
+        if os.path.isfile(restart_file):
+            # we found a restart file, load it and finish the step
+	    # note that finish step will now always return a MC step (and not None)
+	    # becasue there is a restart file, such that run_step will always return
+	    # a valid mcstep (and not None)
+            return await self.finish_step(model)
+        # no restart file found, so do a step from scratch
         instep = self.current_step
         if instep is None:
             logger.warning("Sampler %d: Instep is None."
