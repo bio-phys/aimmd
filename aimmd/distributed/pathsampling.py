@@ -579,7 +579,9 @@ class Brain:
             sampler._store_finished_step(step=s, save_step_pckl=True,
                                          make_symlink=False)
 
-    async def reinitialize_from_workdir(self, run_tasks: bool = True, finish_steps: bool = True):
+    async def reinitialize_from_workdir(self, run_tasks: bool = True,
+                                        finish_steps: bool = True,
+                                        ):
         """
         Reinitialize the `Brain` from an existing working/simulation directory.
 
@@ -610,15 +612,16 @@ class Brain:
             If we should run the `BrainTask`s, by default True
         finish_steps : bool, optional
             If we should finish the unfinished steps, by default True.
-            If False, we will put the unfinished steps int othe respective
+            If False, we will put the unfinished steps into the respective
             samplers and finish/continue them as soon as we run again.
             NOTE, that it can be beneficial to set finish_steps=False if you
             intend to add more steps than the unfinished ones.
-            You would then call `run_for_n_steps` or `run_for_n_accepts` directly
-            after this function with the amount of steps/accepts you want to add.
-            The benefit of this strategy is that the new and the unfinished steps
-            will then be done concurrently, instead of waiting for the unfinished
-            steps to be done and then after they are all done start the new steps.
+            You would then call `run_for_n_steps` or `run_for_n_accepts`
+            directly after this function with the amount of steps/accepts you
+            want to add. The benefit of this strategy is that the new and the
+            unfinished steps will then be done concurrently, instead of waiting
+            for the unfinished steps to be done and then after they are all
+            done start the new steps.
 
         Raises
         ------
@@ -788,9 +791,52 @@ class Brain:
             Print a short progress summary every `print_progress` steps,
             print nothing if `print_progress=None`, by default None
         """
-        sampler_tasks = [asyncio.create_task(s.run_step(self.model))
-                         for s in self.samplers]
-        n_started = len(sampler_tasks)
+        if n_steps < len(self.samplers):
+            # Do not start a step in every sampler, but only as many as
+            # requested. Check which samplers contain unfinished steps and do
+            # those first.
+            # NOTE: if we have more unfinished steps than we are requested to
+            #       do steps, we will still have unfinished steps afterwards
+            n_incomplete = sum([s.contains_unfinished_step
+                                for s in self.samplers],
+                                )
+            # how many samplers we need to start fresh to get to n_steps
+            # samplers running including all unfinished
+            n_to_start_new = max((n_steps - n_incomplete, 0))
+            sampler_tasks = []
+            n_started = 0
+            s_idx = 0
+            while n_started < n_steps:
+                sampler = self.samplers[s_idx]
+                if sampler.contains_partial_step:
+                    sampler_tasks += [asyncio.create_task(
+                                                sampler.run_step(self.model)
+                                                          )
+                                      ]
+                    n_started += 1
+                elif n_to_start_new > 0:
+                    # we still got fresh samplers to start
+                    sampler_tasks += [asyncio.create_task(
+                                                sampler.run_step(self.model)
+                                                          )
+                                      ]
+                    n_started += 1
+                    n_to_start_new -= 1
+                else:
+                    # dont start more fresh samplers, instead put a dummy task
+                    # into sampler_tasks
+                    sampler_tasks += [asyncio.create_task(asyncio.sleep(0))]
+                # always increase sampler idx for next iter
+                s_idx += 1
+        else:
+            # more steps to do than we have samplers, so start a step in every
+            # sampler and then go into the while loop below
+            sampler_tasks = [asyncio.create_task(s.run_step(self.model))
+                             for s in self.samplers]
+            n_started = len(sampler_tasks)
+        # we only go into the loop below if the user requested more steps than
+        # we have samplers, otherwise we will skip to the last loop directly
+        # (because then n_started = n_steps)
         n_done = 0
         while n_started < n_steps:
             done, pending = await asyncio.wait(sampler_tasks,
@@ -800,6 +846,9 @@ class Brain:
                 # done sometimes?
                 sampler_idx = sampler_tasks.index(result)
                 mcstep = await result
+                if mcstep is None:
+                    # bail out because this mcstep was a dummy sampler, i.e. None
+                    continue
                 self._sampler_idxs_for_steps += [sampler_idx]
                 # run tasks/hooks
                 await self._run_tasks(mcstep=mcstep,
@@ -829,6 +878,9 @@ class Brain:
             for result in done:
                 sampler_idx = sampler_tasks.index(result)
                 mcstep = await result
+                if mcstep is None:
+                    # bail out because this mcstep is a dummy sampler, i.e. None
+                    continue
                 self._sampler_idxs_for_steps += [sampler_idx]
                 # run tasks/hooks
                 await self._run_tasks(mcstep=mcstep,
@@ -915,6 +967,19 @@ class PathChainSampler:
     def accepts(self):
         return self._accepts.copy()
 
+    @property
+    def contains_partial_step(self):
+        # check if there is an unfinished step in this sampler, which can only
+        # happen when we did reinitialize the Brain from workdir using
+        # reinitialize_from_workdir and passed finish_steps=False
+        # _run_step increases the _stepnum, so we are looking for the next step
+        step_dir = os.path.join(self.workdir,
+                                    f"{self.mcstep_foldername_prefix}"
+                                    + f"{self._stepnum+1}"
+                                    )
+        restart_file = os.path.join(step_dir, self.restart_info_fname)
+        return os.path.isfile(restart_file)
+
     def _finished_steps_from_workdir(self):
         # we iterate over all possible stepdir, this might be a bit wasteful
         # if there is other stuff in the workdir (TODO: break the loop when we
@@ -999,21 +1064,16 @@ class PathChainSampler:
         # run one MCstep from current_step
         # takes a model for SP selection
         # NOTE: we check if there is an unfinished step in here and do finsh it
-	#       if yes (this enables us to call run_for_n_steps method on a brain
-	#	with some unfinished steps, do all wnated steps in parallel,
-	#	i.e unfinshed and new without having to wait for the unfinished
-	#       steps first)
+        #       if yes (this enables us to call run_for_n_steps method on a
+        #       brain with some unfinished steps, do all wanted steps in
+        #       parallel, i.e unfinshed and new without having to wait for the
+        #       unfinished steps first)
         # _run_step increases the _stepnum, so we are looking for the next step
-        step_dir = os.path.join(self.workdir,
-                                    f"{self.mcstep_foldername_prefix}"
-                                    + f"{self._stepnum+1}"
-                                    )
-        restart_file = os.path.join(step_dir, self.restart_info_fname)
-        if os.path.isfile(restart_file):
+        if self.contains_partial_step:
             # we found a restart file, load it and finish the step
-	    # note that finish step will now always return a MC step (and not None)
-	    # becasue there is a restart file, such that run_step will always return
-	    # a valid mcstep (and not None)
+            # note that finish step will in this case always return a MC step
+            # (instead of None), because there is a restart file, such that
+            # run_step will always return a valid mcstep as expected
             return await self.finish_step(model)
         # no restart file found, so do a step from scratch
         instep = self.current_step
