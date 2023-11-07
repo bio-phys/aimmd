@@ -694,17 +694,18 @@ class TrajectoryDensityCollector:
         self._counts[self._fill_pointer:self._fill_pointer+tra_len] = counts_arr
         self._fill_pointer += tra_len
 
-    def append(self, tra_descriptors, multiplicity=1):
+    def append(self, tra_descriptors, multiplicity=1.):
         """
         Append trajectory descriptors to internal cache.
 
         Parameters:
         -----------
         tra_descriptors - numpy.array
-        multiplicity - int (default=1), weight for trajectory in ensemble,
-                       can also be 1d numpy.array with len=len(tra_descriptors)
+        multiplicity - float (default=1.), weight for trajectory in ensemble,
+                       can also be 1d np.array with len=len(tra_descriptors),
+                       i.e. one weight per configuration
         """
-        if isinstance(multiplicity, (int, np.integer)):
+        if isinstance(multiplicity, (int, np.integer, float, np.floating)):
             multiplicity = np.full((tra_descriptors.shape[0]), multiplicity)
         self._append(tra_descriptors, multiplicity)
 
@@ -725,8 +726,11 @@ class TrajectoryDensityCollector:
         model - aimmd.base.RCModel predicting commitment probabilities
         trajectories - iterator/iterable of trajectories to evaluate
         counts - None or list of weights for the trajectories,
-                 i.e. we will add every trajectory count times to the histo,
-                 if None, every trajectory is added once
+                 i.e. we will add every trajectory with weight=counts,
+                 if None, every trajectory has equal weight,
+                 can also be a list of np.arrays (each of the same lenght as
+                 the corresponding trajectory), i.e. supports different weights
+                 per configuration.
 
         """
         len_before = self._fill_pointer
@@ -764,8 +768,11 @@ class TrajectoryDensityCollector:
         model - aimmd.base.RCModel predicting commitment probabilities
         trajectories - iterator/iterable of trajectories to evaluate
         counts - None or list of weights for the trajectories,
-                 i.e. we will add every trajectory count times to the histo,
-                 if None, every trajectory is added once
+                 i.e. we will add every trajectory with weight=counts,
+                 if None, every trajectory has equal weight,
+                 can also be a list of np.arrays (each of the same lenght as
+                 the corresponding trajectory), i.e. supports different weights
+                 per configuration.
 
         """
         # add descriptors to self
