@@ -797,7 +797,7 @@ class Brain:
             # those first.
             # NOTE: if we have more unfinished steps than we are requested to
             #       do steps, we will still have unfinished steps afterwards
-            n_incomplete = sum([s.contains_unfinished_step
+            n_incomplete = sum([s.contains_partial_step
                                 for s in self.samplers],
                                 )
             # how many samplers we need to start fresh to get to n_steps
