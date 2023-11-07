@@ -467,6 +467,9 @@ class TrajectoryDensityCollector:
         -----------
         n_dim - int, dimensionality of the histogram space
         bins - number of bins in each direction
+        cache_file - h5py.File or aimmd.Storage used for caching trajectories
+                     in descriptor space to quickly (re)estimate the density
+                     of configurations propjected onto the committor
 
         """
         self.n_dim = n_dim
@@ -568,7 +571,11 @@ class TrajectoryDensityCollector:
             # (we could also write them to hdf5 as we do below)
             return self
         else:
-            self._cache.copy(".", group, name="TrajectoryDensityCollector")
+            if self._fill_pointer > 0:
+                self._cache.copy(".", group, name="TrajectoryDensityCollector")
+            else:
+                # create an empty group such that loading works
+                group.create_group("TrajectoryDensityCollector")
             state = self.__dict__.copy()
             state["_cache_file"] = "enabled"
             state["_cache"] = None
