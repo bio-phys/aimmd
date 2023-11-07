@@ -842,13 +842,19 @@ class TrajectoryDensityCollector:
         """
         dens = self.get_counts(probabilities)
         norm = np.sum(self.density_histogram)
+        if norm == 0:
+            return np.ones_like(dens)  # if we dont have any density yet
         with np.errstate(divide="ignore"):
             # ignore errors through division by zero
             factor = norm / dens
         # and replace all infs by large (but finite) values in the array
         # TODO: Do we want to use the largest finite value occuring in array instead?
         #       Currently we just use the numpy default (a "very large number")
-        factor = np.nan_to_num(factor)
+        #factor = np.nan_to_num(factor)
+        # np.nan_to_num uses 1.797e308 to replace infs when using float64
+        # (but we use something much smaller because we dont want to have
+        #  overflows when multiplying it in the selection probability)
+        factor[factor == np.inf] = 1e100
         return factor
 
 
