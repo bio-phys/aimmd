@@ -577,7 +577,10 @@ class Brain:
             # set the step as current step and adds it to samplers storage
             # also save it as step zero
             sampler._store_finished_step(step=s, save_step_pckl=True,
-                                         make_symlink=False)
+                                         make_symlink=False,
+                                         is_step_zero=True,
+                                         # ^^^ do not add to sampler._accepts
+                                         )
 
     async def reinitialize_from_workdir(self, run_tasks: bool = True,
                                         finish_steps: bool = True,
@@ -651,27 +654,39 @@ class Brain:
                     #  next sampler with exactly the same time if that ever
                     #  happens)
                     steptimes_by_samplers[sidx].remove(st)
-                    # store the finished step for the sampler it came from
-                    self.samplers[sidx]._store_finished_step(
-                                                        step=step,
-                                                        save_step_pckl=False,
-                                                        make_symlink=False,
-                                                             )
                     # Note that our initial seeded steps have mover=None,
                     # they should not trigger stepnum increase or task
                     # execution and are also not included in the list to
                     # mapp steps to samplers
                     if step.mover is not None:
+                        # store the finished step for the sampler it came from
+                        self.samplers[sidx]._store_finished_step(
+                                                        step=step,
+                                                        save_step_pckl=False,
+                                                        make_symlink=False,
+                                                                 )
                         # increase the samplers step counter
                         self.samplers[sidx]._stepnum += 1
                         # add the step to self
                         self._sampler_idxs_for_steps += [sidx]
                         if run_tasks:
                             await self._run_tasks(mcstep=step, sampler_idx=sidx)
+                    else:
+                        # store the zeroth step, do not add to sampler._accepts
+                        self.samplers[sidx]._store_finished_step(
+                                                        step=step,
+                                                        save_step_pckl=False,
+                                                        make_symlink=False,
+                                                        is_step_zero=True,
+                                                                 )
 
         info_str = f"After adding all finished steps we have a total of {self.total_steps} steps."
         if finish_steps:
             info_str += " Now working on the unfinished ones."
+        else:
+            info_str += " Note that potential unfinished steps will only be "
+            info_str += "finished when calling `Brain.run_for_n_steps()` or "
+            info_str += "Brain.run_for_n_accepts()`."
         print(info_str)
         if not finish_steps:
             # get out of here if we dont want to finish the steps (but do more)
@@ -930,6 +945,14 @@ class PathChainSampler:
         self.modelstore = modelstore
         self.sampler_idx = sampler_idx
         self.movers = movers
+        # NOTE: option to always accept the first/next transition generated
+        #       this is a bit hidden (and needs to be explicitly enabled by the
+        #       user for each Sampler), because it is a dangerous option.
+        #       It can however be very useful to quickly start a new simulation
+        #       with extended state definitions from a previous TPS simulation.
+        #       Note that we set p_acc = inf for the step that we forced to be
+        #       accepted, such that they can be found in the analysis.
+        self.always_accept_next_TP = False
         for mover in self.movers:
             mover.sampler_idx = self.sampler_idx
             # set the store for all ModelDependentpathMovers
@@ -1011,12 +1034,14 @@ class PathChainSampler:
                              save_step_pckl: bool = False,
                              make_symlink: bool = False,
                              instep: typing.Optional[MCstep] = None,
+                             is_step_zero: bool = False,
                              ):
         self.mcstep_collection.append(step)
         if save_step_pckl:
             step.save()  # write it to a pickle file next to the trajectories
         if step.accepted:
-            self._accepts.append(1)
+            if not is_step_zero:
+                self._accepts.append(1)
             self.current_step = step
             if make_symlink:
                 os.symlink(step.directory, os.path.join(
@@ -1026,7 +1051,10 @@ class PathChainSampler:
                                                         )
                            )
         else:
-            self._accepts.append(0)
+            if not is_step_zero:
+                # we should never have a zeroth step that is not accepted, but
+                # to be sure... :)
+                self._accepts.append(0)
             if make_symlink:
                 # link the old state as current/accepted state
                 os.symlink(instep.directory,
@@ -1149,6 +1177,18 @@ class PathChainSampler:
                 # remove the restart file
                 os.remove(os.path.join(step_dir, self.restart_info_fname))
                 done = True
+
+        # check if we should accept unconditionally, i.e. if it is a TP but
+        # would not have been accepted otherwise (see self.__init__ for more)
+        if self.always_accept_next_TP and (outstep.path is not None):
+            # can (and should) only accept steps that generated a new transition
+            # always set to False to make sure the next step is only accepted
+            # if the MC criterion allows it, even if this one would be accepted
+            self.always_accept_next_TP = False
+            if not outstep.accepted:
+                # modify step only if it would not have been accepted anyway
+                outstep.accepted = True
+                outstep.p_acc = np.inf
 
         self._store_finished_step(outstep, save_step_pckl=True,
                                   make_symlink=True, instep=instep,
