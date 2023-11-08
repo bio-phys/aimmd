@@ -577,9 +577,14 @@ class Brain:
             # set the step as current step and adds it to samplers storage
             # also save it as step zero
             sampler._store_finished_step(step=s, save_step_pckl=True,
-                                         make_symlink=False)
+                                         make_symlink=False,
+                                         is_step_zero=True,
+                                         # ^^^ do not add to sampler._accepts
+                                         )
 
-    async def reinitialize_from_workdir(self, run_tasks: bool = True):
+    async def reinitialize_from_workdir(self, run_tasks: bool = True,
+                                        finish_steps: bool = True,
+                                        ):
         """
         Reinitialize the `Brain` from an existing working/simulation directory.
 
@@ -608,6 +613,18 @@ class Brain:
         ----------
         run_tasks : bool, optional
             If we should run the `BrainTask`s, by default True
+        finish_steps : bool, optional
+            If we should finish the unfinished steps, by default True.
+            If False, we will put the unfinished steps into the respective
+            samplers and finish/continue them as soon as we run again.
+            NOTE, that it can be beneficial to set finish_steps=False if you
+            intend to add more steps than the unfinished ones.
+            You would then call `run_for_n_steps` or `run_for_n_accepts`
+            directly after this function with the amount of steps/accepts you
+            want to add. The benefit of this strategy is that the new and the
+            unfinished steps will then be done concurrently, instead of waiting
+            for the unfinished steps to be done and then after they are all
+            done start the new steps.
 
         Raises
         ------
@@ -637,26 +654,43 @@ class Brain:
                     #  next sampler with exactly the same time if that ever
                     #  happens)
                     steptimes_by_samplers[sidx].remove(st)
-                    # store the finished step for the sampler it came from
-                    self.samplers[sidx]._store_finished_step(
-                                                        step=step,
-                                                        save_step_pckl=False,
-                                                        make_symlink=False,
-                                                             )
                     # Note that our initial seeded steps have mover=None,
                     # they should not trigger stepnum increase or task
                     # execution and are also not included in the list to
                     # mapp steps to samplers
                     if step.mover is not None:
+                        # store the finished step for the sampler it came from
+                        self.samplers[sidx]._store_finished_step(
+                                                        step=step,
+                                                        save_step_pckl=False,
+                                                        make_symlink=False,
+                                                                 )
                         # increase the samplers step counter
                         self.samplers[sidx]._stepnum += 1
                         # add the step to self
                         self._sampler_idxs_for_steps += [sidx]
                         if run_tasks:
                             await self._run_tasks(mcstep=step, sampler_idx=sidx)
+                    else:
+                        # store the zeroth step, do not add to sampler._accepts
+                        self.samplers[sidx]._store_finished_step(
+                                                        step=step,
+                                                        save_step_pckl=False,
+                                                        make_symlink=False,
+                                                        is_step_zero=True,
+                                                                 )
 
-        print("After adding all finished steps we have a total of "
-              f"{self.total_steps} steps. Now working on the unfinished ones.")
+        info_str = f"After adding all finished steps we have a total of {self.total_steps} steps."
+        if finish_steps:
+            info_str += " Now working on the unfinished ones."
+        else:
+            info_str += " Note that potential unfinished steps will only be "
+            info_str += "finished when calling `Brain.run_for_n_steps()` or "
+            info_str += "Brain.run_for_n_accepts()`."
+        print(info_str)
+        if not finish_steps:
+            # get out of here if we dont want to finish the steps (but do more)
+            return
         # now we should only have unfinished steps left
         # we run them by running finish_step in each sampler, it finishes and
         # returns the step or returns None if no unfinished steps are present
@@ -772,9 +806,52 @@ class Brain:
             Print a short progress summary every `print_progress` steps,
             print nothing if `print_progress=None`, by default None
         """
-        sampler_tasks = [asyncio.create_task(s.run_step(self.model))
-                         for s in self.samplers]
-        n_started = len(sampler_tasks)
+        if n_steps < len(self.samplers):
+            # Do not start a step in every sampler, but only as many as
+            # requested. Check which samplers contain unfinished steps and do
+            # those first.
+            # NOTE: if we have more unfinished steps than we are requested to
+            #       do steps, we will still have unfinished steps afterwards
+            n_incomplete = sum([s.contains_partial_step
+                                for s in self.samplers],
+                                )
+            # how many samplers we need to start fresh to get to n_steps
+            # samplers running including all unfinished
+            n_to_start_new = max((n_steps - n_incomplete, 0))
+            sampler_tasks = []
+            n_started = 0
+            s_idx = 0
+            while n_started < n_steps:
+                sampler = self.samplers[s_idx]
+                if sampler.contains_partial_step:
+                    sampler_tasks += [asyncio.create_task(
+                                                sampler.run_step(self.model)
+                                                          )
+                                      ]
+                    n_started += 1
+                elif n_to_start_new > 0:
+                    # we still got fresh samplers to start
+                    sampler_tasks += [asyncio.create_task(
+                                                sampler.run_step(self.model)
+                                                          )
+                                      ]
+                    n_started += 1
+                    n_to_start_new -= 1
+                else:
+                    # dont start more fresh samplers, instead put a dummy task
+                    # into sampler_tasks
+                    sampler_tasks += [asyncio.create_task(asyncio.sleep(0))]
+                # always increase sampler idx for next iter
+                s_idx += 1
+        else:
+            # more steps to do than we have samplers, so start a step in every
+            # sampler and then go into the while loop below
+            sampler_tasks = [asyncio.create_task(s.run_step(self.model))
+                             for s in self.samplers]
+            n_started = len(sampler_tasks)
+        # we only go into the loop below if the user requested more steps than
+        # we have samplers, otherwise we will skip to the last loop directly
+        # (because then n_started = n_steps)
         n_done = 0
         while n_started < n_steps:
             done, pending = await asyncio.wait(sampler_tasks,
@@ -784,6 +861,9 @@ class Brain:
                 # done sometimes?
                 sampler_idx = sampler_tasks.index(result)
                 mcstep = await result
+                if mcstep is None:
+                    # bail out because this mcstep was a dummy sampler, i.e. None
+                    continue
                 self._sampler_idxs_for_steps += [sampler_idx]
                 # run tasks/hooks
                 await self._run_tasks(mcstep=mcstep,
@@ -813,6 +893,9 @@ class Brain:
             for result in done:
                 sampler_idx = sampler_tasks.index(result)
                 mcstep = await result
+                if mcstep is None:
+                    # bail out because this mcstep is a dummy sampler, i.e. None
+                    continue
                 self._sampler_idxs_for_steps += [sampler_idx]
                 # run tasks/hooks
                 await self._run_tasks(mcstep=mcstep,
@@ -862,6 +945,14 @@ class PathChainSampler:
         self.modelstore = modelstore
         self.sampler_idx = sampler_idx
         self.movers = movers
+        # NOTE: option to always accept the first/next transition generated
+        #       this is a bit hidden (and needs to be explicitly enabled by the
+        #       user for each Sampler), because it is a dangerous option.
+        #       It can however be very useful to quickly start a new simulation
+        #       with extended state definitions from a previous TPS simulation.
+        #       Note that we set p_acc = inf for the step that we forced to be
+        #       accepted, such that they can be found in the analysis.
+        self.always_accept_next_TP = False
         for mover in self.movers:
             mover.sampler_idx = self.sampler_idx
             # set the store for all ModelDependentpathMovers
@@ -899,6 +990,19 @@ class PathChainSampler:
     def accepts(self):
         return self._accepts.copy()
 
+    @property
+    def contains_partial_step(self):
+        # check if there is an unfinished step in this sampler, which can only
+        # happen when we did reinitialize the Brain from workdir using
+        # reinitialize_from_workdir and passed finish_steps=False
+        # _run_step increases the _stepnum, so we are looking for the next step
+        step_dir = os.path.join(self.workdir,
+                                    f"{self.mcstep_foldername_prefix}"
+                                    + f"{self._stepnum+1}"
+                                    )
+        restart_file = os.path.join(step_dir, self.restart_info_fname)
+        return os.path.isfile(restart_file)
+
     def _finished_steps_from_workdir(self):
         # we iterate over all possible stepdir, this might be a bit wasteful
         # if there is other stuff in the workdir (TODO: break the loop when we
@@ -930,12 +1034,14 @@ class PathChainSampler:
                              save_step_pckl: bool = False,
                              make_symlink: bool = False,
                              instep: typing.Optional[MCstep] = None,
+                             is_step_zero: bool = False,
                              ):
         self.mcstep_collection.append(step)
         if save_step_pckl:
             step.save()  # write it to a pickle file next to the trajectories
         if step.accepted:
-            self._accepts.append(1)
+            if not is_step_zero:
+                self._accepts.append(1)
             self.current_step = step
             if make_symlink:
                 os.symlink(step.directory, os.path.join(
@@ -945,7 +1051,10 @@ class PathChainSampler:
                                                         )
                            )
         else:
-            self._accepts.append(0)
+            if not is_step_zero:
+                # we should never have a zeroth step that is not accepted, but
+                # to be sure... :)
+                self._accepts.append(0)
             if make_symlink:
                 # link the old state as current/accepted state
                 os.symlink(instep.directory,
@@ -982,6 +1091,19 @@ class PathChainSampler:
     async def run_step(self, model):
         # run one MCstep from current_step
         # takes a model for SP selection
+        # NOTE: we check if there is an unfinished step in here and do finsh it
+        #       if yes (this enables us to call run_for_n_steps method on a
+        #       brain with some unfinished steps, do all wanted steps in
+        #       parallel, i.e unfinshed and new without having to wait for the
+        #       unfinished steps first)
+        # _run_step increases the _stepnum, so we are looking for the next step
+        if self.contains_partial_step:
+            # we found a restart file, load it and finish the step
+            # note that finish step will in this case always return a MC step
+            # (instead of None), because there is a restart file, such that
+            # run_step will always return a valid mcstep as expected
+            return await self.finish_step(model)
+        # no restart file found, so do a step from scratch
         instep = self.current_step
         if instep is None:
             logger.warning("Sampler %d: Instep is None."
@@ -1055,6 +1177,18 @@ class PathChainSampler:
                 # remove the restart file
                 os.remove(os.path.join(step_dir, self.restart_info_fname))
                 done = True
+
+        # check if we should accept unconditionally, i.e. if it is a TP but
+        # would not have been accepted otherwise (see self.__init__ for more)
+        if self.always_accept_next_TP and (outstep.path is not None):
+            # can (and should) only accept steps that generated a new transition
+            # always set to False to make sure the next step is only accepted
+            # if the MC criterion allows it, even if this one would be accepted
+            self.always_accept_next_TP = False
+            if not outstep.accepted:
+                # modify step only if it would not have been accepted anyway
+                outstep.accepted = True
+                outstep.p_acc = np.inf
 
         self._store_finished_step(outstep, save_step_pckl=True,
                                   make_symlink=True, instep=instep,

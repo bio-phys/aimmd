@@ -519,8 +519,11 @@ class TrajectoryDensityCollector:
             # create cache, also replaces self._descriptors
             self._create_h5py_cache(val)
             self._cache_file = val
-            self._fill_pointer = 0  # reset fill pointer so we can use append
-            self.append(tra_descriptors=descriptors, multiplicity=counts)
+            if self._fill_pointer > 0:
+                # append only if there is something to append
+                # (otherwise we would create the h5py dsets with descriptor_dim=0
+                self._fill_pointer = 0  # reset fill pointer so we can use append
+                self.append(tra_descriptors=descriptors, multiplicity=counts)
 
     def _create_h5py_cache(self, cache_file, copy_from=None):
         # the next line looks weird, but ensures the user can pass either
@@ -645,7 +648,7 @@ class TrajectoryDensityCollector:
                                             name="counts",
                                             shape=(add,),
                                             maxshape=(None,),
-                                            dtype="i8",
+                                            dtype="f",
                                                       )
         else:
             # possibly extend existing datasets
@@ -691,17 +694,18 @@ class TrajectoryDensityCollector:
         self._counts[self._fill_pointer:self._fill_pointer+tra_len] = counts_arr
         self._fill_pointer += tra_len
 
-    def append(self, tra_descriptors, multiplicity=1):
+    def append(self, tra_descriptors, multiplicity=1.):
         """
         Append trajectory descriptors to internal cache.
 
         Parameters:
         -----------
         tra_descriptors - numpy.array
-        multiplicity - int (default=1), weight for trajectory in ensemble,
-                       can also be 1d numpy.array with len=len(tra_descriptors)
+        multiplicity - float (default=1.), weight for trajectory in ensemble,
+                       can also be 1d np.array with len=len(tra_descriptors),
+                       i.e. one weight per configuration
         """
-        if isinstance(multiplicity, (int, np.integer)):
+        if isinstance(multiplicity, (int, np.integer, float, np.floating)):
             multiplicity = np.full((tra_descriptors.shape[0]), multiplicity)
         self._append(tra_descriptors, multiplicity)
 
@@ -722,8 +726,11 @@ class TrajectoryDensityCollector:
         model - aimmd.base.RCModel predicting commitment probabilities
         trajectories - iterator/iterable of trajectories to evaluate
         counts - None or list of weights for the trajectories,
-                 i.e. we will add every trajectory count times to the histo,
-                 if None, every trajectory is added once
+                 i.e. we will add every trajectory with weight=counts,
+                 if None, every trajectory has equal weight,
+                 can also be a list of np.arrays (each of the same lenght as
+                 the corresponding trajectory), i.e. supports different weights
+                 per configuration.
 
         """
         len_before = self._fill_pointer
@@ -761,8 +768,11 @@ class TrajectoryDensityCollector:
         model - aimmd.base.RCModel predicting commitment probabilities
         trajectories - iterator/iterable of trajectories to evaluate
         counts - None or list of weights for the trajectories,
-                 i.e. we will add every trajectory count times to the histo,
-                 if None, every trajectory is added once
+                 i.e. we will add every trajectory with weight=counts,
+                 if None, every trajectory has equal weight,
+                 can also be a list of np.arrays (each of the same lenght as
+                 the corresponding trajectory), i.e. supports different weights
+                 per configuration.
 
         """
         # add descriptors to self
@@ -824,16 +834,28 @@ class TrajectoryDensityCollector:
         """
         Return the 'flattening factor' for the observed density of points.
 
-        The factor is calculated as
-         (total_count + n_allowed_bins) / (counts[probabilities] + 1),
-        i.e. the factor is 1 / rho(probabilities),
-        but we use the Laplace-m-estimator / Add-one-smoothing
-        to make sure we do not have zero density anywhere.
-
+        The factor is calculated as total_count / counts[probabilities],
+        i.e. the factor is 1 / rho(probabilities).
+        Note that we replace the potential infinite values appearing if
+        the counts in a bin are zero by a large but finite value.
+        I.e. instead of our estimated rho=0 we use 0 < rho << 1.
         """
         dens = self.get_counts(probabilities)
         norm = np.sum(self.density_histogram)
-        return (norm + self._n_allowed_bins) / (dens + 1)
+        if norm == 0:
+            return np.ones_like(dens)  # if we dont have any density yet
+        with np.errstate(divide="ignore"):
+            # ignore errors through division by zero
+            factor = norm / dens
+        # and replace all infs by large (but finite) values in the array
+        # TODO: Do we want to use the largest finite value occuring in array instead?
+        #       Currently we just use the numpy default (a "very large number")
+        #factor = np.nan_to_num(factor)
+        # np.nan_to_num uses 1.797e308 to replace infs when using float64
+        # (but we use something much smaller because we dont want to have
+        #  overflows when multiplying it in the selection probability)
+        factor[factor == np.inf] = 1e100
+        return factor
 
 
 class TrajectoryDensityCollectorAsync(TrajectoryDensityCollector):

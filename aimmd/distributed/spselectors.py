@@ -351,7 +351,7 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
                                                         model=model)
                                             for t in self.trajectories + [trajectory])
                                           )
-        biases_for_SP_ensemble = all_biases[:-1]
+        biases_for_SP_ensemble = np.concatenate(all_biases[:-1], axis=0)
         biases_for_new_traj = all_biases[-1]
         Z_bias = np.sum(biases_for_SP_ensemble)
         return Z_bias / np.sum(biases_for_new_traj)
