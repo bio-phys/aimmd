@@ -583,7 +583,7 @@ class Brain:
                                          )
 
     async def reinitialize_from_workdir(self, run_tasks: bool = True,
-                                        finish_steps: bool = True,
+                                        finish_steps: bool = False,
                                         ):
         """
         Reinitialize the `Brain` from an existing working/simulation directory.
@@ -614,7 +614,7 @@ class Brain:
         run_tasks : bool, optional
             If we should run the `BrainTask`s, by default True
         finish_steps : bool, optional
-            If we should finish the unfinished steps, by default True.
+            If we should finish the unfinished steps, by default False.
             If False, we will put the unfinished steps into the respective
             samplers and finish/continue them as soon as we run again.
             NOTE, that it can be beneficial to set finish_steps=False if you
