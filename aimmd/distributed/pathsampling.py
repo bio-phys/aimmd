@@ -260,12 +260,12 @@ class DensityCollectionTask(BrainTask):
                     len(mcstep_collection)
                     for mcstep_collection in brain.storage.mcstep_collections
                                          ]
-        # Note that this below is an if because reevaluation should be
-        # independent of adding new TPs in the same MCStep
-        if brain.total_steps % self.recreate_interval == 0:
-            # reevaluation time
-            async with _SEMAPHORES["BRAIN_MODEL"]:
-                await dc.reevaluate_density(model=self.model)
+            # Note that this below is an if because reevaluation should be
+            # independent of adding new TPs in the same MCStep
+            if brain.total_steps % self.recreate_interval == 0:
+                # reevaluation time
+                async with _SEMAPHORES["BRAIN_MODEL"]:
+                    await dc.reevaluate_density(model=self.model)
 
     async def _run_custom(self, brain, mcstep: MCstep, sampler_idx):
         dc = self.model.density_collector
