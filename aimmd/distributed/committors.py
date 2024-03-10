@@ -194,7 +194,7 @@ class CommittorSimulation:
             return val
 
         # TODO: should some of these be properties?
-        self.workdir = os.path.abspath(workdir)
+        self.workdir = os.path.relpath(workdir)
         self.starting_configurations = starting_configurations
         self.states = states
         self.engine_cls = ensure_list(val=engine_cls,
