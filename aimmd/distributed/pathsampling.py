@@ -26,6 +26,7 @@ import numpy as np
 
 from asyncmd.mdengine import EngineError, EngineCrashedError
 from asyncmd.trajectory.propagate import MaxStepsReachedError
+from asyncmd.trajectory.functionwrapper import TrajectoryFunctionWrapper
 
 from ._config import _SEMAPHORES
 from .. import TrainSet
@@ -378,6 +379,7 @@ class Brain:
         #       place?! Has the benefit that we dont need to pass it to every
         #       mover, but the big drawback of assuming we only ever want to do
         #       *T*PS with this class
+        self._check_model(model=model)
         self.model = model
         self.workdir = os.path.relpath(workdir)
         self.storage = storage
@@ -433,6 +435,84 @@ class Brain:
                                           mover_weights_per_sampler)
                                       )
                          ]
+
+    def _check_model(self, model):
+        """Basic sanity checks for model before TPS simulation.
+
+        Checks:
+            - that the model has a descriptor transform and if it is async
+            - that the model has states and if they are callable and async
+            - the model.density_collector.cache file is set to self.storage
+        """
+        # if we warn about anything not beeing set as expected we should also
+        # tell the user about model.ee_params (which will then most likely also
+        #  be at their defaults)
+        any_warned = False
+        # descriptor_transform check
+        if not isinstance(model.descriptor_transform, TrajectoryFunctionWrapper):
+            if model.descriptor_transform is None:
+                # not set at all, i.e. to None
+                warn_str = "The model has no `descriptor_transform` set."
+            else:
+                # it is set but not to what we expect
+                warn_str = "The model has a `descriptor_transform` that is of "
+                warn_str += f"type {type(model.descriptor_transform)}."
+            logger.warning(("%s In most cases the descriptor transform should "
+                            "be a `asyncmd.trajectory.functionwrapper."
+                            "TrajectoryFunctionWrapper` (subclass). "
+                            "If your model can not operate on `asyncmd."
+                            "Trajectory` objects this TPS simulation will most"
+                            " likely crash."),
+                           warn_str
+                           )
+            any_warned = True
+        # states check (not so important, in practice we only infer the number
+        #               of outputs for the model from the number of states)
+        if model.states is None:
+            logger.warning("model.states is not set. This might lead to "
+                           "unexpected behavior and it is recommended to set "
+                           "the states to `asyncmd.trakectory.functionwrapper."
+                           ".TrajectoryFunctionwrapper subclasses."
+                           )
+            any_warned = True
+        if not all(isinstance(s, TrajectoryFunctionWrapper)
+                   for s in model.states
+                   ):
+            logger.warning("Not all model.states are `asyncmd.trajectory."
+                           "functionwrapper.TrajectoryFunctionwrapper` "
+                           "subclasses. This might lead to unexpected behavior"
+                           " and it is recommended to set them to appropriate"
+                           "values."
+                           )
+            any_warned = True
+        # density collector cache file
+        # TODO: what is the best thing to do here?
+        #       check if it is set to the 'correct' file (i.e. self.storage),
+        #       -> If it is None we set it to self.storage and warn about it
+        #       -> If it is set to a value we dont (re)set it but warn if that
+        #          value is not self.storage?
+        if not (model.density_collector.cache_file is self.storage.file):
+            # Note: check for the h5-file and not the storage class object
+            if model.density_collector.cache_file is None:
+                warn_str = "`model.density_collector.cache_file` is not set."
+            else:
+                warn_str = "`model.density_collector.cache_file` is not set to"
+                warn_str += "`self.storage`."
+            logger.warning("%s If this was not intended it is recommended to "
+                           "set `model.density_collector.cache_file` to the "
+                           "same value as `self.storage` to avoid unedxpected "
+                           "side-effects."
+                           )
+            any_warned = True
+        # If we warned about model.descriptor_transform, model.states or
+        # model.density_collector.cache_file we also should let the users know
+        # to check the ee_params (which are potentially at their defaults)
+        if any_warned:
+            logger.warning("It is likely that you also want to check the"
+                           "`model.ee_params` dictionary and potentially "
+                           "modify the default values in it to ensure that the"
+                           "iterative training is controlled properly."
+                           )
 
     @property
     def total_steps(self):
