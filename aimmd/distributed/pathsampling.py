@@ -379,7 +379,7 @@ class Brain:
         #       mover, but the big drawback of assuming we only ever want to do
         #       *T*PS with this class
         self.model = model
-        self.workdir = os.path.abspath(workdir)
+        self.workdir = os.path.relpath(workdir)
         self.storage = storage
         self.tasks = tasks
         # TODO: sanity check?
@@ -940,7 +940,7 @@ class PathChainSampler:
     def __init__(self, workdir: str, mcstep_collection, modelstore,
                  sampler_idx: int, movers: list[PathMover],
                  mover_weights: typing.Optional["list[float]"] = None):
-        self.workdir = os.path.abspath(workdir)
+        self.workdir = os.path.relpath(workdir)
         self.mcstep_collection = mcstep_collection
         self.modelstore = modelstore
         self.sampler_idx = sampler_idx
