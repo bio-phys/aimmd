@@ -1130,12 +1130,8 @@ class PathChainSampler:
             if make_symlink:
                 fd = os.open(self.workdir, os.O_RDONLY)
                 os.symlink(os.path.relpath(step.directory, self.workdir),
-                           os.path.relpath(os.path.join(
-                                                self.workdir,
-                                                f"{self.mcstate_name_prefix}"
-                                                + f"{self._stepnum}"
-                                                        ), self.workdir),
-                            dir_fd=fd,
+                           f"{self.mcstate_name_prefix}{self._stepnum}",
+                           dir_fd=fd,
                            )
                 os.close(fd)
         else:
@@ -1145,12 +1141,12 @@ class PathChainSampler:
                 self._accepts.append(0)
             if make_symlink:
                 # link the old state as current/accepted state
-                os.symlink(instep.directory,
-                           os.path.join(self.workdir,
-                                        f"{self.mcstate_name_prefix}"
-                                        + f"{self._stepnum}"
-                                        )
+                fd = os.open(self.workdir, os.O_RDONLY)
+                os.symlink(os.path.relpath(instep.directory, self.workdir),
+                           f"{self.mcstate_name_prefix}{self._stepnum}",
+                           dir_fd=fd,
                            )
+                os.close(fd)
 
     async def finish_step(self, model):
         # _run_step increases the _stepnum, so we are looking for the next step
