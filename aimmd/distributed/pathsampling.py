@@ -491,17 +491,21 @@ class Brain:
         #       -> If it is None we set it to storage and warn about it
         #       -> If it is set to a value we dont (re)set it but warn if that
         #          value is not storage?
-        if not (model.density_collector.cache_file is storage.file):
-            # Note: check for the h5-file and not the storage class object
+        if not ((model.density_collector.cache_file is storage)
+                or (model.density_collector.cache_file is storage.file)
+                ):
+            # Note: check for the h5-file and the storage class object,
+            #       it could be either of the two
             if model.density_collector.cache_file is None:
                 warn_str = "`model.density_collector.cache_file` is not set."
             else:
                 warn_str = "`model.density_collector.cache_file` is not set to"
                 warn_str += "`storage`."
-            logger.warning("%s If this was not intended it is recommended to "
-                           "set `model.density_collector.cache_file` to the "
-                           "same value as `storage` to avoid unedxpected "
-                           "side-effects."
+            logger.warning(("%s If this was not intended it is recommended to "
+                            "set `model.density_collector.cache_file` to the "
+                            "same value as `storage` to avoid unexpected "
+                            "side-effects."
+                            ), warn_str,
                            )
             any_warned = True
         # If we warned about model.descriptor_transform, model.states or
