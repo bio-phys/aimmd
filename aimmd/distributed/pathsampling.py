@@ -1128,14 +1128,16 @@ class PathChainSampler:
                 self._accepts.append(1)
             self.current_step = step
             if make_symlink:
+                fd = os.open(self.workdir)
                 os.symlink(os.path.relpath(step.directory, self.workdir),
                            os.path.relpath(os.path.join(
                                                 self.workdir,
                                                 f"{self.mcstate_name_prefix}"
                                                 + f"{self._stepnum}"
                                                         ), self.workdir),
-                            dir_fd=self.workdir,
+                            dir_fd=fd,
                            )
+                os.close(fd)
         else:
             if not is_step_zero:
                 # we should never have a zeroth step that is not accepted, but
