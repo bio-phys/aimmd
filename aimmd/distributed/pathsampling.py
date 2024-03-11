@@ -379,7 +379,7 @@ class Brain:
         #       place?! Has the benefit that we dont need to pass it to every
         #       mover, but the big drawback of assuming we only ever want to do
         #       *T*PS with this class
-        self._check_model(model=model)
+        self._check_model(model=model, storage=storage)
         self.model = model
         self.workdir = os.path.relpath(workdir)
         self.storage = storage
@@ -436,13 +436,13 @@ class Brain:
                                       )
                          ]
 
-    def _check_model(self, model):
+    def _check_model(self, model, storage):
         """Basic sanity checks for model before TPS simulation.
 
         Checks:
             - that the model has a descriptor transform and if it is async
             - that the model has states and if they are callable and async
-            - the model.density_collector.cache file is set to self.storage
+            - the model.density_collector.cache file is set to storage
         """
         # if we warn about anything not beeing set as expected we should also
         # tell the user about model.ee_params (which will then most likely also
@@ -487,20 +487,20 @@ class Brain:
             any_warned = True
         # density collector cache file
         # TODO: what is the best thing to do here?
-        #       check if it is set to the 'correct' file (i.e. self.storage),
-        #       -> If it is None we set it to self.storage and warn about it
+        #       check if it is set to the 'correct' file (i.e. storage),
+        #       -> If it is None we set it to storage and warn about it
         #       -> If it is set to a value we dont (re)set it but warn if that
-        #          value is not self.storage?
-        if not (model.density_collector.cache_file is self.storage.file):
+        #          value is not storage?
+        if not (model.density_collector.cache_file is storage.file):
             # Note: check for the h5-file and not the storage class object
             if model.density_collector.cache_file is None:
                 warn_str = "`model.density_collector.cache_file` is not set."
             else:
                 warn_str = "`model.density_collector.cache_file` is not set to"
-                warn_str += "`self.storage`."
+                warn_str += "`storage`."
             logger.warning("%s If this was not intended it is recommended to "
                            "set `model.density_collector.cache_file` to the "
-                           "same value as `self.storage` to avoid unedxpected "
+                           "same value as `storage` to avoid unedxpected "
                            "side-effects."
                            )
             any_warned = True
