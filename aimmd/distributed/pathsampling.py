@@ -1128,7 +1128,7 @@ class PathChainSampler:
                 self._accepts.append(1)
             self.current_step = step
             if make_symlink:
-                fd = os.open(self.workdir)
+                fd = os.open(self.workdir, os.O_RDONLY)
                 os.symlink(os.path.relpath(step.directory, self.workdir),
                            os.path.relpath(os.path.join(
                                                 self.workdir,
