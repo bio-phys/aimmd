@@ -668,6 +668,7 @@ class Brain:
 
     async def reinitialize_from_workdir(self, run_tasks: bool = True,
                                         finish_steps: bool = False,
+                                        resave_mcstep_pckl: bool = False,
                                         ):
         """
         Reinitialize the `Brain` from an existing working/simulation directory.
@@ -709,6 +710,13 @@ class Brain:
             unfinished steps will then be done concurrently, instead of waiting
             for the unfinished steps to be done and then after they are all
             done start the new steps.
+        resave_mcstep_pckl : bool, optional
+            Whether we should rewrite the MCStep pickle file, by default False.
+            This can be useful e.g. to update all python objects to a new
+            version of aimmd/asyncmd or to update all filepaths/workdirs after
+            moving the simulation.
+            Note that the previous mcstep pickle files will be moved and not
+            overwritten.
 
         Raises
         ------
@@ -745,9 +753,9 @@ class Brain:
                     if step.mover is not None:
                         # store the finished step for the sampler it came from
                         self.samplers[sidx]._store_finished_step(
-                                                        step=step,
-                                                        save_step_pckl=False,
-                                                        make_symlink=False,
+                                            step=step,
+                                            save_step_pckl=resave_mcstep_pckl,
+                                            make_symlink=False,
                                                                  )
                         # increase the samplers step counter
                         self.samplers[sidx]._stepnum += 1
@@ -758,10 +766,10 @@ class Brain:
                     else:
                         # store the zeroth step, do not add to sampler._accepts
                         self.samplers[sidx]._store_finished_step(
-                                                        step=step,
-                                                        save_step_pckl=False,
-                                                        make_symlink=False,
-                                                        is_step_zero=True,
+                                            step=step,
+                                            save_step_pckl=resave_mcstep_pckl,
+                                            make_symlink=False,
+                                            is_step_zero=True,
                                                                  )
 
         info_str = f"After adding all finished steps we have a total of {self.total_steps} steps."
@@ -1122,7 +1130,23 @@ class PathChainSampler:
                              ):
         self.mcstep_collection.append(step)
         if save_step_pckl:
-            step.save()  # write it to a pickle file next to the trajectories
+            pickle_fname = os.path.join(step.directory, step.default_savename)
+            if os.path.isfile(pickle_fname):
+                # move any potential previous pickle files to make sure we can
+                # go back if we need to
+                num = 1
+                new_fname = pickle_fname + str(num)
+                while os.path.isfile(new_fname):
+                    num += 1
+                    new_fname = pickle_fname + str(num)
+                logger.info("MCStep pickle file (%s) exists already, "
+                            "moving to %s before writing the new pickle file.",
+                            pickle_fname, new_fname,
+                            )
+                os.rename(pickle_fname, new_fname)
+            # and write the pickle file next to the trajectories
+            # at pickle_fname
+            step.save()
         if step.accepted:
             if not is_step_zero:
                 self._accepts.append(1)
