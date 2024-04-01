@@ -26,6 +26,7 @@ import numpy as np
 
 from asyncmd.mdengine import EngineError, EngineCrashedError
 from asyncmd.trajectory.propagate import MaxStepsReachedError
+from asyncmd.trajectory.functionwrapper import TrajectoryFunctionWrapper
 
 from ._config import _SEMAPHORES
 from .. import TrainSet
@@ -378,8 +379,9 @@ class Brain:
         #       place?! Has the benefit that we dont need to pass it to every
         #       mover, but the big drawback of assuming we only ever want to do
         #       *T*PS with this class
+        self._check_model(model=model, storage=storage)
         self.model = model
-        self.workdir = os.path.abspath(workdir)
+        self.workdir = os.path.relpath(workdir)
         self.storage = storage
         self.tasks = tasks
         # TODO: sanity check?
@@ -433,6 +435,88 @@ class Brain:
                                           mover_weights_per_sampler)
                                       )
                          ]
+
+    def _check_model(self, model, storage):
+        """Basic sanity checks for model before TPS simulation.
+
+        Checks:
+            - that the model has a descriptor transform and if it is async
+            - that the model has states and if they are callable and async
+            - the model.density_collector.cache file is set to storage
+        """
+        # if we warn about anything not beeing set as expected we should also
+        # tell the user about model.ee_params (which will then most likely also
+        #  be at their defaults)
+        any_warned = False
+        # descriptor_transform check
+        if not isinstance(model.descriptor_transform, TrajectoryFunctionWrapper):
+            if model.descriptor_transform is None:
+                # not set at all, i.e. to None
+                warn_str = "The model has no `descriptor_transform` set."
+            else:
+                # it is set but not to what we expect
+                warn_str = "The model has a `descriptor_transform` that is of "
+                warn_str += f"type {type(model.descriptor_transform)}."
+            logger.warning(("%s In most cases the descriptor transform should "
+                            "be a `asyncmd.trajectory.functionwrapper."
+                            "TrajectoryFunctionWrapper` (subclass). "
+                            "If your model can not operate on `asyncmd."
+                            "Trajectory` objects this TPS simulation will most"
+                            " likely crash."),
+                           warn_str
+                           )
+            any_warned = True
+        # states check (not so important, in practice we only infer the number
+        #               of outputs for the model from the number of states)
+        if model.states is None:
+            logger.warning("model.states is not set. This will lead to "
+                           "unexpected behavior and it is recommended to set "
+                           "the states to `asyncmd.trajectory.functionwrapper."
+                           ".TrajectoryFunctionwrapper subclasses."
+                           )
+            any_warned = True
+        elif not all(isinstance(s, TrajectoryFunctionWrapper)
+                   for s in model.states
+                   ):
+            logger.warning("Not all model.states are `asyncmd.trajectory."
+                           "functionwrapper.TrajectoryFunctionwrapper` "
+                           "subclasses. This might lead to unexpected behavior"
+                           " and it is recommended to set them to appropriate"
+                           "values."
+                           )
+            any_warned = True
+        # density collector cache file
+        # TODO: what is the best thing to do here?
+        #       check if it is set to the 'correct' file (i.e. storage),
+        #       -> If it is None we set it to storage and warn about it
+        #       -> If it is set to a value we dont (re)set it but warn if that
+        #          value is not storage?
+        if not ((model.density_collector.cache_file is storage)
+                or (model.density_collector.cache_file is storage.file)
+                ):
+            # Note: check for the h5-file and the storage class object,
+            #       it could be either of the two
+            if model.density_collector.cache_file is None:
+                warn_str = "`model.density_collector.cache_file` is not set."
+            else:
+                warn_str = "`model.density_collector.cache_file` is not set to"
+                warn_str += "`storage`."
+            logger.warning(("%s If this was not intended it is recommended to "
+                            "set `model.density_collector.cache_file` to the "
+                            "same value as `storage` to avoid unexpected "
+                            "side-effects."
+                            ), warn_str,
+                           )
+            any_warned = True
+        # If we warned about model.descriptor_transform, model.states or
+        # model.density_collector.cache_file we also should let the users know
+        # to check the ee_params (which are potentially at their defaults)
+        if any_warned:
+            logger.warning("It is likely that you also want to check the"
+                           "`model.ee_params` dictionary and potentially "
+                           "modify the default values in it to ensure that the"
+                           "iterative training is controlled properly."
+                           )
 
     @property
     def total_steps(self):
@@ -584,6 +668,7 @@ class Brain:
 
     async def reinitialize_from_workdir(self, run_tasks: bool = True,
                                         finish_steps: bool = False,
+                                        resave_mcstep_pckl: bool = False,
                                         ):
         """
         Reinitialize the `Brain` from an existing working/simulation directory.
@@ -625,6 +710,13 @@ class Brain:
             unfinished steps will then be done concurrently, instead of waiting
             for the unfinished steps to be done and then after they are all
             done start the new steps.
+        resave_mcstep_pckl : bool, optional
+            Whether we should rewrite the MCStep pickle file, by default False.
+            This can be useful e.g. to update all python objects to a new
+            version of aimmd/asyncmd or to update all filepaths/workdirs after
+            moving the simulation.
+            Note that the previous mcstep pickle files will be moved and not
+            overwritten.
 
         Raises
         ------
@@ -661,9 +753,9 @@ class Brain:
                     if step.mover is not None:
                         # store the finished step for the sampler it came from
                         self.samplers[sidx]._store_finished_step(
-                                                        step=step,
-                                                        save_step_pckl=False,
-                                                        make_symlink=False,
+                                            step=step,
+                                            save_step_pckl=resave_mcstep_pckl,
+                                            make_symlink=False,
                                                                  )
                         # increase the samplers step counter
                         self.samplers[sidx]._stepnum += 1
@@ -674,10 +766,10 @@ class Brain:
                     else:
                         # store the zeroth step, do not add to sampler._accepts
                         self.samplers[sidx]._store_finished_step(
-                                                        step=step,
-                                                        save_step_pckl=False,
-                                                        make_symlink=False,
-                                                        is_step_zero=True,
+                                            step=step,
+                                            save_step_pckl=resave_mcstep_pckl,
+                                            make_symlink=False,
+                                            is_step_zero=True,
                                                                  )
 
         info_str = f"After adding all finished steps we have a total of {self.total_steps} steps."
@@ -940,7 +1032,7 @@ class PathChainSampler:
     def __init__(self, workdir: str, mcstep_collection, modelstore,
                  sampler_idx: int, movers: list[PathMover],
                  mover_weights: typing.Optional["list[float]"] = None):
-        self.workdir = os.path.abspath(workdir)
+        self.workdir = os.path.relpath(workdir)
         self.mcstep_collection = mcstep_collection
         self.modelstore = modelstore
         self.sampler_idx = sampler_idx
@@ -1016,12 +1108,12 @@ class PathChainSampler:
         all_steps_by_time = {}
         for stepdir in all_possible_stepdirs:
             if os.path.isdir(stepdir):
-                try:
+                # the step is only done if we have an MCStep pickle file
+                if os.path.isfile(os.path.join(stepdir,
+                                               MCstep.default_savename,
+                                               )
+                                  ):
                     s = MCstep.load(directory=stepdir)
-                except FileNotFoundError:
-                    # this step is (probably) not done yet
-                    pass
-                else:
                     mtime = os.path.getmtime(os.path.join(stepdir,
                                                           s.default_savename)
                                              )
@@ -1038,18 +1130,34 @@ class PathChainSampler:
                              ):
         self.mcstep_collection.append(step)
         if save_step_pckl:
-            step.save()  # write it to a pickle file next to the trajectories
+            pickle_fname = os.path.join(step.directory, step.default_savename)
+            if os.path.isfile(pickle_fname):
+                # move any potential previous pickle files to make sure we can
+                # go back if we need to
+                num = 1
+                new_fname = pickle_fname + str(num)
+                while os.path.isfile(new_fname):
+                    num += 1
+                    new_fname = pickle_fname + str(num)
+                logger.info("MCStep pickle file (%s) exists already, "
+                            "moving to %s before writing the new pickle file.",
+                            pickle_fname, new_fname,
+                            )
+                os.rename(pickle_fname, new_fname)
+            # and write the pickle file next to the trajectories
+            # at pickle_fname
+            step.save()
         if step.accepted:
             if not is_step_zero:
                 self._accepts.append(1)
             self.current_step = step
             if make_symlink:
-                os.symlink(step.directory, os.path.join(
-                                                self.workdir,
-                                                f"{self.mcstate_name_prefix}"
-                                                + f"{self._stepnum}"
-                                                        )
+                fd = os.open(self.workdir, os.O_RDONLY)
+                os.symlink(os.path.relpath(step.directory, self.workdir),
+                           f"{self.mcstate_name_prefix}{self._stepnum}",
+                           dir_fd=fd,
                            )
+                os.close(fd)
         else:
             if not is_step_zero:
                 # we should never have a zeroth step that is not accepted, but
@@ -1057,12 +1165,12 @@ class PathChainSampler:
                 self._accepts.append(0)
             if make_symlink:
                 # link the old state as current/accepted state
-                os.symlink(instep.directory,
-                           os.path.join(self.workdir,
-                                        f"{self.mcstate_name_prefix}"
-                                        + f"{self._stepnum}"
-                                        )
+                fd = os.open(self.workdir, os.O_RDONLY)
+                os.symlink(os.path.relpath(instep.directory, self.workdir),
+                           f"{self.mcstate_name_prefix}{self._stepnum}",
+                           dir_fd=fd,
                            )
+                os.close(fd)
 
     async def finish_step(self, model):
         # _run_step increases the _stepnum, so we are looking for the next step
