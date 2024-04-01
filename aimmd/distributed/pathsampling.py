@@ -475,7 +475,7 @@ class Brain:
                            ".TrajectoryFunctionwrapper subclasses."
                            )
             any_warned = True
-        if not all(isinstance(s, TrajectoryFunctionWrapper)
+        elif not all(isinstance(s, TrajectoryFunctionWrapper)
                    for s in model.states
                    ):
             logger.warning("Not all model.states are `asyncmd.trajectory."
