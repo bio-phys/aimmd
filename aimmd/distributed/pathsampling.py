@@ -469,9 +469,9 @@ class Brain:
         # states check (not so important, in practice we only infer the number
         #               of outputs for the model from the number of states)
         if model.states is None:
-            logger.warning("model.states is not set. This might lead to "
+            logger.warning("model.states is not set. This will lead to "
                            "unexpected behavior and it is recommended to set "
-                           "the states to `asyncmd.trakectory.functionwrapper."
+                           "the states to `asyncmd.trajectory.functionwrapper."
                            ".TrajectoryFunctionwrapper subclasses."
                            )
             any_warned = True
