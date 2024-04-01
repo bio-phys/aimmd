@@ -1100,12 +1100,12 @@ class PathChainSampler:
         all_steps_by_time = {}
         for stepdir in all_possible_stepdirs:
             if os.path.isdir(stepdir):
-                try:
+                # the step is only done if we have an MCStep pickle file
+                if os.path.isfile(os.path.join(stepdir,
+                                               MCstep.default_savename,
+                                               )
+                                  ):
                     s = MCstep.load(directory=stepdir)
-                except FileNotFoundError:
-                    # this step is (probably) not done yet
-                    pass
-                else:
                     mtime = os.path.getmtime(os.path.join(stepdir,
                                                           s.default_savename)
                                              )
