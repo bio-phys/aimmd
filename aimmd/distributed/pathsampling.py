@@ -52,14 +52,14 @@ class BrainTask(abc.ABC):
         self.interval = interval
 
     @abc.abstractmethod
-    def run(self, brain, mcstep: MCstep, sampler_idx: int):
+    async def run(self, brain, mcstep: MCstep, sampler_idx: int):
         """
         This method is called by the `Brain` every `interval` steps.
 
         It is called with the brain performing the simulation, the mcstep that
         just finished and the sampler index if the sampler that did the step.
         """
-        pass
+        raise NotImplementedError
 
 
 class SaveTask(BrainTask):
@@ -226,7 +226,7 @@ class DensityCollectionTask(BrainTask):
             raise ValueError(f"`mode` must be one of {allowed} (was {val}).")
         self._mode = val
 
-    async def _run_p_x_TP(self, brain, mcstep: MCstep, sampler_idx):
+    async def _run_p_x_TP(self, brain, mcstep: MCstep, sampler_idx: int):
         if brain.storage is None:
             logger.error("Density collection/adaptation is currently only "
                          "possible for simulations with attached storage."
@@ -268,7 +268,7 @@ class DensityCollectionTask(BrainTask):
                 async with _SEMAPHORES["BRAIN_MODEL"]:
                     await dc.reevaluate_density(model=self.model)
 
-    async def _run_custom(self, brain, mcstep: MCstep, sampler_idx):
+    async def _run_custom(self, brain, mcstep: MCstep, sampler_idx: int):
         dc = self.model.density_collector
         if brain.total_steps - self.first_collection >= 0:
             if brain.total_steps - self.first_collection == 0:
@@ -625,8 +625,9 @@ class Brain:
                              + "current_step set.")
         if self.total_steps > 0:
             raise ValueError("Can only seed initial steps if no steps have "
-                             "been finished yet, but total_steps=%d.",
-                             self.total_steps)
+                             "been finished yet, but "
+                             f"total_steps={self.total_steps}."
+                             )
         if weights is not None:
             if len(weights) != len(trajectories):
                 raise ValueError("trajectories and weights must have the same"
@@ -1063,6 +1064,7 @@ class PathChainSampler:
 
     @property
     def current_step(self):
+        """The current active MCStep of the `PathChainSampler`."""
         return self._current_step
 
     # TODO/FIXME: set self._step_num, self._accepts etc?!
@@ -1071,19 +1073,31 @@ class PathChainSampler:
         self._current_step = step
 
     @property
-    def n_steps(self):
+    def n_steps(self) -> int:
+        """The total number of MCSteps this `PathChainSampler` did."""
         return self._stepnum
 
     @property
-    def n_accepts(self):
+    def n_accepts(self) -> int:
+        """The total number of accepted MCSteps this `PathChainSampler` did."""
         return sum(self._accepts)
 
     @property
-    def accepts(self):
+    def accepts(self) -> list[int]:
+        """
+        The history of accepts of this `PathChainSampler` as ordered list.
+
+        The list will always be of length `self.n_steps` and contains a zero or
+        a one for each MCStep, depending on if it was accepted (one) or not
+        accepted (zero).
+        """
         return self._accepts.copy()
 
     @property
-    def contains_partial_step(self):
+    def contains_partial_step(self) -> bool:
+        """
+        Whether this `PathChainSampler` currently contains an unfinished step.
+        """
         # check if there is an unfinished step in this sampler, which can only
         # happen when we did reinitialize the Brain from workdir using
         # reinitialize_from_workdir and passed finish_steps=False
@@ -1173,6 +1187,25 @@ class PathChainSampler:
                 os.close(fd)
 
     async def finish_step(self, model):
+        """
+        Finish the current MCStep (if any).
+
+        This method will only finish partially finished steps and not start any
+        new MCSteps, i.e. if `self.contains_partial_step == True` it will
+        finish the partial step and return it, otherwise it will return None.
+
+        Parameters
+        ----------
+        model : aimmd.RCModel
+            The reaction coordinate (committor) model used to bias the shooting
+            point selection.
+
+        Returns
+        -------
+        MCStep or None
+            Returns either the finished MCStep or None (if no partially
+            finished MCStep exists).
+        """
         # _run_step increases the _stepnum, so we are looking for the next step
         step_dir = os.path.join(self.workdir,
                                     f"{self.mcstep_foldername_prefix}"
