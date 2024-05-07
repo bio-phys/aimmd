@@ -76,12 +76,30 @@ else:
     # all the subfolders of the project root
     include_dirs = ['.', numpy.get_include(), 'm']
 
-CY_EXTS = [Extension('aimmd.coords._symmetry',
-                     ['aimmd/coords/_symmetry.pyx'],
-                     include_dirs=include_dirs,
-                     extra_compile_args=["-O3", "-march=native", "-fopenmp"],
-                     extra_link_args=['-fopenmp'])
-           ]
+CY_EXTS = []
+if sys.platform.startswith("darwin"):
+    # we are on MacOS, so (probably) without openMP support,
+    # i.e. probably we are using ApplClang in gcc compatibility mode
+    # which is not really compatible to gcc as it is missing openMP (which is part of a gcc standard install)
+    CY_EXTS += [Extension('aimmd.coords._symmetry',
+                          ['aimmd/coords/_symmetry.pyx'],
+                          include_dirs=include_dirs,
+                          extra_compile_args=["-O3", "-march=native"],# "-fopenmp"],
+                          # for now just try sans openMP
+                          #extra_link_args=['-fopenmp'],
+                          )
+                ]
+else:
+    # lets just try with openmp and worst case is we have to deal with every other OS that comes up
+    # (for linux this works)
+    CY_EXTS += [Extension('aimmd.coords._symmetry',
+                          ['aimmd/coords/_symmetry.pyx'],
+                          include_dirs=include_dirs,
+                          extra_compile_args=["-O3", "-march=native", "-fopenmp"],
+                          extra_link_args=['-fopenmp'],
+                          )
+                ]
+
 
 # set linetrace macro if wanted
 if LINETRACE:

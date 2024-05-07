@@ -779,7 +779,7 @@ class TrajectoryDensityCollector:
         # this also adds them to the density, but we reevaluate anyway...
         self.add_density_for_trajectories(model=model,
                                           trajectories=trajectories,
-                                          count=counts)
+                                          counts=counts)
         # get current density estimate for all stored descriptors
         self.reevaluate_density(model=model)
 
@@ -837,8 +837,10 @@ class TrajectoryDensityCollector:
         The factor is calculated as total_count / counts[probabilities],
         i.e. the factor is 1 / rho(probabilities).
         Note that we replace the potential infinite values appearing if
-        the counts in a bin are zero by a large but finite value.
-        I.e. instead of our estimated rho=0 we use 0 < rho << 1.
+        the counts in a bin are zero by a large but finite value derived
+        from the idea of add-one-smooting.
+        I.e. instead of our estimated rho = 0 we use 0 < rho << 1 when
+        calculating 1 / rho.
         """
         dens = self.get_counts(probabilities)
         norm = np.sum(self.density_histogram)
@@ -847,14 +849,23 @@ class TrajectoryDensityCollector:
         with np.errstate(divide="ignore"):
             # ignore errors through division by zero
             factor = norm / dens
-        # and replace all infs by large (but finite) values in the array
-        # TODO: Do we want to use the largest finite value occuring in array instead?
-        #       Currently we just use the numpy default (a "very large number")
-        #factor = np.nan_to_num(factor)
-        # np.nan_to_num uses 1.797e308 to replace infs when using float64
-        # (but we use something much smaller because we dont want to have
-        #  overflows when multiplying it in the selection probability)
-        factor[factor == np.inf] = 1e100
+        # Now replace all potential infs by a large (but finite) value
+        if np.any(np.isinf(factor)):
+            # weight_1_samp is roughly the average weight per sample
+            # (not exactly because we can have samples that only have
+            #  one entry in self._descriptors but that we have observed
+            #  multiple times)
+            weight_1_samp = norm / self._fill_pointer
+            # the bit below is similar to laplace add-one smoothing, just
+            # that we use weight_1_samp instead of adding a one, because we
+            # do not know if the average weight per sample \approx 1
+            # [in laplace add-one smoothing we would use:
+            #   (norm + self._n_allowed_bins) / (dens + 1)
+            #  here dens = 0 (since we got the inf)]
+            factor[factor == np.inf] = ((norm + self._n_allowed_bins)
+                                        / weight_1_samp
+                                        )
+
         return factor
 
 
@@ -895,7 +906,7 @@ class TrajectoryDensityCollectorAsync(TrajectoryDensityCollector):
         # this also adds them to the density, but we reevaluate anyway...
         await self.add_density_for_trajectories(model=model,
                                                 trajectories=trajectories,
-                                                count=counts)
+                                                counts=counts)
         # get current density estimate for all stored descriptors
         await self.reevaluate_density(model=model)
 
