@@ -18,6 +18,7 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 import os
 import abc
 import pickle
+import shutil
 import typing
 import asyncio
 import logging
@@ -302,6 +303,85 @@ class DensityCollectionTask(BrainTask):
         elif self.mode == "custom":
             await self._run_custom(brain=brain, mcstep=mcstep,
                                    sampler_idx=sampler_idx)
+
+
+class StorageCheckpointTask(BrainTask):
+    """
+    Create checkpoints of the :class:`aimmd.Storage` used in the TPS simulation.
+
+    This class creates copies (checkpoints) of the :class:`aimmd.Storage` used
+    with the TPS simulation in regular intervals. It uses a turnover system
+    inspired by gromacs, i.e. it creates a checkpoint and if a checkpoint
+    already exists it will move that checkpoint to checkpoint_previous before
+    creating the next checkpoint. This ensures that even if something
+    unexpected happens during the checkpoint creation there will always be a
+    useable checkpoint copy.
+    """
+
+    def __init__(self,
+                 storage,
+                 checkpoint_suffix: str = ".ckpt",
+                 interval: int = 50,
+                 checkpoint_prev_suffix: str = "_prev",
+                 ):
+        """
+        Initialize a :class:`StorageCheckpointTask`.
+
+        Parameters
+        ----------
+        storage : aimmd.Storage
+            The :class:`aimmd.Storage` to create checkpoints of.
+        checkpoint_suffix : str, optional
+            The suffix/string to append to the name of the storage to deduce
+            the checkpoint name, by default ".ckpt"
+        interval : int, optional
+            The interval (in Monte Carlo steps) in which a checkpoint should be
+            created, by default 50
+        checkpoint_prev_suffix : str, optional
+            The suffix/string to append to the name of the checkpoint to deduce
+            the checkpoint previous name, by default "_prev"
+        """
+        super().__init__(interval=interval)
+        self.storage = storage
+        self.checkpoint_suffix = checkpoint_suffix
+        self.checkpoint_prev_suffix = checkpoint_prev_suffix
+
+    async def run(self, brain, mcstep: MCstep, sampler_idx: int):
+        """
+        This method is called by the `Brain` every `interval` steps.
+
+        In this Task it is used to create the checkpoint and potentially move
+        the last checkpoint to previous checkpoint.
+        """
+        # Flush the storage buffer, ensuring that all data is written to the underlying file
+        self.storage.file.flush()
+        # Get the name of the file used for storage
+        fname = self.storage.file.filename
+        _, tail = os.path.split(fname)
+        # Use storage._dirname to find the directory the storage and checkpoint
+        # should live in
+        fname = os.path.join(self.storage._dirname, tail)
+        checkpoint_fname = fname + self.checkpoint_suffix
+
+        # Check if a checkpoint file already exists
+        if os.path.isfile(fname + self.checkpoint_suffix):
+            # If there's also a previous checkpoint file, remove it
+            prev_checkpoint_fname = fname + self.checkpoint_suffix + self.checkpoint_prev_suffix
+            if os.path.isfile(prev_checkpoint_fname):
+                os.remove(prev_checkpoint_fname)
+                logger.debug("Removed previous checkpoint %s.",
+                             prev_checkpoint_fname,
+                             )
+            # Rename the current checkpoint file to mark it as the previous one
+            os.rename(fname + self.checkpoint_suffix, prev_checkpoint_fname)
+            logger.info("Moved last checkpoint (%s) to previous checkpoint (%s).",
+                        checkpoint_fname, prev_checkpoint_fname)
+        # Actually copy the current state to the checkpoint file
+        shutil.copy2(fname, fname + self.checkpoint_suffix)
+        # Inform the user about the checkpointing action
+        logger.info("Copied storage file %s to create checkpoint %s.",
+                    fname, checkpoint_fname,
+                    )
 
 
 # TODO: DOCUMENT! Directly write a paragraph of documentation for use with sphinx!?
