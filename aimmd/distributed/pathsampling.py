@@ -320,8 +320,8 @@ class StorageCheckpointTask(BrainTask):
 
     def __init__(self,
                  storage,
-                 checkpoint_suffix: str = ".ckpt",
                  interval: int = 50,
+                 checkpoint_suffix: str = ".ckpt",
                  checkpoint_prev_suffix: str = "_prev",
                  ):
         """
@@ -331,12 +331,12 @@ class StorageCheckpointTask(BrainTask):
         ----------
         storage : aimmd.Storage
             The :class:`aimmd.Storage` to create checkpoints of.
-        checkpoint_suffix : str, optional
-            The suffix/string to append to the name of the storage to deduce
-            the checkpoint name, by default ".ckpt"
         interval : int, optional
             The interval (in Monte Carlo steps) in which a checkpoint should be
             created, by default 50
+        checkpoint_suffix : str, optional
+            The suffix/string to append to the name of the storage to deduce
+            the checkpoint name, by default ".ckpt"
         checkpoint_prev_suffix : str, optional
             The suffix/string to append to the name of the checkpoint to deduce
             the checkpoint previous name, by default "_prev"
