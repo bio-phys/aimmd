@@ -49,7 +49,7 @@ class BrainTask(abc.ABC):
     to openpathsampling hooks.
     """
 
-    def __init__(self, interval=1):
+    def __init__(self, interval: int = 1):
         self.interval = interval
 
     @abc.abstractmethod
@@ -67,7 +67,7 @@ class SaveTask(BrainTask):
     """Save the model and trainset at given interval (in steps) to storage."""
 
     def __init__(self, storage, model, trainset: TrainSet,
-                 interval=100, name_prefix="Central_RCModel"):
+                 interval: int = 100, name_prefix: str = "Central_RCModel"):
         """
         Initialize a :class:`SaveTask`.
 
