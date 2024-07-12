@@ -23,6 +23,7 @@ import typing
 import asyncio
 import logging
 import datetime
+import functools
 import numpy as np
 
 from asyncmd.mdengine import EngineError, EngineCrashedError
@@ -556,8 +557,8 @@ class Brain:
                            )
             any_warned = True
         elif not all(isinstance(s, TrajectoryFunctionWrapper)
-                   for s in model.states
-                   ):
+                     for s in model.states
+                     ):
             logger.warning("Not all model.states are `asyncmd.trajectory."
                            "functionwrapper.TrajectoryFunctionwrapper` "
                            "subclasses. This might lead to unexpected behavior"
@@ -832,18 +833,24 @@ class Brain:
                     # execution and are also not included in the list to
                     # mapp steps to samplers
                     if step.mover is not None:
+                        # NOTE: same order as when the step is intitially
+                        #       produced, stepnum is increased at the start of
+                        #       make_step, tasks are run in/directly after the
+                        #       step finishes, then it is stored and finally
+                        #       processed/added to self
+                        # increase the samplers step counter
+                        self.samplers[sidx]._stepnum += 1
+                        # run tasks (if we should)
+                        if run_tasks:
+                            await self._run_tasks(mcstep=step, sampler_idx=sidx)
                         # store the finished step for the sampler it came from
                         self.samplers[sidx]._store_finished_step(
                                             step=step,
                                             save_step_pckl=resave_mcstep_pckl,
                                             make_symlink=False,
                                                                  )
-                        # increase the samplers step counter
-                        self.samplers[sidx]._stepnum += 1
                         # add the step to self
                         self._sampler_idxs_for_steps += [sidx]
-                        if run_tasks:
-                            await self._run_tasks(mcstep=step, sampler_idx=sidx)
                     else:
                         # store the zeroth step, do not add to sampler._accepts
                         self.samplers[sidx]._store_finished_step(
@@ -867,8 +874,14 @@ class Brain:
         # now we should only have unfinished steps left
         # we run them by running finish_step in each sampler, it finishes and
         # returns the step or returns None if no unfinished steps are present
-        sampler_tasks = [asyncio.create_task(s.finish_step(self.model))
-                         for s in self.samplers]
+        sampler_tasks = [asyncio.create_task(
+                            s.finish_step(
+                                model=self.model,
+                                brain_task_callback=functools.partial(self._run_tasks,
+                                                                      sampler_idx=s_idx)
+                                          )
+                                             )
+                         for s_idx, s in enumerate(self.samplers)]
         # run them all and get the results in the order they are done
         pending = sampler_tasks
         while len(pending) > 0:
@@ -881,10 +894,6 @@ class Brain:
                     # no unfinished steps in this sampler, go to next result
                     continue
                 self._sampler_idxs_for_steps += [sampler_idx]
-                # run tasks/hooks
-                await self._run_tasks(mcstep=mcstep,
-                                      sampler_idx=sampler_idx,
-                                      )
 
     async def run_for_n_accepts(self, n_accepts: int,
                                 print_progress: typing.Optional[int] = None):
@@ -905,8 +914,14 @@ class Brain:
         """
         # run for n_accepts in total over all samplers
         acc = 0
-        sampler_tasks = [asyncio.create_task(s.run_step(self.model))
-                         for s in self.samplers]
+        sampler_tasks = [asyncio.create_task(
+                            s.make_step(
+                                model=self.model,
+                                brain_task_callback=functools.partial(self._run_tasks,
+                                                                      sampler_idx=s_idx)
+                                        )
+                                             )
+                         for s_idx, s in enumerate(self.samplers)]
         n_done = 0
         while acc < n_accepts:
             done, pending = await asyncio.wait(sampler_tasks,
@@ -924,10 +939,6 @@ class Brain:
                 self._sampler_idxs_for_steps += [sampler_idx]
                 if mcstep.accepted:
                     acc += 1
-                # run tasks/hooks
-                await self._run_tasks(mcstep=mcstep,
-                                      sampler_idx=sampler_idx,
-                                      )
                 n_done += 1
                 if print_progress is not None:
                     if n_done % print_progress == 0:
@@ -937,9 +948,15 @@ class Brain:
                 # remove old task from list and start next step in the sampler
                 # that just finished
                 _ = sampler_tasks.pop(sampler_idx)
-                sampler_tasks.insert(sampler_idx, asyncio.create_task(
-                                        self.samplers[sampler_idx].run_step(self.model)
-                                                                      )
+                sampler_tasks.insert(
+                                sampler_idx,
+                                asyncio.create_task(
+                                    self.samplers[sampler_idx].make_step(
+                                        model=self.model,
+                                        brain_task_callback=functools.partial(self._run_tasks,
+                                                                              sampler_idx=sampler_idx)
+                                                                         )
+                                                    )
                                      )
         # now that we have enough accepts finish all that are still pending
         # get the remaining steps in the order the steps finish
@@ -953,10 +970,6 @@ class Brain:
                 self._sampler_idxs_for_steps += [sampler_idx]
                 if mcstep.accepted:
                     acc += 1
-                # run tasks/hooks
-                await self._run_tasks(mcstep=mcstep,
-                                      sampler_idx=sampler_idx,
-                                      )
                 n_done += 1
                 if print_progress is not None:
                     if n_done % print_progress == 0:
@@ -985,9 +998,7 @@ class Brain:
             # those first.
             # NOTE: if we have more unfinished steps than we are requested to
             #       do steps, we will still have unfinished steps afterwards
-            n_incomplete = sum([s.contains_partial_step
-                                for s in self.samplers],
-                                )
+            n_incomplete = sum(s.contains_partial_step for s in self.samplers)
             # how many samplers we need to start fresh to get to n_steps
             # samplers running including all unfinished
             n_to_start_new = max((n_steps - n_incomplete, 0))
@@ -996,16 +1007,24 @@ class Brain:
             s_idx = 0
             while n_started < n_steps:
                 sampler = self.samplers[s_idx]
+                brain_task_callback = functools.partial(self._run_tasks,
+                                                        sampler_idx=s_idx)
                 if sampler.contains_partial_step:
                     sampler_tasks += [asyncio.create_task(
-                                                sampler.run_step(self.model)
+                                        sampler.make_step(
+                                            model=self.model,
+                                            brain_task_callback=brain_task_callback,
+                                                          )
                                                           )
                                       ]
                     n_started += 1
                 elif n_to_start_new > 0:
                     # we still got fresh samplers to start
                     sampler_tasks += [asyncio.create_task(
-                                                sampler.run_step(self.model)
+                                        sampler.make_step(
+                                            model=self.model,
+                                            brain_task_callback=brain_task_callback,
+                                                          )
                                                           )
                                       ]
                     n_started += 1
@@ -1019,8 +1038,14 @@ class Brain:
         else:
             # more steps to do than we have samplers, so start a step in every
             # sampler and then go into the while loop below
-            sampler_tasks = [asyncio.create_task(s.run_step(self.model))
-                             for s in self.samplers]
+            sampler_tasks = [asyncio.create_task(
+                                s.make_step(
+                                    model=self.model,
+                                    brain_task_callback=functools.partial(self._run_tasks,
+                                                                          sampler_idx=s_idx)
+                                            )
+                                                 )
+                             for s_idx, s in enumerate(self.samplers)]
             n_started = len(sampler_tasks)
         # we only go into the loop below if the user requested more steps than
         # we have samplers, otherwise we will skip to the last loop directly
@@ -1038,10 +1063,6 @@ class Brain:
                     # bail out because this mcstep was a dummy sampler, i.e. None
                     continue
                 self._sampler_idxs_for_steps += [sampler_idx]
-                # run tasks/hooks
-                await self._run_tasks(mcstep=mcstep,
-                                      sampler_idx=sampler_idx,
-                                      )
                 n_done += 1
                 if print_progress is not None:
                     if n_done % print_progress == 0:
@@ -1052,9 +1073,15 @@ class Brain:
                 # remove old task from list and start next step in the sampler
                 # that just finished
                 _ = sampler_tasks.pop(sampler_idx)
-                sampler_tasks.insert(sampler_idx, asyncio.create_task(
-                                     self.samplers[sampler_idx].run_step(self.model)
-                                                                      )
+                sampler_tasks.insert(
+                                sampler_idx,
+                                asyncio.create_task(
+                                    self.samplers[sampler_idx].make_step(
+                                        model=self.model,
+                                        brain_task_callback=functools.partial(self._run_tasks,
+                                                                              sampler_idx=sampler_idx)
+                                                                         )
+                                                    )
                                      )
                 n_started += 1
         # enough started, finish steps that are still pending
@@ -1070,10 +1097,6 @@ class Brain:
                     # bail out because this mcstep is a dummy sampler, i.e. None
                     continue
                 self._sampler_idxs_for_steps += [sampler_idx]
-                # run tasks/hooks
-                await self._run_tasks(mcstep=mcstep,
-                                      sampler_idx=sampler_idx,
-                                      )
                 n_done += 1
                 if print_progress is not None:
                     if n_done % print_progress == 0:
@@ -1087,6 +1110,7 @@ class Brain:
             if self.total_steps % t.interval == 0:
                 await t.run(brain=self, mcstep=mcstep,
                             sampler_idx=sampler_idx)
+        return mcstep
 
 
 # TODO: DOCUMENT!
@@ -1181,11 +1205,11 @@ class PathChainSampler:
         # check if there is an unfinished step in this sampler, which can only
         # happen when we did reinitialize the Brain from workdir using
         # reinitialize_from_workdir and passed finish_steps=False
-        # _run_step increases the _stepnum, so we are looking for the next step
+        # _make_step increases the _stepnum, so we are looking for the next step
         step_dir = os.path.join(self.workdir,
-                                    f"{self.mcstep_foldername_prefix}"
-                                    + f"{self._stepnum+1}"
-                                    )
+                                f"{self.mcstep_foldername_prefix}"
+                                + f"{self._stepnum+1}"
+                                )
         restart_file = os.path.join(step_dir, self.restart_info_fname)
         return os.path.isfile(restart_file)
 
@@ -1266,7 +1290,10 @@ class PathChainSampler:
                            )
                 os.close(fd)
 
-    async def finish_step(self, model):
+    async def finish_step(self,
+                          model,
+                          brain_task_callback: typing.Optional[typing.Coroutine] = None,
+                          ):
         """
         Finish the current MCStep (if any).
 
@@ -1279,6 +1306,11 @@ class PathChainSampler:
         model : aimmd.RCModel
             The reaction coordinate (committor) model used to bias the shooting
             point selection.
+        brain_task_callback : typing.Optional[typing.Coroutine], optional
+            The callback to run the `BrainTask`s, will be run after finishing
+            (but before saving) the MCstep. It must accept the finished MCStep
+            as the only argument.
+            By default None, which means run no callback/BrainTasks
 
         Returns
         -------
@@ -1286,11 +1318,11 @@ class PathChainSampler:
             Returns either the finished MCStep or None (if no partially
             finished MCStep exists).
         """
-        # _run_step increases the _stepnum, so we are looking for the next step
+        # _make_step increases the _stepnum, so we are looking for the next step
         step_dir = os.path.join(self.workdir,
-                                    f"{self.mcstep_foldername_prefix}"
-                                    + f"{self._stepnum+1}"
-                                    )
+                                f"{self.mcstep_foldername_prefix}"
+                                + f"{self._stepnum+1}"
+                                )
         restart_file = os.path.join(step_dir, self.restart_info_fname)
         if os.path.isfile(restart_file):
             with open(restart_file, "rb") as pf:
@@ -1303,13 +1335,37 @@ class PathChainSampler:
                 # (re)set the modelstore
                 mover.modelstore = self.modelstore
             # finish the step and return it
-            return await self._run_step(model=model, instep=instep,
-                                        mover=mover, continuation=True)
+            return await self._make_step(model=model, instep=instep,
+                                         mover=mover,
+                                         brain_task_callback=brain_task_callback,
+                                         continuation=True)
         # no restart file means no unfinshed step
         # we return None
         return None
 
-    async def run_step(self, model):
+    async def make_step(self,
+                        model,
+                        brain_task_callback: typing.Optional[typing.Coroutine] = None,
+                        ):
+        """
+        Make one Monte Carlo step from current step.
+
+        Parameters
+        ----------
+        model : RCModelAsync
+            The reaction coordinate/committor model passed to the mover, e.g.
+            used to select an optiomal shooting point for a shooting move.
+        brain_task_callback : typing.Optional[typing.Coroutine], optional
+            The callback to run the `BrainTask`s, will be run after finishing
+            (but before saving) the MCstep. It must accept the finished MCStep
+            as the only argument.
+            By default None, which means run no callback/BrainTasks
+
+        Returns
+        -------
+        MCstep
+            The produced Monte Carlo step.
+        """
         # run one MCstep from current_step
         # takes a model for SP selection
         # NOTE: we check if there is an unfinished step in here and do finsh it
@@ -1317,13 +1373,12 @@ class PathChainSampler:
         #       brain with some unfinished steps, do all wanted steps in
         #       parallel, i.e unfinshed and new without having to wait for the
         #       unfinished steps first)
-        # _run_step increases the _stepnum, so we are looking for the next step
         if self.contains_partial_step:
             # we found a restart file, load it and finish the step
             # note that finish step will in this case always return a MC step
             # (instead of None), because there is a restart file, such that
-            # run_step will always return a valid mcstep as expected
-            return await self.finish_step(model)
+            # make_step will always return a valid mcstep as expected
+            return await self.finish_step(model, brain_task_callback)
         # no restart file found, so do a step from scratch
         instep = self.current_step
         if instep is None:
@@ -1333,13 +1388,15 @@ class PathChainSampler:
                            self.sampler_idx)
         # choose a mover
         mover = self._rng.choice(self.movers, p=self.mover_weights)
-        # and run the step
-        return await self._run_step(model=model, instep=instep, mover=mover,
-                                    continuation=False)
+        # and make/run the actual step
+        return await self._make_step(model=model, instep=instep, mover=mover,
+                                     brain_task_callback=brain_task_callback,
+                                     continuation=False)
 
-    async def _run_step(self, model, mover: PathMover,
-                        instep: typing.Optional[MCstep],
-                        continuation: bool):
+    async def _make_step(self, model, mover: PathMover,
+                         instep: typing.Optional[MCstep],
+                         brain_task_callback: typing.Optional[typing.Coroutine],
+                         continuation: bool):
         self._stepnum += 1
         step_dir = os.path.join(self.workdir,
                                 f"{self.mcstep_foldername_prefix}{self._stepnum}"
@@ -1410,6 +1467,10 @@ class PathChainSampler:
                 # modify step only if it would not have been accepted anyway
                 outstep.accepted = True
                 outstep.p_acc = np.inf
+
+        # Call the brains BrainTaks (if any)
+        if brain_task_callback is not None:
+            outstep = await brain_task_callback(mcstep=outstep)
 
         self._store_finished_step(outstep, save_step_pckl=True,
                                   make_symlink=True, instep=instep,
