@@ -147,7 +147,7 @@ class UniformSPSelector(SPSelector):
         return 1 / (traj_len - 2 * self.exclude_frames)
 
     async def pick(self, outfile: str, frame_extractor: FrameExtractor,
-                   trajectory: Trajectory = None,
+                   trajectory: typing.Optional[Trajectory] = None,
                    model: typing.Optional[RCModelAsyncMixin] = None,
                    ) -> Trajectory:
         """
@@ -183,7 +183,7 @@ class UniformSPSelector(SPSelector):
         """
         if trajectory is None:
             raise ValueError(
-                "The `UniformSPSelector` requires an input trajectoryto pick"
+                "The `UniformSPSelector` requires an input trajectory to pick"
                 " a snapshot from."
                              )
         traj_len = len(trajectory)
@@ -414,7 +414,7 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
         return ret
 
     async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
-                          model: RCModelAsyncMixin = None,
+                          model: typing.Optional[RCModelAsyncMixin] = None,
                           ) -> float:
         """
         Return proposal probability to pick `snapshot` from `trajectory`.
@@ -470,8 +470,8 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
         return f_val / sum_bias
 
     async def pick(self, outfile: str, frame_extractor: FrameExtractor,
-                   trajectory: Trajectory = None,
-                   model: RCModelAsyncMixin = None,
+                   trajectory: typing.Optional[Trajectory] = None,
+                   model: typing.Optional[RCModelAsyncMixin] = None,
                    ) -> Trajectory:
         """
         Pick and return a shooting snapshot from `trajectory`.
@@ -510,6 +510,10 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
             raise ValueError(
                 "The `RCModelSPSelectorFromTraj` needs a model to calculate"
                 " the picking probability.")
+        if trajectory is None:
+            raise ValueError(
+                "The `RCModelSPSelectorFromTraj` needs a trajectory to pick a"
+                " snapshot from.")
         if len(trajectory) <= 2 * self.exclude_frames:
             # Trajectory is too short to select a snapshot from if we discard
             # exclude_frames at the start and end
@@ -524,18 +528,19 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
                          "Choosing based on luck.")
             # we can not give any meaningfull advice and choose at random
             # choose in [self.exclude_frames, len(traj) - self.exclude_frames )
-            return self._rng.integers(self.exclude_frames,
-                                      len(trajectory) - self.exclude_frames)
+            idx = self._rng.integers(self.exclude_frames,
+                                     len(trajectory) - self.exclude_frames)
+        else:
+            # if self.exclude_frames > 0, biases will have the length of
+            # traj - 2 * self.exclude_frames, i.e. biases already excludes the
+            # excluded frames. That in turn means the idx we choose here is
+            # shifted by self.exclude_frames in that case, e.g. idx=0 means
+            # frame_idx=self.exclude_frames in the trajectory (and we can not
+            # choose the last self.exclude_frames frames because biases ends
+            # before)
+            idx = self._rng.choice(len(biases), p=biases/sum_bias)
+            idx += self.exclude_frames  # add in the exclude_frames shift
 
-        # if self.exclude_frames > 0
-        # biases will be have the length of traj - 2 * self.exclude_frames,
-        # i.e. biases already excludes the two frames
-        # that means the idx we choose here is shifted by self.exclude_frames
-        # in that case, e.g. idx=0 means frame_idx=self.exclude_frames in the
-        # trajectory (and we can not choose the last self.exclude_frames frames
-        # because biases ends before)
-        idx = self._rng.choice(len(biases), p=biases/sum_bias)
-        idx += self.exclude_frames  # add in the exclude_frames shift
         logger.debug("Selected SP with idx %d on trajectory %s of len %d.",
                      idx, trajectory, len(trajectory))
         # get the frame from the trajectory and write it out
@@ -602,6 +607,9 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
 
         Notes
         -----
+        `trajectories` can either be a list of Trajectory objects or a single
+        Trajectory object, similarly `equilibrium_weights` can be either a list
+        of numpy arrays or a single numpy array.
         `equilibrium_weights` is expected to contain the multiplicative factors
         by which the frequency of observation for each configuration/frame in
         `trajectories` differs from the equilibrium ensemble. The factors do
@@ -654,7 +662,7 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
     #        the new points (on the trajectory) come from the reservoir
     #        ensemble and are already included in the normalizing sum [Z_bias])
     async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
-                          model: RCModelAsyncMixin = None,
+                          model: typing.Optional[RCModelAsyncMixin] = None,
                           ) -> float:
         """
         Return the equilibrium ensemble weight for `trajectory`.
@@ -701,7 +709,7 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
 
     async def pick(self, outfile: str, frame_extractor: FrameExtractor,
                    trajectory: typing.Optional[Trajectory] = None,
-                   model: RCModelAsyncMixin = None,
+                   model: typing.Optional[RCModelAsyncMixin] = None,
                    ) -> Trajectory:
         """
         Pick and return a snapshot from the ensemble of potential snapshots.
