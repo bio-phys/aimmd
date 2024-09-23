@@ -248,6 +248,18 @@ class RCModelSPSelector(SPSelector):
         self.scale = scale
         self.density_adaptation = density_adaptation
 
+    def __setstate__(self, d: dict):
+        # make it possible to unpickle "RCModelSPSelector"s from before the
+        # rename/refactor of scale -> _scale
+        # v0.9.0 -> 0.9.1
+        try:
+            scale = d["scale"]
+            d["_scale"] = scale
+            del d["scale"]
+        except KeyError:
+            pass
+        self.__dict__.update(d)
+
     @property
     def distribution(self) -> str:
         """
@@ -284,7 +296,7 @@ class RCModelSPSelector(SPSelector):
 
     @scale.setter
     def scale(self, val: float) -> None:
-        self._scale = val
+        self._scale = float(val)
 
     async def sum_bias(self, trajectory: Trajectory, model: RCModelAsyncMixin,
                        ) -> float:
@@ -383,6 +395,27 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
         # whether we allow to choose first and last frame
         # if False they will also not contribute to sum_bias and accept/reject
         self.exclude_frames = exclude_frames
+
+    def __setstate__(self, d: dict):
+        # make it possible to unpickle "RCModelSPSelectorFromTraj"s from before
+        # the rename/refactor of "exclude_first_last_frame" to "exclude_frames"
+        # v0.9.0 -> 0.9.1
+        try:
+            exclude_first_last_frame = d["exclude_first_last_frame"]
+            d["_exclude_frames"] = 1 if exclude_first_last_frame else 0
+            del d["exclude_first_last_frame"]
+        except KeyError:
+            pass
+        super().__setstate__(d)
+
+    @property
+    def exclude_frames(self) -> int:
+        """Return/set the number of excluded frames at the begining and end."""
+        return self._exclude_frames
+
+    @exclude_frames.setter
+    def exclude_frames(self, val) -> None:
+        self._exclude_frames = int(val)
 
     async def biases(self, trajectory: Trajectory, model: RCModelAsyncMixin,
                      ) -> npt.NDArray[np.floating]:
