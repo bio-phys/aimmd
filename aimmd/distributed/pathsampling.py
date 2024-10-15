@@ -519,7 +519,7 @@ class Brain:
                          ]
 
     def _check_model(self, model, storage):
-        """Basic sanity checks for model before TPS simulation.
+        """Check model for basic sanity before TPS simulation.
 
         Checks:
             - that the model has a descriptor transform and if it is async
@@ -554,7 +554,7 @@ class Brain:
             logger.warning("model.states is not set. This will lead to "
                            "unexpected behavior and it is recommended to set "
                            "the states to `asyncmd.trajectory.functionwrapper."
-                           ".TrajectoryFunctionwrapper subclasses."
+                           "TrajectoryFunctionwrapper` subclasses."
                            )
             any_warned = True
         elif not all(isinstance(s, TrajectoryFunctionWrapper)
@@ -562,9 +562,8 @@ class Brain:
                      ):
             logger.warning("Not all model.states are `asyncmd.trajectory."
                            "functionwrapper.TrajectoryFunctionwrapper` "
-                           "subclasses. This might lead to unexpected behavior"
-                           " and it is recommended to set them to appropriate"
-                           "values."
+                           "subclasses. This might lead to slowdown due to "
+                           "results not being cached."
                            )
             any_warned = True
         # density collector cache file
@@ -597,11 +596,12 @@ class Brain:
             logger.warning("It is likely that you also want to check the"
                            "`model.ee_params` dictionary and potentially "
                            "modify the default values in it to ensure that the"
-                           "iterative training is controlled properly."
+                           " iterative training is controlled properly."
                            )
 
     @property
     def total_steps(self):
+        """Return the total number of steps this brain has done."""
         return len(self._sampler_idxs_for_steps)
 
     @property
