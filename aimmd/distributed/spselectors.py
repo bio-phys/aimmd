@@ -18,6 +18,7 @@ import abc
 import typing
 import asyncio
 import logging
+import collections.abc
 import numpy as np
 import numpy.typing as npt
 
@@ -224,6 +225,7 @@ class RCModelSPSelector(SPSelector):
 
     def __init__(self, scale: float, distribution: str,
                  density_adaptation: bool = True,
+                 f_sel: collections.abc.Callable | None = None,
                  ) -> None:
         """
         Initialize a `RCModelSPSelector`.
@@ -237,14 +239,25 @@ class RCModelSPSelector(SPSelector):
             while for the Gaussian distribution scale = 2 * sigma**2.
         distribution : str
             A string indicating the distribution to use when selecting SPs
-            around the transition state, can be "lorentzian" or "gaussian".
+            around the transition state, can be "lorentzian", "gaussian",
+            "uniform_phi", "uniform", or "custom" (see also `f_sel`).
         density_adaptation : bool, optional
             Whether to include an additional correction factor to flatten the
             density of potential SP configurations along the predicted
             committor, by default True.
+        f_sel : Callable or None, optional
+            If given, sets the shooting point selection distribution function
+            to any Callable taking a single np.array of shape (n_frames,) and
+            returning an array of the same shape containing bias weights.
+            Note that, in this case `distribution` will be ignored and set to
+            "custom".
         """
         super().__init__()
-        self.distribution = distribution
+        if f_sel is not None:
+            self.f_sel = f_sel
+        else:
+            # the self.f_sel setter already sets self._distribution to "custom"
+            self.distribution = distribution
         self.scale = scale
         self.density_adaptation = density_adaptation
 
@@ -265,9 +278,13 @@ class RCModelSPSelector(SPSelector):
         """
         Return/set the shooting point selection distribution f_sel(z).
 
-        Can be either "lorentzian" or "gaussian".
+        Can be either "lorentzian", "gaussian", "uniform_phi", or "uniform".
         For "lorentzian" f_sel(z) = scale / (scale**2 + z**2).
         For "gaussian" f_sel(z) = exp(-z**2 / scale).
+        For "uniform_phi" f_sel(z) = exp(-z) / (1 + exp(-z))**2 , resulting in
+        a uniform selection weigth along the committor phi = 1 / (1 + exp(-z)).
+        For "uniform" f_sel(z) = 1, resulting in a selection that favours
+        points close to the states, f_sel(phi) = 1 / (phi - phi**2).
         """
         return self._distribution
 
@@ -279,15 +296,32 @@ class RCModelSPSelector(SPSelector):
         elif val.lower() == 'lorentzian':
             self._f_sel = self._lorentzian
             self._distribution = val
+        elif val.lower() == 'uniform_phi':
+            self._f_sel = self._uniform_phi
+            self._distribution = val
+        elif val.lower() == 'uniform':
+            self._f_sel = self._uniform
+            self._distribution = val
         else:
             raise ValueError(
-                'Distribution must be one of: "gaussian" or "lorentzian"')
+                'Distribution must be one of: "lorentzian", "gaussian", '
+                '"uniform_phi", or "uniform".')
 
     def _lorentzian(self, z: npt.NDArray) -> npt.NDArray:
         return self.scale / (self.scale**2 + z**2)
 
     def _gaussian(self, z: npt.NDArray) -> npt.NDArray:
         return np.exp(-z**2 / self.scale)
+
+    def _uniform_phi(self, z: npt.NDArray) -> npt.NDArray:
+        # just the jacobian d phi / dz = d/dz 1 / (1 + exp(-z))
+        # for 1d RCModels
+        return np.exp(-z) / (1 + np.exp(-z))**2
+
+    def _uniform(self, z: npt.NDArray) -> npt.NDArray:
+        # this is uniform in z, so f_sel(phi) = d z / dphi = 1 / (phi - phi**2)
+        # for 1d RCModels
+        return np.ones_like(z, dtype=z.dtype)
 
     @property
     def scale(self) -> float:
@@ -297,6 +331,22 @@ class RCModelSPSelector(SPSelector):
     @scale.setter
     def scale(self, val: float) -> None:
         self._scale = float(val)
+
+    @property
+    def f_sel(self) -> collections.abc.Callable:
+        """
+        Return/set the shooting point selection distribution function directly.
+
+        The function must take a single argument z (a np.array with
+        shape=(n_frames,)) and return a np.array of the same shape as z
+        containing the (unnormalized) bias weights.
+        """
+        return self._f_sel
+
+    @f_sel.setter
+    def f_sel(self, val: collections.abc.Callable) -> None:
+        self._f_sel = val
+        self._distribution = "custom"
 
     async def sum_bias(self, trajectory: Trajectory, model: RCModelAsyncMixin,
                        ) -> float:
@@ -367,6 +417,7 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
     def __init__(self, scale: float = 1., distribution: str = "lorentzian",
                  density_adaptation: bool = True,
                  exclude_frames: int = 1,
+                 f_sel: collections.abc.Callable | None = None,
                  ) -> None:
         """
         Initialize a `RCModelSPSelectorFromTraj`.
@@ -377,8 +428,8 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
             Scale of the SP selection distribution, by default 1.
         distribution : str
             A string indicating the distribution to use when selecting SPs
-            around the transition state, can be "lorentzian" or "gaussian",
-            by default "lorentzian".
+            around the transition state, can be "lorentzian", "gaussian",
+            "uniform_phi", "uniform", or "custom" (see also `f_sel`).
         density_adaptation : bool, optional
             Whether to include an additional correction factor to flatten the
             density of potential SP configurations along the predicted
@@ -387,10 +438,17 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
             How many frames to exclude from the selection at the start and end
             of the trajectory, e.g. if exclude_frames=2 we exclude the first
             and last 2 frames, by default 1.
+        f_sel : Callable or None, optional
+            If given, sets the shooting point selection distribution function
+            to any Callable taking a single np.array of shape (n_frames,) and
+            returning an array of the same shape containing bias weights.
+            Note that, in this case `distribution` will be ignored and set to
+            "custom".
         """
         super().__init__(scale=scale,
                          distribution=distribution,
                          density_adaptation=density_adaptation,
+                         f_sel=f_sel,
                          )
         # whether we allow to choose first and last frame
         # if False they will also not contribute to sum_bias and accept/reject
@@ -604,11 +662,13 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
     probability_is_ensemble_weight = True
 
     def __init__(self,
-                 trajectories: list[Trajectory],
-                 equilibrium_weights: list[npt.NDArray[np.floating]],
+                 trajectories: list[Trajectory] | Trajectory,
+                 equilibrium_weights: (list[npt.NDArray[np.floating]]
+                                       | npt.NDArray[np.floating]),
                  scale: float = 1.,
                  distribution: str = "lorentzian",
                  density_adaptation: bool = True,
+                 f_sel: collections.abc.Callable | None = None,
                  ) -> None:
         """
         Initialize a `RCModelSPSelectorFromEQ`.
@@ -625,12 +685,18 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
             Scale of the SP selection distribution, by default 1.
         distribution : str
             A string indicating the distribution to use when selecting SPs
-            around the transition state, can be "lorentzian" or "gaussian",
-            by default "lorentzian".
+            around the transition state, can be "lorentzian", "gaussian",
+            "uniform_phi", "uniform", or "custom" (see also `f_sel`).
         density_adaptation : bool, optional
             Whether to include an additional correction factor to flatten the
             density of potential SP configurations along the predicted
             committor, by default True.
+        f_sel : Callable or None, optional
+            If given, sets the shooting point selection distribution function
+            to any Callable taking a single np.array of shape (n_frames,) and
+            returning an array of the same shape containing bias weights.
+            Note that, in this case `distribution` will be ignored and set to
+            "custom".
 
         Raises
         ------
@@ -670,14 +736,13 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
         super().__init__(scale=scale,
                          distribution=distribution,
                          density_adaptation=density_adaptation,
+                         f_sel=f_sel,
                          )
         if isinstance(trajectories, Trajectory):
             trajectories = [trajectories]
-        if isinstance(equilibrium_weights, np.ndarray):
-            equilibrium_weights = [equilibrium_weights]
-        # this looks a bit weired but we always concatenate the equilibrium
-        # weights to one large array, if it was just one before nothing changes
-        equilibrium_weights = np.concatenate(equilibrium_weights, axis=0)
+        if isinstance(equilibrium_weights, list):
+            # concatenate the equilibrium weights into one array
+            equilibrium_weights = np.concatenate(equilibrium_weights, axis=0)
         # make sure trajectories and equilibrium_weights match in length
         if equilibrium_weights.shape[0] != sum(len(t) for t in trajectories):
             raise ValueError(
