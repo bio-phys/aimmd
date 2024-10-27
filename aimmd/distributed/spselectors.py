@@ -316,7 +316,13 @@ class RCModelSPSelector(SPSelector):
     def _uniform_phi(self, z: npt.NDArray) -> npt.NDArray:
         # just the jacobian d phi / dz = d/dz 1 / (1 + exp(-z))
         # for 1d RCModels
-        return np.exp(-z) / (1 + np.exp(-z))**2
+        with np.errstate(over="ignore"):
+            # avoid overflow errors from square, if we get it f_sel is zero
+            # anyway
+            ret = np.exp(-z) / (1 + np.exp(-z))**2
+        # however we do not want the selection probability to be zero anywhere
+        # so replace it with a small value
+        return np.nan_to_num(ret, copy=False, nan=1e-50)
 
     def _uniform(self, z: npt.NDArray) -> npt.NDArray:
         # this is uniform in z, so f_sel(phi) = d z / dphi = 1 / (phi - phi**2)
