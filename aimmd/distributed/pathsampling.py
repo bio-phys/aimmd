@@ -17,6 +17,7 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 # logic code to steer a distributed (T)PS simulations
 import os
 import abc
+import time
 import pickle
 import shutil
 import typing
@@ -518,7 +519,7 @@ class Brain:
                          ]
 
     def _check_model(self, model, storage):
-        """Basic sanity checks for model before TPS simulation.
+        """Check model for basic sanity before TPS simulation.
 
         Checks:
             - that the model has a descriptor transform and if it is async
@@ -553,7 +554,7 @@ class Brain:
             logger.warning("model.states is not set. This will lead to "
                            "unexpected behavior and it is recommended to set "
                            "the states to `asyncmd.trajectory.functionwrapper."
-                           ".TrajectoryFunctionwrapper subclasses."
+                           "TrajectoryFunctionwrapper` subclasses."
                            )
             any_warned = True
         elif not all(isinstance(s, TrajectoryFunctionWrapper)
@@ -561,9 +562,8 @@ class Brain:
                      ):
             logger.warning("Not all model.states are `asyncmd.trajectory."
                            "functionwrapper.TrajectoryFunctionwrapper` "
-                           "subclasses. This might lead to unexpected behavior"
-                           " and it is recommended to set them to appropriate"
-                           "values."
+                           "subclasses. This might lead to slowdown due to "
+                           "results not being cached."
                            )
             any_warned = True
         # density collector cache file
@@ -596,11 +596,12 @@ class Brain:
             logger.warning("It is likely that you also want to check the"
                            "`model.ee_params` dictionary and potentially "
                            "modify the default values in it to ensure that the"
-                           "iterative training is controlled properly."
+                           " iterative training is controlled properly."
                            )
 
     @property
     def total_steps(self):
+        """Return the total number of steps this brain has done."""
         return len(self._sampler_idxs_for_steps)
 
     @property
@@ -842,6 +843,12 @@ class Brain:
                         self.samplers[sidx]._stepnum += 1
                         # run tasks (if we should)
                         if run_tasks:
+                            # repredict committors for SP using the current
+                            # model to ensure its training feedback is its own
+                            if step.predicted_committors_sp is not None:
+                                step.predicted_committors_sp = (
+                                    await self.model(step.shooting_snap))[0]
+                            # run the tasks
                             await self._run_tasks(mcstep=step, sampler_idx=sidx)
                         # store the finished step for the sampler it came from
                         self.samplers[sidx]._store_finished_step(
@@ -912,6 +919,9 @@ class Brain:
             Print a short progress summary every `print_progress` steps,
             print nothing if `print_progress=None`, by default None
         """
+        if print_progress is not None:
+            start_time = time.time()
+            print(f"Starting simulation at {time.ctime(start_time)}.")
         # run for n_accepts in total over all samplers
         acc = 0
         sampler_tasks = [asyncio.create_task(
@@ -942,9 +952,13 @@ class Brain:
                 n_done += 1
                 if print_progress is not None:
                     if n_done % print_progress == 0:
-                        pstr = f"{n_done} steps done."
-                        pstr += f" Produced {acc} accepts so far in this run."
-                        print(pstr)
+                        self._print_progress(
+                                start_time=start_time,
+                                steps=n_done,
+                                accepts=acc,
+                                target=n_accepts,
+                                target_is_steps=False,
+                                             )
                 # remove old task from list and start next step in the sampler
                 # that just finished
                 _ = sampler_tasks.pop(sampler_idx)
@@ -973,9 +987,13 @@ class Brain:
                 n_done += 1
                 if print_progress is not None:
                     if n_done % print_progress == 0:
-                        pstr = f"{n_done} steps done."
-                        pstr += f" Produced {acc} accepts so far in this run."
-                        print(pstr)
+                        self._print_progress(
+                                start_time=start_time,
+                                steps=n_done,
+                                accepts=acc,
+                                target=n_accepts,
+                                target_is_steps=False,
+                                             )
 
     async def run_for_n_steps(self, n_steps: int,
                               print_progress: typing.Optional[int] = None):
@@ -992,6 +1010,9 @@ class Brain:
             Print a short progress summary every `print_progress` steps,
             print nothing if `print_progress=None`, by default None
         """
+        if print_progress is not None:
+            start_time = time.time()
+            print(f"Starting simulation at {time.ctime(start_time)}.")
         if n_steps < len(self.samplers):
             # Do not start a step in every sampler, but only as many as
             # requested. Check which samplers contain unfinished steps and do
@@ -1066,10 +1087,13 @@ class Brain:
                 n_done += 1
                 if print_progress is not None:
                     if n_done % print_progress == 0:
-                        pstr = f"{n_done} (of {n_steps}) steps done."
-                        pstr += f" Produced {sum(self.accepts[-n_done:])}"
-                        pstr += " accepts so far in this run."
-                        print(pstr)
+                        self._print_progress(
+                                start_time=start_time,
+                                steps=n_done,
+                                accepts=sum(self.accepts[-n_done:]),
+                                target=n_steps,
+                                target_is_steps=True,
+                                             )
                 # remove old task from list and start next step in the sampler
                 # that just finished
                 _ = sampler_tasks.pop(sampler_idx)
@@ -1100,10 +1124,57 @@ class Brain:
                 n_done += 1
                 if print_progress is not None:
                     if n_done % print_progress == 0:
-                        pstr = f"{n_done} (of {n_steps}) steps done."
-                        pstr += f" Produced {sum(self.accepts[-n_done:])}"
-                        pstr += " accepts so far in this run."
-                        print(pstr)
+                        self._print_progress(
+                                start_time=start_time,
+                                steps=n_done,
+                                accepts=sum(self.accepts[-n_done:]),
+                                target=n_steps,
+                                target_is_steps=True,
+                                             )
+
+    def _print_progress(self,
+                        start_time: float,
+                        steps: int,
+                        accepts: int,
+                        target: int,
+                        target_is_steps: bool,
+                        ):
+        """
+        Print the progress string during simulation.
+
+        (Try to) estimate the expected finishing time of the simulation from
+        `start_time` and the ratio of steps/accepts to target steps/accepts.
+
+        Parameters
+        ----------
+        start_time : float
+            Start time of the simulation
+        steps : int
+            Number of steps done so far.
+        accepts : int
+            Number of accepts produced so far.
+        target : int
+            Target value for steps/accepts (see also `target_is_steps`).
+        target_is_steps : bool
+            Whether the target values is a given number of steps (True) or a
+            given number of accepts (False).
+        """
+        current_time = time.time()
+        pstr = f"{time.ctime(current_time)}: {steps}"
+        if target_is_steps:
+            pstr += f" (of {target})"
+        pstr += " steps done."
+        pstr += f" Produced {accepts}"
+        if not target_is_steps:
+            pstr += f" (of {target})"
+        pstr += " new accepts so far."
+        done = steps if target_is_steps else accepts
+        if done > 0:
+            # can only estimate time if we have at least one step/accept
+            elapsed_time = current_time - start_time
+            eta = start_time + elapsed_time * (target / done)
+            pstr += f" Estimated end time is {time.ctime(eta)}."
+        print(pstr)
 
     async def _run_tasks(self, mcstep, sampler_idx):
         for t in self.tasks:
