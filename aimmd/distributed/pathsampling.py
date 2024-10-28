@@ -843,6 +843,12 @@ class Brain:
                         self.samplers[sidx]._stepnum += 1
                         # run tasks (if we should)
                         if run_tasks:
+                            # repredict committors for SP using the current
+                            # model to ensure its training feedback is its own
+                            if step.predicted_committors_sp is not None:
+                                step.predicted_committors_sp = (
+                                    await self.model(step.shooting_snap))[0]
+                            # run the tasks
                             await self._run_tasks(mcstep=step, sampler_idx=sidx)
                         # store the finished step for the sampler it came from
                         self.samplers[sidx]._store_finished_step(
