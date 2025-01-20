@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools >= 64", "numpy >= 1.17", "cython"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aimmd"
+version = "0.9.1dev1"
+dependencies = ["numpy >= 1.17", "cython",
+                "openpathsampling", "mdtraj", "networkx",
+                "h5py >= 3",
+                "mdanalysis",  # only needed for distributed examples
+                "asyncmd",
+                ]
+requires-python = ">=3.10"
+authors = [{ name = "Hendrik Jung", email = "hendrik.jung@biophys.mpg.de"}]
+maintainers = [{ name = "Hendrik Jung", email = "hendrik.jung@biophys.mpg.de"}]
+description = """aimmd (AI for Molecular Mechanism Discovery) autonomously \
+steers (a large number of) molecular dynamics simulations to effciently sample\
+ and understand rare transition events."""
+readme = "README.md"
+keywords = ["science", "MD", "Molecular Dynamics", "molecular-dynamics",
+            "Path Sampling", "Transition Path Sampling", "TPS",
+            "Machine Learning", "ML", "Artificial Intelligence", "AI",
+            "committor", "commitment probability", "reaction coordinate", "RC",
+            "high performance computing", "HPC",
+            ]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Natural Language :: English",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.optional-dependencies]
+#docs = ["sphinx"]  # TODO!
+tests = ["pytest", "pytest-asyncio"]
+tests-all = ["aimmd[tests]", "coverage", "pytest-cov"]
+dev = ["aimmd[tests-all]"] #["aimmd[docs,tests-all]"]
+
+[project.urls]
+#Documentation =
+Repository = "https://github.com/bio-phys/aimmd.git"
+Issues = "https://github.com/bio-phys/aimmd/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aimmd"]
+namespaces = false
