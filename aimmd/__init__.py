@@ -15,15 +15,12 @@ You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
-import sys
 
 
 logger = logging.getLogger(__name__)
 
 
-from .__about__ import (__version__, __title__, __author__,
-                        __license__, __copyright__
-                        )
+from ._version import __version__, __git_hash__
 from .base import rcmodel
 from .base.trainset import TrainSet
 from .base.storage import Storage
