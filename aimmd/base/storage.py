@@ -27,7 +27,7 @@ from pkg_resources import parse_version
 from . import _H5PY_PATH_DICT
 from .trainset import TrainSet
 from ..distributed.pathmovers import ModelDependentPathMover
-from .. import __about__
+from .. import __version__
 
 
 logger = logging.getLogger(__name__)
@@ -867,9 +867,7 @@ class Storage:
             self._store.attrs["storage_version"] = np.string_(
                                                     self._compatibility_version
                                                               )
-            self._store.attrs["aimmd_version"] = np.string_(
-                                                    __about__.__version__
-                                                           )
+            self._store.attrs["aimmd_version"] = np.string_(__version__)
             # save the current (i.e. where the file is when we opened it) dirname to attrs
             # we need this to be able to save tensorflow models properly
             self._store.attrs["dirname"] = np.string_(self._dirname)
@@ -877,7 +875,7 @@ class Storage:
             store_version = parse_version(
                             self._store.attrs["storage_version"].decode("ASCII")
                                           )
-            if parse_version(__about__.base_version) < store_version:
+            if parse_version(__version__) < store_version:
                 raise RuntimeError(
                         "The storage file was written with a newer version of "
                         + "aimmd than the current one. You need at least aimmd "
