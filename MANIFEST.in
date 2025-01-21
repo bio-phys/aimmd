@@ -1,0 +1,3 @@
+# ensure the cython files are included in the sdist
+include aimmd/coords/_symmetry.pyx
+
