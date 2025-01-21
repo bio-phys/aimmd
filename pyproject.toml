@@ -51,5 +51,5 @@ Issues = "https://github.com/bio-phys/aimmd/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["aimmd"]
+include = ["aimmd*"]
 namespaces = false
