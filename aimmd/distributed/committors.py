@@ -97,7 +97,7 @@ class CommittorSimulation:
         starting configuration.
     reinitialize_from_workdir(overwrite=False)
         Restore self into the state as if we would have ran all exisiting
-        committor trials found in workdir (potentially finishing unfinsihed
+        committor trials found in workdir (potentially finishing unfinished
         ones and adding missing ones) but honoring a potentially changed state
         definition, i.e. extending trials and returning shorter trajectories to
         the states where needed. Additional (missing) twoway shoots are also
@@ -117,9 +117,9 @@ class CommittorSimulation:
     # together with deffnm this results in "start_conf_trial_bw.trr" and
     # "start_conf_trial_fw.trr"
     start_conf_name_prefix = "start_conf_"
-    fname_traj_to_state = "traj_to_state.trr"
-    fname_traj_to_state_bw = "traj_to_state_bw.trr"  # only in TwoWay
-    fname_transition_traj = "transition_traj.trr"  # only in TwoWay
+    fname_traj_to_state = "traj_to_state"
+    fname_traj_to_state_bw = "traj_to_state_bw"  # only in TwoWay
+    fname_transition_traj = "transition_traj"  # only in TwoWay
     deffnm_engine_out = "trial_fw"
     deffnm_engine_out_bw = "trial_bw"  # only in TwoWay
     max_retries_on_crash = 2  # maximum number of *retries* on MD engine crash
@@ -208,6 +208,7 @@ class CommittorSimulation:
         self.two_way = ensure_list(val=two_way,
                                    length=len(starting_configurations),
                                    name="two_way")
+        self.output_traj_type = []
         for i in range(len(starting_configurations)):
             self.engine_kwargs[i]["mdconfig"] = ensure_mdconfig_options(
                                self.engine_kwargs[i]["mdconfig"],
@@ -216,6 +217,14 @@ class CommittorSimulation:
                                # dont apply constraints at start of simulation
                                continuation="yes",
                                                               )
+            try:
+                # see if it is set as engine_kwarg
+                output_traj_type = self.engine_kwargs[i]["output_traj_type"]
+            except KeyError:
+                # it is not, so we use the engine_class default
+                output_traj_type = self.engine_cls[i].output_traj_type
+            finally:
+                self.output_traj_type += [output_traj_type.lower()]
         self.walltime_per_part = walltime_per_part
         self.n_max_concurrent = n_max_concurrent
         self.max_steps = max_steps
@@ -314,7 +323,8 @@ class CommittorSimulation:
             for snum in range(self.shot_counter):
                 traj_fname = os.path.join(cdir,
                                           f"{self.shot_dir_prefix}{snum}",
-                                          f"{self.fname_traj_to_state}")
+                                          f"{self.fname_traj_to_state}"
+                                          + f".{self.output_traj_type[cnum]}")
                 struct_fname = os.path.join(cdir,
                                             f"{self.shot_dir_prefix}{snum}",
                                             # TODO/FIXME: only works for gmx!
@@ -342,7 +352,8 @@ class CommittorSimulation:
             for snum in range(self.shot_counter):
                 traj_fname = os.path.join(cdir,
                                           f"{self.shot_dir_prefix}{snum}",
-                                          f"{self.fname_traj_to_state_bw}")
+                                          f"{self.fname_traj_to_state_bw}"
+                                          + f".{self.output_traj_type[cnum]}")
                 struct_fname = os.path.join(cdir,
                                             f"{self.shot_dir_prefix}{snum}",
                                             # TODO/FIXME: only works for gmx!
@@ -373,7 +384,8 @@ class CommittorSimulation:
             for snum in range(self.shot_counter):
                 traj_fname = os.path.join(cdir,
                                           f"{self.shot_dir_prefix}{snum}",
-                                          f"{self.fname_transition_traj}")
+                                          f"{self.fname_transition_traj}"
+                                          + f".{self.output_traj_type[cnum]}")
                 struct_fname = os.path.join(cdir,
                                             f"{self.shot_dir_prefix}{snum}",
                                             # TODO/FIXME: only works for gmx!
@@ -524,8 +536,10 @@ class CommittorSimulation:
                                     starting_configuration=starting_conf,
                                     workdir=step_dir,
                                     deffnm=self.deffnm_engine_out,
-                                    tra_out=os.path.join(step_dir,
-                                                         self.fname_traj_to_state
+                                    tra_out=os.path.join(
+                                                step_dir,
+                                                (self.fname_traj_to_state
+                                                 + f".{self.output_traj_type[conf_num]}")
                                                          ),
                                     continuation=(continuation and round_one),
                                     overwrite=overwrite,
@@ -845,7 +859,8 @@ class CommittorSimulation:
                 # can only be the other way round
                 minus_trajs, minus_state = fw_trajs, fw_state
                 plus_trajs, plus_state = bw_trajs, bw_state
-            tra_out = os.path.join(step_dir, self.fname_transition_traj)
+            tra_out = os.path.join(step_dir,
+                                   self.fname_transition_traj + f".{self.output_traj_type[conf_num]}")
             # TODO: we currently dont use the return, should call as _ = ... ?
             path_traj = await construct_TP_from_plus_and_minus_traj_segments(
                             minus_trajs=minus_trajs, minus_state=minus_state,
@@ -863,8 +878,10 @@ class CommittorSimulation:
         # i.e. this makes sure the committor simulation stays a committor
         # simulation, even for users who do not think about velocity
         # correlation times
-        out_tra_names = [os.path.join(step_dir, self.fname_traj_to_state),
-                         os.path.join(step_dir, self.fname_traj_to_state_bw),
+        out_tra_names = [os.path.join(step_dir,
+                                      self.fname_traj_to_state + f".{self.output_traj_type[conf_num]}"),
+                         os.path.join(step_dir,
+                                      self.fname_traj_to_state_bw + f".{self.output_traj_type[conf_num]}"),
                          ]
         # TODO: we currently dont use the return, should call as _ = ... ?
         concats = await asyncio.gather(*(
