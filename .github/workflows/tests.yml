@@ -34,6 +34,7 @@ jobs:
           auto-update-conda: true
           python-version: ${{ matrix.python-version }}
           miniforge-version: latest
+          conda-remove-defaults: true
       - name: Install dependencies
         run: conda install pytorch
       - name: Install
