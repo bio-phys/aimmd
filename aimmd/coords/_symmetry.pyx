@@ -19,14 +19,17 @@ cimport numpy as cnp
 from libc cimport math
 from cpython cimport list
 
-ctypedef cnp.float64_t float64_t
-ctypedef cnp.float32_t float32_t
-ctypedef cnp.int64_t int64_t
-ctypedef cnp.int32_t int32_t
-
 import numpy as np
 import mdtraj as md
 from cython.parallel import prange
+
+ctypedef cnp.float64_t float64_t
+ctypedef cnp.float32_t float32_t
+ctypedef cnp.int64_t int64_t
+#ctypedef cnp.int32_t int32_t # only needed for mdtraj version <=1.10
+# Note: see also below the type definition for pairs, intra_pairs, triples
+#       these are the return of mdtraj.select_pairs, which changed its return
+#       type with v1.11
 
 
 def sf(mdtra, mol_idxs, solv_idxs, g_parms, cutoff,
@@ -131,7 +134,10 @@ cdef cnp.ndarray[float64_t, ndim=2] symmetry_functions_by_solv(
 
     cdef float64_t r_c_fermi = cutoff - 1./math.sqrt(alpha_cutoff)
     cdef cnp.ndarray[int64_t, ndim=1] solv_in_cutoff_f
-    cdef cnp.ndarray[int32_t, ndim=2] pairs, intra_pairs, triples
+    # for mdtraj version >= 1.11
+    cdef cnp.ndarray[int64_t, ndim=2] pairs, intra_pairs, triples
+    # for mdtraj version <= 1.10
+    #cdef cnp.ndarray[int32_t, ndim=2] pairs, intra_pairs, triples
     cdef cnp.ndarray[float32_t, ndim=2] r_inter, r_intra, angles
 
     cdef float32_t Rij, Rik, Rjk, Aijk
