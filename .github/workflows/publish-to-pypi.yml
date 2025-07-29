@@ -13,7 +13,7 @@ jobs:
     - uses: actions/checkout@v4
       with:
         persist-credentials: false
-        lfs: true
+        lfs: false
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
