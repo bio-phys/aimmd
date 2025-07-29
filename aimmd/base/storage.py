@@ -843,7 +843,7 @@ class Storage:
 
     # TODO: should we require descriptor_dim as input on creation?
     #       to make clear that you can not change it?!
-    def __init__(self, fname, mode='a'):
+    def __init__(self, fname, mode='a', copy_asyncmd_caches=False):
         """
         Initialize (open/create) a Storage.
 
@@ -856,6 +856,8 @@ class Storage:
             w       : create file, truncate if exists
             w- or x : create file, fail if exists
             a       : read/write if exists, create otherwise (default)
+        copy_asyncmd_caches - bool, whether to copy potential previous asyncmd
+            h5py caches when registering this file as cache.
 
         """
         fexists = os.path.exists(fname)
@@ -923,28 +925,21 @@ class Storage:
         self.rcmodels = RCModelRack(rcmodel_group=rcm_grp, storage_directory=self._dirname)
         self._mcstep_collections = None
         # register this storage file as trajectory value cache with asyncmd
-        if mode != "r":
-            # we have write intent on the file, so get/create the trajectory value cache
+        try:
             self._distributed_traj_val_cache = self.file.require_group(
                                 _H5PY_PATH_DICT["distributed_traj_val_cache"]
                                                                        )
-            try:
-                cur_cache = asyncmd.config._GLOBALS["H5PY_CACHE"]
-            except KeyError:
-                # no cache set, so we set this file
-                asyncmd.config.register_h5py_cache(
-                                h5py_group=self._distributed_traj_val_cache,
-                                make_default=True,
-                                                   )
-            else:
-                logger.warning("Resetting the asyncmd h5py trajectory value "
-                               + f"cache. Was {cur_cache}.")
+        except ValueError:
+            # h5py raises a value error when trying to require a group that does
+            # not exist from a read-only file,
+            # in this case there is no cache to register
+            self._distributed_traj_val_cache = None
         else:
-            # no write intent, so we warn about it
-            logger.warning("Opening storage without write intent, asyncmd "
-                           + "trajectory value caching will not be performed "
-                           + "in h5py (but most likely as seperate npz files)."
-                           )
+            asyncmd.config.register_h5py_cache(
+                                h5py_group=self._distributed_traj_val_cache,
+                                copy_h5py=copy_asyncmd_caches,
+                                               )
+
         # empty the density collector caches (should be empty, but to be sure)
         self._empty_cache()
 
@@ -978,6 +973,8 @@ class Storage:
     def close(self):
         self._empty_cache()
         self.file.flush()
+        if self._distributed_traj_val_cache is not None:
+            asyncmd.config.deregister_h5py_cache(h5py_group=self._distributed_traj_val_cache)
         self.file.close()
 
     def _empty_cache(self):

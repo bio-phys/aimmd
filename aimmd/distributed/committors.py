@@ -28,7 +28,7 @@ from asyncmd.trajectory.convert import (RandomVelocitiesFrameExtractor,
 from asyncmd.trajectory.propagate import (
                             MaxStepsReachedError,
                             ConditionalTrajectoryPropagator,
-                            construct_TP_from_plus_and_minus_traj_segments,
+                            construct_tp_from_plus_and_minus_traj_segments,
                                           )
 from asyncmd.utils import ensure_mdconfig_options
 
@@ -862,7 +862,7 @@ class CommittorSimulation:
             tra_out = os.path.join(step_dir,
                                    self.fname_transition_traj + f".{self.output_traj_type[conf_num]}")
             # TODO: we currently dont use the return, should call as _ = ... ?
-            path_traj = await construct_TP_from_plus_and_minus_traj_segments(
+            path_traj = await construct_tp_from_plus_and_minus_traj_segments(
                             minus_trajs=minus_trajs, minus_state=minus_state,
                             plus_trajs=plus_trajs, plus_state=plus_state,
                             state_funcs=self.states, tra_out=tra_out,
