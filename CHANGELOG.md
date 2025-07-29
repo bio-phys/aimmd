@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- symmetry function compilation with cython now uses the correct types for mdtraj >= v1.11, require mdtraj >= v1.11 for installation.
 - update aimmd.distributed (and the aimmd.Storage) to the new (v0.4.1) asyncmd
 - aimmd.distributed.committors: Remove hardcoded TRR trajectory type for output trajectories and instead use the same output file type as the engine.
 
