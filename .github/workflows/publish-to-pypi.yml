@@ -24,7 +24,7 @@ jobs:
         pip install
         build
         --user
-    - name: Build a source tarball  # TODO: also build binary wheels with cibuildwheel!
+    - name: Build a source tarball  # TODO: also build binary wheels with cibuildwheel?!
       run: python3 -m build --sdist
     - name: Store the distribution packages
       uses: actions/upload-artifact@v4
@@ -76,7 +76,7 @@ jobs:
       with:
         inputs: >-
           ./dist/*.tar.gz
-          ./dist/*.whl
+        #  ./dist/*.whl  # we dont have a wheel build, so cant sign it here
     - name: Create GitHub Release
       env:
         GITHUB_TOKEN: ${{ github.token }}
