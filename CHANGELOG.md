@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2025-07-29
+
 ### Added
 
 - Add `CHANGELOG.md` file
@@ -39,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - First release on PyPi
 
-[unreleased]: https://github.com/bio-phys/aimmd/compare/v0.9.2.dev2...HEAD
+[unreleased]: https://github.com/bio-phys/aimmd/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/bio-phys/aimmd/compare/v0.9.1.dev2...v0.9.2
 [0.9.1.dev2]: https://github.com/bio-phys/aimmd/compare/v0.9.1.dev1...v0.9.1.dev2
 [0.9.1.dev1]: https://github.com/bio-phys/aimmd/releases/tag/v0.9.1.dev1

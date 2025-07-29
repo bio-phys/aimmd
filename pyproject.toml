@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aimmd"
-version = "0.9.1dev2"
+version = "0.9.2"
 dependencies = ["numpy >= 1.17", "cython",
                 "openpathsampling",
                 # need mdtraj >= 1.11 to be able to type the mdtraj returns in _symmetry.pyx correctly
