@@ -34,7 +34,7 @@ from asyncmd.trajectory.propagate import (
                             ConditionalTrajectoryPropagator,
                             InPartsTrajectoryPropagator,
                             TrajectoryConcatenator,
-                            construct_TP_from_plus_and_minus_traj_segments,
+                            construct_tp_from_plus_and_minus_traj_segments,
                                           )
 from asyncmd.utils import ensure_mdconfig_options, nstout_from_mdconfig
 
@@ -600,7 +600,7 @@ class _TwoWayShootingPathMoverMixin:
                         + f"Forward trial reached state {fw_state}, "
                         + f"backward trial reached state {bw_state}.")
             tra_out = os.path.join(wdir, f"{self.path_filename}.{self.output_traj_type}")
-            path_traj = await construct_TP_from_plus_and_minus_traj_segments(
+            path_traj = await construct_tp_from_plus_and_minus_traj_segments(
                             minus_trajs=minus_trajs, minus_state=minus_state,
                             plus_trajs=plus_trajs, plus_state=plus_state,
                             state_funcs=self.states, tra_out=tra_out,

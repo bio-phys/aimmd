@@ -6,10 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "aimmd"
 version = "0.9.1dev2"
 dependencies = ["numpy >= 1.17", "cython",
-                "openpathsampling", "mdtraj", "networkx",
+                "openpathsampling",
+                # need mdtraj >= 1.11 to be able to type the mdtraj returns in _symmetry.pyx correctly
+                "mdtraj >= 1.11",
+                "networkx",
                 "h5py >= 3",
                 "mdanalysis",  # only needed for distributed examples
-                "asyncmd",
+                "asyncmd >= 0.4.1",
                 ]
 requires-python = ">=3.10"
 authors = [{ name = "Hendrik Jung", email = "hendrik.jung@biophys.mpg.de"}]
