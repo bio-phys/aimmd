@@ -18,7 +18,7 @@ requires-python = ">=3.10"
 authors = [{ name = "Hendrik Jung", email = "hendrik.jung@biophys.mpg.de"}]
 maintainers = [{ name = "Hendrik Jung", email = "hendrik.jung@biophys.mpg.de"}]
 description = """aimmd (AI for Molecular Mechanism Discovery) autonomously \
-steers (a large number of) molecular dynamics simulations to effciently sample\
+steers (a large number of) molecular dynamics simulations to efficiently sample\
  and understand rare transition events."""
 readme = "README.md"
 keywords = ["science", "MD", "Molecular Dynamics", "molecular-dynamics",
@@ -42,13 +42,13 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-#docs = ["sphinx"]  # TODO!
+docs = ["sphinx", "myst-nb", "sphinx-book-theme"]
 tests = ["pytest", "pytest-asyncio"]
 tests-all = ["aimmd[tests]", "coverage", "pytest-cov"]
-dev = ["aimmd[tests-all]"] #["aimmd[docs,tests-all]"]
+dev = ["aimmd[docs,tests-all]"]
 
 [project.urls]
-#Documentation =
+Documentation = "https://aimmd.readthedocs.io/en/latest/"
 Repository = "https://github.com/bio-phys/aimmd.git"
 Issues = "https://github.com/bio-phys/aimmd/issues"
 
