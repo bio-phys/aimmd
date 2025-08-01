@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add documentation build with sphinx, myst-nb, and the spinx-book-theme. Also hosted on [read the docs](https://aimmd.readthedocs.io/en/latest/).
+- Add pylint configuration and github workflow.
+
 ## [0.9.2] - 2025-07-29
 
 ### Added
