@@ -50,7 +50,7 @@ pytest --cov=aimmd --cov-report=html
 aimmd uses [pylint] to perform linting and ensure code quality. It will also be installed with the [developer installation](#developer-installation) such that you can run it locally and it will also be run automatically on pull requests on github.
 
 ```{important}
-The current configuration fails only if [pylint] finds an [error](https://pylint.readthedocs.io/en/latest/user_guide/messages/messages_overview.html#error-category) or if the [pylint] rating decreases to below 4.
+The current configuration fails only if [pylint] finds an [error](https://pylint.readthedocs.io/en/latest/user_guide/messages/messages_overview.html#error-category) or if the [pylint] rating decreases to below 7.
 Note that this somewhat relaxed setting is due to historical code and will be tightened in the future as soon as we refactored the old code.
 **All new code should strive to not add any [pylint] messages, but at least not result in additional error or warning messages.**
 ```

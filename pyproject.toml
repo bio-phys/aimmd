@@ -45,7 +45,10 @@ classifiers = [
 docs = ["sphinx", "myst-nb", "sphinx-book-theme"]
 tests = ["pytest", "pytest-asyncio"]
 tests-all = ["aimmd[tests]", "coverage", "pytest-cov"]
-dev = ["aimmd[docs,tests-all]"]
+dev = ["aimmd[docs,tests-all]",
+       "jupyterlab", "ipywidgets", "tqdm",  # for example notebooks
+       "pylint",
+       ]
 
 [project.urls]
 Documentation = "https://aimmd.readthedocs.io/en/latest/"
@@ -56,3 +59,53 @@ Issues = "https://github.com/bio-phys/aimmd/issues"
 where = ["."]
 include = ["aimmd*"]
 namespaces = false
+
+# TODO: typing!
+#[tool.setuptools.package-data]
+#asyncmd = ["py.typed"]
+
+# pylint configuration
+[tool.pylint.main]
+# Return non-zero exit code if any of these messages/categories are detected,
+# even if score is above --fail-under value. Syntax same as enable. Messages
+# specified are enabled, while categories only check already-enabled messages.
+fail-on = ["E"]
+
+# Specify a score threshold under which the program will exit with error.
+fail-under = 7
+
+# List of plugins (as comma separated values of python module names) to load,
+# usually to register additional checkers.
+load-plugins = ["pylint.extensions.bad_builtin",
+                "pylint.extensions.broad_try_clause",
+                "pylint.extensions.check_elif",
+                "pylint.extensions.code_style",
+                "pylint.extensions.comparison_placement",
+                "pylint.extensions.consider_refactoring_into_while_condition",
+                "pylint.extensions.dict_init_mutate",
+                "pylint.extensions.docparams",
+                "pylint.extensions.eq_without_hash",
+                "pylint.extensions.for_any_all",
+                "pylint.extensions.overlapping_exceptions",
+                "pylint.extensions.redefined_loop_name",
+                "pylint.extensions.redefined_variable_type",
+                "pylint.extensions.set_membership",
+                "pylint.extensions.typing",
+                ]
+
+# Minimum Python version to use for version dependent checks. Will default to the
+# version used to run pylint.
+py-version = "3.10"
+
+[tool.pylint."messages control"]
+# Enable the message, report, category or checker with the given id(s). You can
+# either give multiple identifier separated by comma (,) or put this option
+# multiple time (only on the command line, not in the configuration file where it
+# should appear only once). See also the "--disable" option for examples.
+enable = ["all"]
+
+[tool.pylint.design]
+# increase maximum number of arguments for functions/methods (default=5)
+max-args = 6
+# but decrease maximum number of positional arguments (default=5)
+max-positional-arguments = 4
