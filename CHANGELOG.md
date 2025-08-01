@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - update aimmd.distributed (and the aimmd.Storage) to the new (v0.4.1) asyncmd
 - aimmd.distributed.committors: Remove hardcoded TRR trajectory type for output trajectories and instead use the same output file type as the engine.
 
-## [0.9.1.dev2] - 2025-02-06
+## [0.9.1dev2] - 2025-02-06
 
 ### Added
 
@@ -40,13 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Ensure the correct training feedback for model when reinitializing a TPS simulation in aimmd.distributed
 
-## [0.9.1.dev1] - 2025-01-21
+## [0.9.1dev1] - 2025-01-21
 
 ### Added
 
 - First release on PyPi
 
 [unreleased]: https://github.com/bio-phys/aimmd/compare/v0.9.2...HEAD
-[0.9.2]: https://github.com/bio-phys/aimmd/compare/v0.9.1.dev2...v0.9.2
-[0.9.1.dev2]: https://github.com/bio-phys/aimmd/compare/v0.9.1.dev1...v0.9.1.dev2
-[0.9.1.dev1]: https://github.com/bio-phys/aimmd/releases/tag/v0.9.1.dev1
+[0.9.2]: https://github.com/bio-phys/aimmd/compare/v0.9.1dev2...v0.9.2
+[0.9.1dev2]: https://github.com/bio-phys/aimmd/compare/v0.9.1dev1...v0.9.1.dev2
+[0.9.1dev1]: https://github.com/bio-phys/aimmd/releases/tag/v0.9.1dev1
