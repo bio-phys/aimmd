@@ -22,7 +22,12 @@ This will clone the repository to the current working directory and install aimm
 ```bash
 git clone https://github.com/bio-phys/aimmd.git
 cd aimmd
-pip install .
+pip install .\[examples\]
+```
+
+```{note}
+We used the ``examples`` installation target here to directly install the additional requirements needed to run the examples.
+This includes, e.g., [jupyterlab] (to actually run the notebooks) and [pooch] (to download some of the larger files used in the example notebooks).
 ```
 
 (tests-installation)=
@@ -98,6 +103,7 @@ pytest --cov=aimmd --cov-report=html
 [MyST-NB]: https://myst-nb.readthedocs.io/en/latest/
 [openMM]: http://openmm.org/
 [openpathsampling]: http://openpathsampling.org/latest/
+[pooch]: https://www.fatiando.org/pooch/latest/index.html
 [PyPi]: https://pypi.org/project/aimmd/
 [pytest]: https://docs.pytest.org/en/latest/
 [pytest-cov]: https://pypi.org/project/pytest-cov/
