@@ -1,3 +1,0 @@
-examples/LiCl_single_ion_dissociation/training_and_validation_data/* filter=lfs diff=lfs merge=lfs -text
-examples/distributed/gmx_infiles/*.trr filter=lfs diff=lfs merge=lfs -text
-examples/distributed/gmx_infiles/*.tpr filter=lfs diff=lfs merge=lfs -text
