@@ -11,7 +11,6 @@ dependencies = ["numpy >= 1.17", "cython",
                 "mdtraj >= 1.11",
                 "networkx",
                 "h5py >= 3",
-                "mdanalysis",  # only needed for distributed examples
                 "asyncmd >= 0.4.1",
                 ]
 requires-python = ">=3.10"
@@ -45,8 +44,11 @@ classifiers = [
 docs = ["sphinx", "myst-nb", "sphinx-book-theme"]
 tests = ["pytest", "pytest-asyncio"]
 tests-all = ["aimmd[tests]", "coverage", "pytest-cov"]
-dev = ["aimmd[docs,tests-all]",
-       "jupyterlab", "ipywidgets", "tqdm",  # for example notebooks
+examples = ["jupyterlab", "ipywidgets", "tqdm", # for example notebooks
+            "pooch",  # used to download LiCl example files from figshare
+            "mdanalysis",  # used in distributed example state/descriptor funcs
+            ]
+dev = ["aimmd[docs,tests-all,examples]",
        "pylint",
        ]
 
@@ -62,7 +64,7 @@ namespaces = false
 
 # TODO: typing!
 #[tool.setuptools.package-data]
-#asyncmd = ["py.typed"]
+#aimmd = ["py.typed"]
 
 # pylint configuration
 [tool.pylint.main]
