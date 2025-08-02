@@ -1,3 +1,6 @@
+# data files used in example notebooks
+examples/LiCl_single_ion_dissociation/training_and_validation_data/
+
 # cythons annotated coverage htmls
 # ATTENTION: this matches ALL .html files in
 # ALL SUBDIRECTORIES of aimmd
