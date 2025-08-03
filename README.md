@@ -12,11 +12,11 @@ Installing aimmd from [PyPi][pypi-link] is as easy as:
 pip install aimmd
 ```
 
-For more see the [documentation](rtd-link).
+For more see the [documentation][rtd-link].
 
 ## Documentation and Code Examples
 
-Please see the [documentation](rt-link) for more information on aimmd and/or the jupyter notebooks in the `examples` folder for code examples.
+Please see the [documentation][rtd-link] for more information on aimmd and/or the jupyter notebooks in the `examples` folder for code examples.
 
 ## Contributing
 
