@@ -1,8 +1,8 @@
-# aimmd example notebooks for (classic) TPS with openpathsampling
+# aimmd example notebooks for "classic" TPS with openpathsampling
 
 ```{toctree}
 :maxdepth: 1
-:caption: "classic" notebooks
+:caption: classic notebooks
 
 Toy system(s) <toy_systems/README>
 Lithium chloride dissociation <LiCl_single_ion_dissociation/README>
@@ -23,7 +23,7 @@ These notebooks are useful if you want to be able to see exactly what is going o
 ## Lithium chloride dissociation
 
 This folder contains notebooks showcasing how to learn the solvent-dependent committor for the dissociation of lithium chloride.
-In these notebooks you will use symmetry functions to describe the solvent in a permutation and translation invariant way.
+In these notebooks you will use symmetry functions to describe the solvent in a permutation invariant way.
 
 ## Capped alanine dipeptide
 

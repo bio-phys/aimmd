@@ -1,4 +1,4 @@
-# (classic) TPS with openpathsampling on 2D toy potentials
+# "classic" TPS with openpathsampling on 2D toy potentials
 
 ```{toctree}
 :maxdepth: 1
@@ -10,7 +10,7 @@
 3 toy symbolic regression <3_Toy_SymbolicRegression>
 4 toy: loading and saving rcmodels <4_Toy_loading_and_saving_rcmodels>
 
-1.5 toy pytorch multidomain model: setup <1_Toy_pytorch_MultiDomainModel_setup>
+1.5 toy pytorch multidomain model: setup <1.5_Toy_pytorch_MultiDomainModel_setup>
 
 1 toy tensorflow simple: setup <1_Toy_tensorflow_simple_setup>
 ```
