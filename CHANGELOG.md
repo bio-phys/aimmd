@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add documentation build with sphinx, myst-nb, and the spinx-book-theme. Also hosted on [read the docs](https://aimmd.readthedocs.io/en/latest/).
 - Add pylint configuration and github workflow.
 
+### Changed
+
+- Reorganize example notebooks. Host large input files used in examples on figshare, download them in the examples only if needed. Document example notebooks with readme files and add them to the documentation.
+
 ## [0.9.2] - 2025-07-29
 
 ### Added

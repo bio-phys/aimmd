@@ -43,8 +43,6 @@ community/contributing
 (example-notebooks)=
 ## Example notebooks
 
-**TODO: include (and resturcture) the examples using openpathsampling**
-
 This section contains example jupyter notebooks (also included in the repository) on various topics.
 
 ```{toctree}
