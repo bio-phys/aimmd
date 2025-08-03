@@ -6,6 +6,7 @@
 
 aimmd.distributed <distributed/README>
 classic <classic/README>
+Apply aimmd on existing data <apply_on_existing_data/README>
 ```
 
 ## Example notebooks for ``aimmd.distributed``
@@ -17,3 +18,8 @@ The example notebooks found in the ``distributed`` folder (and its subfolders) a
 The example notebooks in the ``classic`` folder (and its subfolders) teach you how to use aimmd to perform AI-guided TPS with [openpathsampling].
 As opposed to the simulations performed using the ``aimmd.distributed`` module, here one committor model steers only one TPS (or other path sampling simulation) and since the actual (T)PS simulation is performed with [openpathsampling] all bonuses and constraints of using it apply.
 There are currently examples for 2D toy potentials, LiCl dissociation (including solvent), and capped alanine dipeptide.
+
+## Example notebooks on learning the transition mechanism from existing data
+
+The example notebooks in the the ``apply_on_existing_data`` (and its subfolders) show how to use aimmd to learn the committor of a transition from existing data without performing any new MD simulations.
+Currently in here is an example on how to learn the committor of methane hydrate nucleation at different temperatures, then identify the most relevant coordinates, and finally build a low dimensional mathematical expression of the transition using symbolic regression.
