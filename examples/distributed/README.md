@@ -2,7 +2,7 @@
 
 ```{toctree}
 :maxdepth: 1
-:Caption: aimmd.distributed notebooks
+:caption: aimmd.distributed notebooks
 
 TPS 1: Setup and run simulation <TPS_1_setup_and_run_simulation>
 TPS 2: Continue simulation <TPS_2_continue_simulation>
