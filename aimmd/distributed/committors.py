@@ -1,989 +1,1106 @@
+# This file is part of aimmd
+#
+# aimmd is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# aimmd is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with aimmd. If not, see <https://www.gnu.org/licenses/>.
 """
-This file is part of AIMMD.
+This file contains the implementation of the :class:`CommittorSimulation`.
 
-AIMMD is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-AIMMD is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
+It also contains the implementation of the two input dataclasses for
+:class:`CommittorSimulation`, the :class:`CommittorEngineSpec` and the
+:class:`CommittorConfiguration`, as well as various dataclasses used internally
+in the :class:`CommittorSimulation`.
 """
+import asyncio
+import dataclasses
+import logging
 import os
 import shutil
-import logging
-import asyncio
-import numpy as np
+import typing
 
-from asyncmd.mdengine import EngineCrashedError
+import numpy as np
+from tqdm.asyncio import tqdm_asyncio
+
 from asyncmd import Trajectory
+from asyncmd.mdengine import EngineCrashedError
 from asyncmd.trajectory.convert import (RandomVelocitiesFrameExtractor,
                                         InvertedVelocitiesFrameExtractor,
                                         )
 from asyncmd.trajectory.propagate import (
-                            MaxStepsReachedError,
-                            ConditionalTrajectoryPropagator,
-                            construct_tp_from_plus_and_minus_traj_segments,
-                                          )
+                                MaxStepsReachedError,
+                                ConditionalTrajectoryPropagator,
+                                construct_tp_from_plus_and_minus_traj_segments,
+                                )
 from asyncmd.utils import ensure_mdconfig_options
+
+from ..tools import attach_kwargs_to_object as _attach_kwargs_to_object
+
+if typing.TYPE_CHECKING:  # pragma: no cover
+    from asyncmd.mdengine import MDEngine
+    from asyncmd.trajectory.functionwrapper import TrajectoryFunctionWrapper
+    T = typing.TypeVar("T")  # a generic typevar
 
 
 logger = logging.getLogger(__name__)
 
 
-# TODO: DOCUMENT! (and clean up)
+def _is_documented_by(docstring, *format_args):
+    """
+    Decorator to add the given docstring to the decorated method.
+    Optionally perform formatting on the string with ``format_args``.
+    """
+    def wrapper(target):
+        target.__doc__ = docstring.format(*format_args)
+        return target
+    return wrapper
+
+
+@dataclasses.dataclass
+class CommittorEngineSpec:
+    """
+    Specify MDEngine and other propagation options for :class:`CommittorSimulation`.
+
+    Parameters
+    ----------
+    engine_cls : type[asyncmd.mdengine.MDEngine]
+        The MD engine class to use (uninitialized).
+    engine_kwargs : dict[str, Any]
+        A dictionary with keyword arguments that can be used to initialize the
+        MD engine.
+    walltime_per_part : float
+        MD propagation will be split in parts of walltime, measured in hours.
+    max_steps : int
+        The maximum number of integration steps to perform without reaching a
+        state, i.e. upper cutoff for uncommitted trials.
+    """
+    engine_cls: type["MDEngine"]
+    engine_kwargs: dict[str, typing.Any]
+    walltime_per_part: float
+    max_steps: int | None = None
+    output_traj_type: str = dataclasses.field(init=False)
+
+    def __post_init__(self) -> None:
+        """
+        Ensure that the mdconfig options are what we expect and infer output_traj_type.
+        """
+        # make sure the mdconfig options are what we expect
+        self.engine_kwargs["mdconfig"] = ensure_mdconfig_options(
+                                self.engine_kwargs["mdconfig"],
+                                # dont generate velocities, we do that ourself
+                                genvel="no",
+                                # dont apply constraints at start of simulation
+                                continuation="yes",
+                                )
+        # infer output_traj_type
+        try:
+            # see if it is set as engine_kwarg
+            output_traj_type: str = self.engine_kwargs["output_traj_type"]
+        except KeyError:
+            # it is not, so we use the engine_class default
+            output_traj_type = self.engine_cls.output_traj_type
+        self.output_traj_type = output_traj_type.lower()
+
+
+@dataclasses.dataclass
+class CommittorConfiguration:
+    """
+    Specify configurations for :class:`CommittorSimulation`
+
+    Parameters
+    ----------
+    trajectory : asyncmd.Trajectory
+        The trajectory on which the configuration lies.
+    index : int
+        The index of the configuration in the trajectory.
+    name : str | None
+        An optional name used to identify the configuration.
+    """
+    trajectory: Trajectory
+    index: int
+    name: str | None = None
+
+
+@dataclasses.dataclass
+class _CommittorSimulationDirectoryPrefixes:
+    """
+    Store (default) values for directory (prefixes) used by :class:`CommittorSimulation`.
+    """
+    configuration_prefix: str = "configuration_"
+    trial_prefix: str = "trial_"
+    forward: str = "forward_propagation"
+    backward: str = "backward_propagation"
+
+
+@dataclasses.dataclass
+class _CommittorSimulationOutFilenames:
+    """
+    Store (default) values for names of output files generated by :class:`CommittorSimulation`.
+    """
+    traj_to_state: str = "trajectory_to_state"
+    traj_to_state_bw: str = "trajectory_to_state_backward"
+    transition: str = "transition_trajectory"
+    initial_conf: str = "initial_configuration"
+    initial_conf_bw: str = "initial_configuration_backward"
+    full_precision_traj_type: str = "trr"
+    deffnm_engine: str = "committor"
+
+
+@dataclasses.dataclass
+class _CommittorSimulationMaxRetries:
+    """
+    Store (default) values for how often the associated :class:`CommittorSimulation`
+    retries trials in case of various errors.
+
+    Note: A **retry** value of 0 means try once and dont retry. A retry value
+    of 1 means try at most 2 times, i.e. retry once on failure.
+    """
+    crash: int = 1
+    max_steps: int = 0
+
+
+@dataclasses.dataclass
+class _PreparedTrialData:
+    """
+    Store data needed to run one trial (one direction) of the :class:`CommittorSimulation`.
+
+    Used internally to pass data between methods.
+    """
+    ns: dict[str, int]
+    sp_conf: Trajectory
+    workdir: str
+    continuation: bool
+    tra_out: str | None
+    engine_spec: CommittorEngineSpec
+    overwrite: bool
+
+
 class CommittorSimulation:
     """
-    Run committor simulation for multiple starting configurations in parallel.
+    Run committor simulation for multiple configurations in parallel.
 
-    Given a list of starting configurations and a list of states propagate
-    trajectories until any of the states is reached. Write out the concatenated
-    trajectory from the starting configuration to the first state.
-    When twoway shooting is performed additionally write out any potential
-    transitions (going from the lower index state to the higher index state).
-    Note that the `CommittorSimulation` allows for the simulation of different
-    ensembles per starting configuration (see the `__init__` docstring).
+    Given a list of configurations (as :class:`CommittorConfiguration`) and a
+    list of states propagate trajectories until any of the states is reached.
+    Writes out the concatenated trajectory from the starting configuration to
+    the first state reached.
+    If `two_way` is True, trials will also be performed with inverted momenta,
+    i.e. backward. For these trials concatenated output trajectories will also
+    be written, but additionally transition trajectories are written out if the
+    forward and backward propagation of the same trial end in different states.
+    The transition will be ordered going from the lower index state to the higher
+    index state.
+    The results/states reached for forward and backward trials are stored and
+    returned separately due to the correlation in outcomes between forward and
+    backward trials.
 
-    Attributes
-    ----------
-    states_reached : np.ndarray(shape=(n_conf, n_states))
-        Return states_reached as a np.array with shape (n_conf, n_states),
-        where the entries give the counts of states reached, i.e. the format is
-        as in an `aimmd.TrainSet`.
-    states_reached_per_shot : np.ndarray(shape=(n_conf, n_shots, n_states))
-        A np.array shape (n_conf, n_shots, n_states), where the entries
-        give the counts of states reached for every single shot, i.e. summing
-        over the states axis will always give 1 (or 2 if twoway=True).
-    shot_counter : int
-        Number of trial shots done per configuration so far.
-    trajs_to_state : list[list[asyncmd.Trajectory]]
-        All produced trajectories until the first state is reached, for each
-        configuration seperately.
-    trajs_to_state_bw : list[list[asyncmd.Trajectory]]
-        All produced trajectories until the first state is reached for the
-        backwards (inverted velocity) shot if `two_way=True`, also for each
-        configuration seperately.
-    transitions : list[list[asyncmd.Trajectory]]
-        If `two_way=True` and the forward and backward trial end in different
-        states a transition was produced. Also sorted by configuration,
-        transitions go from the lower index state to the higher index state.
-    fname_traj_to_state : str
-        The name to use for the concatenated trajectory until the first state
-        is reached.
-    fname_traj_to_state_bw : str
-        The name to use for the concatenated trajectory until the first state
-        is reached in the backwards trial (if `two_way=True`).
-    fname_transition_traj : str
-        The filename to use for the potentially produced transitions (if
-        `two_way=True`).
-    deffnm_engine_out : str
-        The deffnm to use for the molecular dynamics engine.
-    deffnm_engine_out_bw : str
-        The deffnm to use for the molecular dynamics engine in the backwards
-        trial (if `two_way=True`).
-    max_retries_on_crash : int
-        How many times we should retry a trial if the molecular dynamics engine
-        crashed.
-
-    Methods
-    -------
-    run(n_per_struct)
-        Performs `n_per_struct` (additional) committor trials for every
-        starting configuration.
-    reinitialize_from_workdir(overwrite=False)
-        Restore self into the state as if we would have ran all exisiting
-        committor trials found in workdir (potentially finishing unfinished
-        ones and adding missing ones) but honoring a potentially changed state
-        definition, i.e. extending trials and returning shorter trajectories to
-        the states where needed. Additional (missing) twoway shoots are also
-        performed if `self.two_way == True`.
+    This class will create the following directory path for each trial, with
+    ``$CONF_DIR_NAME`` either ``conf_$CONF_NUM`` or the name of the configuration,
+    and ``$CONF_NUM`` and ``$TRIAL_NUM`` the indices of the configuration and trial,
+    respectively: ``$WORKDIR/$CONF_DIR_NAME/trial_$TRIAL_NUM``.
+    Inside of each trial directory will be the shooting points and concatenated
+    output trajectories and a directory for each the forward and the backward
+    propagation, respectively.
     """
-
-    # NOTE: the defaults here will results in the layout:
-    # $WORKDIR/configuration_$CONF_NUM/shot_$SHOT_NUM,
-    # where $WORKDIR is the workdir given at init, and $CONF_NUM, $SHOT_NUM are
-    # the index to the input list starting_configurations and a counter for the
-    # shots respectively
-    # Note that configuration_dir_prefix is only used if no names are given for
-    # the configurations, if the configuration has a name we will use it
-    # instead of the configuration_$CONF_NUM part
-    configuration_dir_prefix = "configuration_"
-    shot_dir_prefix = "shot_"
-    # together with deffnm this results in "start_conf_trial_bw.trr" and
-    # "start_conf_trial_fw.trr"
-    start_conf_name_prefix = "start_conf_"
-    fname_traj_to_state = "traj_to_state"
-    fname_traj_to_state_bw = "traj_to_state_bw"  # only in TwoWay
-    fname_transition_traj = "transition_traj"  # only in TwoWay
-    deffnm_engine_out = "trial_fw"
-    deffnm_engine_out_bw = "trial_bw"  # only in TwoWay
-    max_retries_on_crash = 2  # maximum number of *retries* on MD engine crash
-                              # i.e. setting to 1 means *retry* once on crash
-
-    def __init__(self, workdir, starting_configurations, states, engine_cls,
-                 engine_kwargs, T, walltime_per_part,
-                 n_max_concurrent=10, two_way=False, max_steps=None, **kwargs):
+    def __init__(
+        self,
+        workdir: str,
+        configurations: list[CommittorConfiguration],
+        states: list["TrajectoryFunctionWrapper"],
+        temperature: float | list[float],
+        committor_engine_spec: CommittorEngineSpec | list[CommittorEngineSpec],
+        two_way: bool | list[bool] = False,
+        **kwargs: dict,
+    ) -> None:
         """
-        Initialize a `CommittorSimulation`.
+        Initialize a :class:`CommittorSimulation`.
+
+        All attributes and properties can be set at initialization by passing
+        keyword arguments with their name.
+
+        Note, that the :class:`CommittorSimulation` allows to vary some of the
+        simulation parameters on a per configuration basis. These can be either
+        a list of values (length must then be equal to the number of `configurations`)
+        or a single value.
+        This means you can simulate systems differing in the number of
+        molecules, at different pressures, or at different temperatures (by using
+        different :class:`CommittorEngineSpec` and even perform two way trials
+        only for a selected subset of configurations (e.g. the ones you expect
+        to be a transition state).
 
         Parameters
         ----------
         workdir : str
-            Absolute or relative path to an existing working directory.
-        starting_configurations : list of iterables
-            Each entry in the list is describing a starting configuration and
-            must have at least the two entries:
-                (`asyncmd.Trajectory`, `index_of_conf_in_traj`)
-            It can optionally have the form:
-                (`asyncmd.Trajectory`, `index_of_conf_in_traj`,
-                 `name_for_configuration`)
-        states : list[asyncmd.trajectory.TrajectoryFunctionWrapper]
-            A list of state functions, preferably wrapped using any
-            `asyncmd.trajectory.TrajectoryFunctionWrapper`.
-        engine_cls : A subclass of `aimmd.distributed.MDEngine` or list therof
-            The molecular dynamics engine to use.
-        engine_kwargs : dict or list[dict]
-            A dictionary with keyword arguments that can be used to instantiate
-            the engine given as `engine_cls`.
-        T : float or list[float]
-            The temperature to use when generating Maxwell-Boltzmann velocities
-        walltime_per_part : float
-            Walltime per trajectory segment in hours, note that this does not
-            limit the maximum length of the combined trajectory but only the
-            size/time per single trajectory segment.
-        n_max_concurrent : int
-            The maximum number of trials to propagate concurrently, note that
-            for two way simulations you will run 2*`n_max_concurrent` molecular
-            dynamics simulations in parallel.
-        two_way : bool or list[bool]
-            Wheter to run molecular dynamcis forwards and backwards in time.
-        max_steps : int or None
-            The maximum number of integration steps to perform in total per
-            trajectory, note that for two way simulations the combined maximum
-            length of the resulting trajectory will be 2*`max_steps`.
+            The working directory of the simulation.
+        configurations : list[CommittorConfiguration]
+            List of input configurations to perform committor simulation for.
+        states : list[TrajectoryFunctionWrapper]
+            List of states (stopping conditions) for the trial propagation.
+        temperature : float | list[float]
+            Temperature used to draw random Maxwell-Boltzmann velocities. Measured
+            in degree Kelvin. Can vary on a per-configuration basis or be the
+            same for all configurations.
+            Note: It is the users responsibility to ensure that the `temperature`
+            and other temperatures potentially passed via `committor_engine_spec`
+            (e.g. for thermostats in the MD engine) agree!
+        committor_engine_spec : CommittorEngineSpec | list[CommittorEngineSpec]
+            Description/Specification of the MD engine (including parameters)
+            used in the trial propagation. See :class:`CommittorEngineSpec` for
+            what is included. Can vary on a per-configuration basis.
+        two_way : bool | list[bool], optional
+            Whether to perform two way trials, by default False.
+            Can vary on a per-configuration basis or be the same for all configurations.
 
-        Note that all attributes can be set at intialization by passing keyword
-        arguments with their name.
-
-        Note, that the `CommittorSimulation` allows the simulation of different
-        physical ensembles for every starting configuration. This is achieved
-        by allowing the parameters `engine_cls`, `engine_kwargs`, `T` and
-        `twoway` to be either singletons (then they are the same for the whole
-        committor simulation) or a list with of same length as
-        `starting_configurations`, i.e. one value per starting configuration.
-        This means you can simulate systems differing in the number of
-        molecules (by changing the topology used in the engine), at different
-        pressures (by changing the molecular dynamics parameters passed with
-        `engine_kwargs`), at different temperatures (by changing `T` and
-        the parameters in the `engine_kwargs`) and even perform two way
-        shots only for a selected subset of starting configurations (e.g. the
-        ones you expect to be a transition state).
+        Raises
+        ------
+        ValueError
+            If the given `name`s for the :class:`CommittorConfiguration`s would
+            lead to non-unique directory names.
         """
-        def ensure_list(val, length: int, name: str) -> list:
-            if isinstance(val, list):
-                if not len(val) == length:
-                    raise ValueError("Must supply either one or exactly as many"
-                                     + f"{name} as starting_configurations.")
-            else:
-                val = [val] * length
-            return val
-
-        # TODO: should some of these be properties?
+        # internal counter (needed for the properties [below] to work)
+        self._trial_counter = 0  # trials per configuration
+        # sort out the arguments we always need/get
         self.workdir = os.path.relpath(workdir)
-        self.starting_configurations = starting_configurations
+        if not os.path.isdir(self.workdir):
+            logger.warning("Working directory (workdir=%s) does not exist."
+                           "We will create it when we need it.", self.workdir)
+            # we will create directories as needed so no need to create it here
+            # (as we might error below if there are multiple configurations with
+            #  the same name)
+        self.configurations = configurations
         self.states = states
-        self.engine_cls = ensure_list(val=engine_cls,
-                                      length=len(starting_configurations),
-                                      name="engine_cls")
-        self.engine_kwargs = ensure_list(val=engine_kwargs,
-                                         length=len(starting_configurations),
-                                         name="engine_kwargs")
-        self.T = ensure_list(val=T, length=len(starting_configurations),
-                             name="T")
-        self.two_way = ensure_list(val=two_way,
-                                   length=len(starting_configurations),
-                                   name="two_way")
-        self.output_traj_type = []
-        for i in range(len(starting_configurations)):
-            self.engine_kwargs[i]["mdconfig"] = ensure_mdconfig_options(
-                               self.engine_kwargs[i]["mdconfig"],
-                               # dont generate velocities, we do that ourself
-                               genvel="no",
-                               # dont apply constraints at start of simulation
-                               continuation="yes",
-                                                              )
-            try:
-                # see if it is set as engine_kwarg
-                output_traj_type = self.engine_kwargs[i]["output_traj_type"]
-            except KeyError:
-                # it is not, so we use the engine_class default
-                output_traj_type = self.engine_cls[i].output_traj_type
-            finally:
-                self.output_traj_type += [output_traj_type.lower()]
-        self.walltime_per_part = walltime_per_part
-        self.n_max_concurrent = n_max_concurrent
-        self.max_steps = max_steps
-        # make it possible to set all existing attributes via kwargs
-        # check the type for attributes with default values
-        dval = object()
-        for kwarg, value in kwargs.items():
-            cval = getattr(self, kwarg, dval)
-            if cval is not dval:
-                if isinstance(value, type(cval)):
-                    # value is of same type as default so set it
-                    setattr(self, kwarg, value)
-                else:
-                    raise TypeError(f"Setting attribute {kwarg} with "
-                                    + f"mismatching type ({type(value)}). "
-                                    + f" Default type is {type(cval)}."
-                                    )
-        # set counter etc after to make sure they have the value we expect
-        self._shot_counter = 0
-        self._states_reached = [[] for _ in range(len(self.starting_configurations))]
-        # create directories for the configurations if they dont exist
-        # also keep the configuration dirs in a list
-        # this way users can choose their favourite name for each configuration
-        self._conf_dirs = []
-        for i, vals in enumerate(self.starting_configurations):
-            if len(vals) >= 3:
-                # starting_configurations are tuples/list containing at least
-                # the traj(==conf), the index in the traj (==idx)
-                # and optionaly a name to use
-                conf, idx, name = vals
-                conf_dir = os.path.join(self.workdir, f"{name}")
-            else:
-                conf_dir = os.path.join(
-                                    self.workdir,
-                                    f"{self.configuration_dir_prefix}{str(i)}",
-                                        )
-            self._conf_dirs.append(conf_dir)
-            if not os.path.isdir(conf_dir):
-                # if its not a directory it either exists (then we will err)
-                # or we just create it
-                os.mkdir(conf_dir)
+        # use the properties to set (and check the values)
+        self.temperature = temperature
+        self.committor_engine_spec = committor_engine_spec
+        self.two_way = two_way
+        # lists to store which state which particular trial reached
+        self._states_reached: list[list[int | None]] = [
+                    [] for _ in range(len(self.configurations))
+                    ]
+        self._states_reached_bw: list[list[int | None]] = [
+                    [] for _ in range(len(self.configurations))
+                    ]
+        # init the dataclasses before we attach kwargs so we can change the defaults
+        # from the dataclasses via kwargs (that have the same names as the properties)
+        self._dirs = _CommittorSimulationDirectoryPrefixes()
+        self._fnames = _CommittorSimulationOutFilenames()
+        self._retries = _CommittorSimulationMaxRetries()
+        # variable that stores whether we might miss some backward trials because
+        # we changed the two_way setting (we will add them as requested and in run)
+        self._potentially_missing_backward_trials = False
+        # now attach all additional kwargs to self
+        _attach_kwargs_to_object(obj=self, logger=logger, **kwargs)
+        # finally, make sure that we will have unique configuration directory names
+        conf_dirs = [self._get_conf_dir(conf_num=i)
+                     for i in range(len(self.configurations))
+                     ]
+        if len(conf_dirs) != len(set(conf_dirs)):
+            raise ValueError("The directory names for the configurations are "
+                             "not unique! Maybe you used the same name for "
+                             "multiple configurations?"
+                             )
+
+    def _ensure_list_len_or_single(self, val: "T | list[T]", name: str
+                                   ) -> "T | list[T]":
+        """
+        Make sure that a value is either one value or a list of values of the
+        same length as self.configurations.
+
+        Used to ensure proper format for values we allow to be set on a
+        per-configuration basis, e.g., temperature, engine_spec, two_way.
+        """
+        if isinstance(val, list):
+            if not len(val) == len(self.configurations):
+                raise ValueError("Must supply either one or exactly as many"
+                                 f"{name} values as configurations.")
+        return val
+
+    def _get_value_corresponding_to_configuration(self, value: "T | list[T]",
+                                                  conf_num: int,
+                                                  ) -> "T":
+        """
+        Get the corresponding value from value or optionally a list of values
+        for configuration identified by conf_num.
+
+        This is used to ensure we always easily get (the correct) single value
+        for all the attributes/values we allow to be set on a per-configuration
+        basis.
+        """
+        if isinstance(value, list):
+            return value[conf_num]
+        return value
 
     @property
-    def shot_counter(self):
-        """Return the number of shots per configuration."""
-        return self._shot_counter
+    def temperature(self) -> float | list[float]:
+        return self._temperature
+
+    @temperature.setter
+    def temperature(self, val: float | list[float]) -> None:
+        self._temperature = self._ensure_list_len_or_single(val, "temperature")
 
     @property
-    def states_reached(self):
-        """
-        Return states_reached per configuration (i.e. summed over shots).
+    def committor_engine_spec(self) -> CommittorEngineSpec | list[CommittorEngineSpec]:
+        return self._committor_engine_spec
 
-        Return states_reached as a np.array with shape (n_conf, n_states),
-        where the entries give the counts of states reached, i.e. the format is
-        as in an `aimmd.TrainSet`.
+    @committor_engine_spec.setter
+    def committor_engine_spec(self, val: CommittorEngineSpec | list[CommittorEngineSpec],
+                              ) -> None:
+        self._committor_engine_spec = self._ensure_list_len_or_single(
+                                                val, "committor_engine_spec")
+
+    @property
+    def two_way(self) -> bool | list[bool]:
+        return self._two_way
+
+    @two_way.setter
+    def two_way(self, val: bool | list[bool]) -> None:
+        self._two_way = self._ensure_list_len_or_single(val, "two_way")
+        if self._trial_counter > 0:
+            logger.warning("Changing two_way after trials have been performed. "
+                           "Please call `add_missing_backward_trials` method "
+                           "to ensure consistency."
+                           )
+            self._potentially_missing_backward_trials = True
+
+    def _ensure_consistent_dirnames_and_fnames(self) -> None:
         """
-        ret = np.zeros((len(self.starting_configurations), len(self.states)))
-        for i, results_for_conf in enumerate(self._states_reached):
+        Method called when setting a directory or filename property, its sole
+        purpose is to raise an error when we already have created the directory
+        structure, i.e. when changing the names is not possible anymore (easily).
+        """
+        if self._trial_counter > 0:
+            raise ValueError("Changing the directory names is not supported after "
+                             "the directory structure has been created. I.e. when "
+                             "trials have been performed or reinitialized from workdir."
+                             )
+
+    @property
+    def directory_configuration_prefix(self) -> str:
+        return self._dirs.configuration_prefix
+
+    @directory_configuration_prefix.setter
+    def directory_configuration_prefix(self, val: str) -> None:
+        self._ensure_consistent_dirnames_and_fnames()
+        self._dirs.configuration_prefix = val
+
+    @property
+    def directory_trial_prefix(self) -> str:
+        return self._dirs.trial_prefix
+
+    @directory_trial_prefix.setter
+    def directory_trial_prefix(self, val: str) -> None:
+        self._ensure_consistent_dirnames_and_fnames()
+        self._dirs.trial_prefix = val
+
+    @property
+    def directory_forward(self) -> str:
+        return self._dirs.forward
+
+    @directory_forward.setter
+    def directory_forward(self, val: str) -> None:
+        self._ensure_consistent_dirnames_and_fnames()
+        self._dirs.forward = val
+
+    @property
+    def directory_backward(self) -> str:
+        return self._dirs.backward
+
+    @directory_backward.setter
+    def directory_backward(self, val: str) -> None:
+        self._ensure_consistent_dirnames_and_fnames()
+        self._dirs.backward = val
+
+    @property
+    def fileout_trajectory_to_state(self) -> str:
+        return self._fnames.traj_to_state
+
+    @fileout_trajectory_to_state.setter
+    def fileout_trajectory_to_state(self, val: str) -> None:
+        self._ensure_consistent_dirnames_and_fnames()
+        self._fnames.traj_to_state = val
+
+    @property
+    def fileout_trajectory_to_state_backward(self) -> str:
+        return self._fnames.traj_to_state_bw
+
+    @fileout_trajectory_to_state_backward.setter
+    def fileout_trajectory_to_state_backward(self, val: str) -> None:
+        self._ensure_consistent_dirnames_and_fnames()
+        self._fnames.traj_to_state_bw = val
+
+    @property
+    def fileout_transition_trajectory(self) -> str:
+        return self._fnames.transition
+
+    @fileout_transition_trajectory.setter
+    def fileout_transition_trajectory(self, val: str) -> None:
+        self._ensure_consistent_dirnames_and_fnames()
+        self._fnames.transition = val
+
+    @property
+    def fileout_initial_configuration(self) -> str:
+        return self._fnames.initial_conf
+
+    @fileout_initial_configuration.setter
+    def fileout_initial_configuration(self, val: str) -> None:
+        self._ensure_consistent_dirnames_and_fnames()
+        self._fnames.initial_conf = val
+
+    @property
+    def fileout_initial_configuration_backward(self) -> str:
+        return self._fnames.initial_conf_bw
+
+    @fileout_initial_configuration_backward.setter
+    def fileout_initial_configuration_backward(self, val: str) -> None:
+        self._ensure_consistent_dirnames_and_fnames()
+        self._fnames.initial_conf_bw = val
+
+    @property
+    def fileout_full_precision_trajectory_type(self) -> str:
+        return self._fnames.full_precision_traj_type
+
+    @fileout_full_precision_trajectory_type.setter
+    def fileout_full_precision_trajectory_type(self, val: str) -> None:
+        self._ensure_consistent_dirnames_and_fnames()
+        self._fnames.full_precision_traj_type = val
+
+    @property
+    def fileout_deffnm_engine(self) -> str:
+        return self._fnames.deffnm_engine
+
+    @fileout_deffnm_engine.setter
+    def fileout_deffnm_engine(self, val: str) -> None:
+        self._ensure_consistent_dirnames_and_fnames()
+        self._fnames.deffnm_engine = val
+
+    @property
+    def max_retries_on_crash(self) -> int:
+        return self._retries.crash
+
+    @max_retries_on_crash.setter
+    def max_retries_on_crash(self, val: int) -> None:
+        self._retries.crash = val
+
+    @property
+    def max_retries_on_max_steps(self) -> int:
+        return self._retries.max_steps
+
+    @max_retries_on_max_steps.setter
+    def max_retries_on_max_steps(self, val: int) -> None:
+        self._retries.max_steps = val
+
+    @property
+    def trial_counter(self) -> int:
+        """Return the number of trials done per configuration."""
+        return self._trial_counter
+
+    def _process_states_reached(self,
+                                internal_states_reached: list[list[int | None]],
+                                ) -> np.ndarray:
+        ret = np.zeros((len(self.configurations), len(self.states)))
+        for i, results_for_conf in enumerate(internal_states_reached):
             for state_reached in results_for_conf:
                 if state_reached is not None:
                     ret[i][state_reached] += 1
         return ret
+    _PROCESS_STATES_REACHED_DOCSTRING = """
+        Return states_reached per configuration (i.e. summed over trials).
+        These are only the results of the {} propagation.
+
+        Return states_reached as a np.array with shape (n_conf, n_states),
+        where the entries give the counts of states reached, i.e. the format is
+        as in an `aimmd.TrainSet`.
+        """  # TODO: improve formulation
 
     @property
-    def states_reached_per_shot(self):
-        """
-        Return states_reached per shot (i.e. single trial results).
+    @_is_documented_by(_PROCESS_STATES_REACHED_DOCSTRING, "forward")
+    # pylint: disable-next=missing-function-docstring
+    def states_reached(self) -> np.ndarray:
+        return self._process_states_reached(self._states_reached)
 
-        Return a np.array shape (n_conf, n_shots, n_states), where the entries
-        give the counts of states reached for every single shot, i.e. summing
-        over the states axis will always give 1 (or 2 if twoway=True).
-        """
-        ret = np.zeros((len(self.starting_configurations),
-                        self._shot_counter,
-                        len(self.states))
-                       )
-        for i, results_for_conf in enumerate(self._states_reached):
+    @property
+    @_is_documented_by(_PROCESS_STATES_REACHED_DOCSTRING, "backward")
+    # pylint: disable-next=missing-function-docstring
+    def states_reached_backward(self) -> np.ndarray:
+        return self._process_states_reached(self._states_reached_bw)
+
+    def _process_states_reached_per_trial(self,
+                                          internal_states_reached: list[list[int | None]],
+                                          ) -> np.ndarray:
+        ret = np.zeros(
+                (len(self.configurations), self._trial_counter, len(self.states))
+                )
+        for i, results_for_conf in enumerate(internal_states_reached):
             for j, state_reached in enumerate(results_for_conf):
                 if state_reached is not None:
                     ret[i][j][state_reached] += 1
         return ret
+    _PROCESS_STATES_REACHED_PER_TRIAL_DOCSTRING = """
+        Return states_reached per trial (i.e. single trial results).
+        These are only the results of the {} propagation.
+
+        Return a np.array shape (n_conf, n_trials, n_states), where the entries
+        give the counts of states reached for every single trial, i.e. summing
+        over the last (n_states) axis will always give 1.
+        """  # TODO: improve formulation
 
     @property
-    def trajs_to_state(self):
-        """
-        Return all forward trajectories until a state generated so far.
+    @_is_documented_by(_PROCESS_STATES_REACHED_DOCSTRING, "forward")
+    # pylint: disable-next=missing-function-docstring
+    def states_reached_per_trial(self) -> np.ndarray:
+        return self._process_states_reached_per_trial(self._states_reached)
 
-        They are sorted as a list of lists. The outer list is configurations,
-        the inner list is shots, i.e. the outer list will always have
-        len=n_starting_configurations and the inner lists will all have
-        len=self.shot_counter.
-        """
+    @property
+    @_is_documented_by(_PROCESS_STATES_REACHED_DOCSTRING, "backward")
+    # pylint: disable-next=missing-function-docstring
+    def states_reached_per_trial_backward(self) -> np.ndarray:
+        return self._process_states_reached_per_trial(self._states_reached_bw)
+
+    def _find_trajs_to_state(self, traj_fname: str) -> list[list[Trajectory]]:
+        # TODO: write a docstring/comment for this method and note that it is
+        #       important to keep the isfile check since it is also used in the
+        #       transitions property
         trajs_to_state = []
-        for cnum, cdir in enumerate(self._conf_dirs):
+        for conf_num, conf in enumerate(self.configurations):
             trajs_per_conf = []
-            for snum in range(self.shot_counter):
-                traj_fname = os.path.join(cdir,
-                                          f"{self.shot_dir_prefix}{snum}",
-                                          f"{self.fname_traj_to_state}"
-                                          + f".{self.output_traj_type[cnum]}")
-                struct_fname = os.path.join(cdir,
-                                            f"{self.shot_dir_prefix}{snum}",
-                                            # TODO/FIXME: only works for gmx!
-                                            f"{self.deffnm_engine_out}.tpr")
-                if os.path.isfile(traj_fname):
-                    trajs_per_conf += [Trajectory(trajectory_files=traj_fname,
+            engine_spec = self._get_value_corresponding_to_configuration(
+                                self.committor_engine_spec, conf_num=conf_num,
+                                )
+            for trial_num in range(self.trial_counter):
+                traj_path = os.path.join(
+                                self._get_trial_dir(conf_num=conf_num,
+                                                    trial_num=trial_num),
+                                f"{traj_fname}.{engine_spec.output_traj_type}",
+                                )
+                # NOTE: taking the input structure_file will always work, but
+                #       we will not get the structure file from the engine
+                struct_fname = conf.trajectory.structure_file
+                if os.path.isfile(traj_path):
+                    trajs_per_conf += [Trajectory(trajectory_files=traj_path,
                                                   structure_file=struct_fname)
                                        ]
             trajs_to_state += [trajs_per_conf]
         return trajs_to_state
-
-    @property
-    def trajs_to_state_bw(self):
-        """
-        Return all backward trajectories until a state generated so far.
+    _FIND_TRAJS_TO_STATE_DOCSTRING = """
+        Return all {} trajectories until a state generated so far.
 
         They are sorted as a list of lists. The outer list is configurations,
-        the inner list is shots, i.e. the outer list will always have
-        len=n_starting_configurations and the inner lists will all have
-        len=self.shot_counter.
-        """
-        trajs_to_state = []
-        for cnum, cdir in enumerate(self._conf_dirs):
-            trajs_per_conf = []
-            for snum in range(self.shot_counter):
-                traj_fname = os.path.join(cdir,
-                                          f"{self.shot_dir_prefix}{snum}",
-                                          f"{self.fname_traj_to_state_bw}"
-                                          + f".{self.output_traj_type[cnum]}")
-                struct_fname = os.path.join(cdir,
-                                            f"{self.shot_dir_prefix}{snum}",
-                                            # TODO/FIXME: only works for gmx!
-                                            f"{self.deffnm_engine_out}.tpr")
-                if os.path.isfile(traj_fname):
-                    trajs_per_conf += [Trajectory(trajectory_files=traj_fname,
-                                                  structure_file=struct_fname)
-                                       ]
-            trajs_to_state += [trajs_per_conf]
-        return trajs_to_state
+        the inner list is trials, i.e. the outer list will always have
+        len=configurations and the inner lists will all have len=self.trial_counter.
+        """  # TODO: improve formulation
 
     @property
-    def transitions(self):
+    @_is_documented_by(_FIND_TRAJS_TO_STATE_DOCSTRING, "forward")
+    # pylint: disable-next=missing-function-docstring
+    def trajectories_to_state(self):
+        return self._find_trajs_to_state(
+                            traj_fname=self.fileout_trajectory_to_state)
+
+    @property
+    @_is_documented_by(_FIND_TRAJS_TO_STATE_DOCSTRING, "backward")
+    # pylint: disable-next=missing-function-docstring
+    def trajectories_to_state_backward(self):
+        return self._find_trajs_to_state(
+                            traj_fname=self.fileout_trajectory_to_state_backward,
+                            )
+
+    # TODO: improve docstring formulation
+    @property
+    def transition_trajectories(self) -> list[list[Trajectory]]:
         """
-        Return all transitions generated so far.
+        Return all transition trajectories generated so far.
 
-        They are sorted as a list of lists. The outer list is configurations,
-        the inner list is shots, i.e. the outer list will always have
-        len=n_starting_configurations and the inner lists then just contains
-        all transitions for the respective configuration and can also be empty.
+        A transition is defined as a trajectory that connects two different states.
+
+        They are sorted as a list of lists. The outer list is per configuration,
+        the inner list is per trial, i.e. the outer list will always have
+        len=configurations and the inner lists then just contains all transitions
+        for the respective configuration (and can also be empty).
         """
-        if not any(self.two_way):
-            # can not have transitions
-            return [[] for _ in range(len(self._conf_dirs))]
-        transitions = []
-        for cnum, cdir in enumerate(self._conf_dirs):
-            trans_per_conf = []
-            for snum in range(self.shot_counter):
-                traj_fname = os.path.join(cdir,
-                                          f"{self.shot_dir_prefix}{snum}",
-                                          f"{self.fname_transition_traj}"
-                                          + f".{self.output_traj_type[cnum]}")
-                struct_fname = os.path.join(cdir,
-                                            f"{self.shot_dir_prefix}{snum}",
-                                            # TODO/FIXME: only works for gmx!
-                                            f"{self.deffnm_engine_out}.tpr")
-                if os.path.isfile(traj_fname):
-                    trans_per_conf += [Trajectory(trajectory_files=traj_fname,
-                                                  structure_file=struct_fname)
-                                       ]
-            transitions += [trans_per_conf]
-        return transitions
+        # can not have any transitions if we did no two_way trials
+        if (  # this looks a bit strange, but two_way can be a list of bools:
+            (isinstance(self.two_way, list) and not any(self.two_way))
+            # or a simple bool:
+            or not self.two_way
+        ):
+            return [[] for _ in range(len(self.configurations))]
+        # build up a list of transitions,
+        # NOTE: we can just use the same logic as the trajs_to_state properties
+        #       to build the list of transitions, since the implementation there
+        #       checks if the file exists and otherwise does not attempt to add it.
+        #       ATM this method here has its own docstring though since it is
+        #       sufficiently different.
+        return self._find_trajs_to_state(
+                                traj_fname=self.fileout_transition_trajectory,
+                                )
 
-    async def reinitialize_from_workdir(self, overwrite=False):
-        """
-        Reassess all trials in workdir and populate states_reached counter.
+    def _get_conf_dir(self, conf_num: int) -> str:
+        conf = self.configurations[conf_num]
+        return os.path.join(
+                    self.workdir,
+                    (conf.name if conf.name is not None
+                     else f"{self.directory_configuration_prefix}{conf_num}"),
+                    )
 
-        Possibly extend trials if no state has been reached yet.
-        Add missing backwards shots from scratch if the previous run has been
-        with two_way=False and this one has two_way=True.
+    def _get_trial_dir(self, conf_num: int, trial_num: int) -> str:
+        return os.path.join(
+                    self._get_conf_dir(conf_num=conf_num),
+                    f"{self.directory_trial_prefix}{trial_num}",
+                    )
 
-        If overwrite=True we will allow to overwrite existing concatenated
-        output trajectories, i.e. traj_to_state, traj_to_state_bw and
-        transition_traj.
-        """
-        # make sure we set everything to zero before we start!
-        self._shot_counter = 0
-        self._states_reached = [[] for _ in range(len(self.starting_configurations))]
-        # find out how many shots we did per configuration, the first
-        # configuration should be the one with the most directories created
-        # even if we failed/crashed before everything was created, the run
-        # function will then take care of creating the directories for the
-        # configurations with higher index from scratch. This way we will end
-        # up with as many shots done in each configuration as in the first one
-        dir_list = os.listdir(os.path.join(self.workdir, self._conf_dirs[0]))
-        # build a list of all possible dir names
-        # (these will be too many if there are other files in conf dir)
-        possible_dirnames = [f"{self.shot_dir_prefix}{i}"
-                             for i in range(len(dir_list))
-                             ]
-        # now filter to check that only stuff that is a dir and in possible
-        # names will be taken, then count them: this is the number of shots
-        # we have done already
-        filtered = [d for d in dir_list
-                    if (d in possible_dirnames
-                        and os.path.isdir(os.path.join(self.workdir, self._conf_dirs[0], d))
-                        )
-                    ]
-        n_shots = len(filtered)
-        return await self._run(n_per_struct=n_shots, continuation=True,
-                               overwrite=overwrite)
+    async def _get_or_generate_sp_fw(self, conf_num: int, trial_num: int,
+                                     ) -> Trajectory:
+        # generate SP forward (or get and return if it already there)
+        init_conf = self.configurations[conf_num]
+        trial_dir = self._get_trial_dir(conf_num=conf_num, trial_num=trial_num)
+        sp_name = os.path.join(
+                    trial_dir,
+                    (self.fileout_initial_configuration
+                     + f".{self.fileout_full_precision_trajectory_type}"),
+                    )
+        if os.path.isfile(sp_name):
+            # already there, so just return it
+            return Trajectory(
+                    trajectory_files=sp_name,
+                    # use the structure file of the corresponding configuration
+                    # because it will always exist
+                    structure_file=init_conf.trajectory.structure_file,
+                    )
+        # not there so extract (with random MB-vels) and then constrain
+        sp_name_unconstrained = os.path.join(
+                    trial_dir,
+                    (self.fileout_initial_configuration + "_unconstrained"
+                     + f".{self.fileout_full_precision_trajectory_type}"),
+                    )
+        engine_spec = self._get_value_corresponding_to_configuration(
+                            value=self.committor_engine_spec, conf_num=conf_num)
+        temperature = self._get_value_corresponding_to_configuration(
+                            value=self.temperature, conf_num=conf_num)
+        extractor = RandomVelocitiesFrameExtractor(T=temperature)
+        # Note: overwrite any existing unconstrained SP, we only care if the
+        # constrained SP is there to decide if we (re)generate the SP
+        sp_unconstrained = await extractor.extract_async(
+                                            outfile=sp_name_unconstrained,
+                                            traj_in=init_conf.trajectory,
+                                            idx=init_conf.index,
+                                            overwrite=True,
+                                            )
+        # now constrain using the engine (because it knows about the constraints)
+        constraints_engine = engine_spec.engine_cls(**engine_spec.engine_kwargs)
+        sp = await constraints_engine.apply_constraints(
+                                            conf_in=sp_unconstrained,
+                                            conf_out_name=sp_name,
+                                            workdir=trial_dir
+                                            )
+        return sp
 
-    async def run(self, n_per_struct):
-        """Run for n_per_struct committor trials for each configuration."""
-        return await self._run(n_per_struct=n_per_struct, continuation=False,
-                               overwrite=False)
+    async def _get_or_generate_sp_bw(self, conf_num: int, trial_num: int,
+                                     sp_fw: Trajectory) -> Trajectory:
+        # generate backward SP from forward SP, i.e. forward must exist!
+        # as for _generate_sp_fw, if it is already there we just return it
+        trial_dir = self._get_trial_dir(conf_num=conf_num, trial_num=trial_num)
+        sp_name = os.path.join(
+                    trial_dir,
+                    (self.fileout_initial_configuration_backward
+                     + f".{self.fileout_full_precision_trajectory_type}"),
+                    )
+        if os.path.isfile(sp_name):
+            # already there, so just return it
+            return Trajectory(
+                    trajectory_files=sp_name,
+                    structure_file=sp_fw.structure_file,
+                    )
+        # generate from forward by inverting velocities
+        extractor = InvertedVelocitiesFrameExtractor()
+        sp = await extractor.extract_async(outfile=sp_name, traj_in=sp_fw, idx=0)
+        return sp
 
-    async def _run_single_trial_ow(self, conf_num, shot_num, step_dir,
-                                   continuation, overwrite):
-        # construct propagator
+    async def _run_single_trial_propagation(self, trial: _PreparedTrialData,
+                                            ) -> tuple[list[Trajectory], int]:
+        os.makedirs(trial.workdir, exist_ok=True)
         propagator = ConditionalTrajectoryPropagator(
-                                    conditions=self.states,
-                                    engine_cls=self.engine_cls[conf_num],
-                                    engine_kwargs=self.engine_kwargs[conf_num],
-                                    walltime_per_part=self.walltime_per_part,
-                                    max_steps=self.max_steps,
-                                                     )
-        start_conf_name = os.path.join(step_dir,
-                                       (f"{self.start_conf_name_prefix}"
-                                        + f"{self.deffnm_engine_out}.trr"),
-                                       )
-        if not os.path.isfile(start_conf_name):
-            # NOTE: I (hejung) think this is a bit overkill since we sort out
-            #       the continuation issue in the _run_single_trial function
-            #       BUT: we'll leave it here for now, just to be sure and in
-            #            case it will be useful in a future (needed) refactor
-            # if the starting configuration does not exist that probably means
-            # we never started this particular trial, i.e. if we have
-            # continuation=True that means we did a corresponding trial/shotnum
-            # for a lower index configuration, but not yet for this one here,
-            # so just reset continuation to False and do this trial from
-            # scratch
-            if continuation:
-                logger.info("continuation=True for configuration %s, shot %d, "
-                            "deffnm %s but no starting configuration found (%s"
-                            "). Starting this particular trial from scratch, "
-                            "i.e. setting continuation=False for this trial.",
-                            self._conf_dirs[conf_num], shot_num,
-                            self.deffnm_engine_out,
-                            start_conf_name
+                            conditions=self.states,
+                            engine_cls=trial.engine_spec.engine_cls,
+                            engine_kwargs=trial.engine_spec.engine_kwargs,
+                            walltime_per_part=trial.engine_spec.walltime_per_part,
+                            max_steps=trial.engine_spec.max_steps,
                             )
-                continuation = False
-        if not continuation:
-            # get starting configuration and write it out with random velocities
-            start_conf_name_uc = os.path.join(
-                    step_dir, (f"{self.start_conf_name_prefix}unconstrained_"
-                               + f"{self.deffnm_engine_out}.trr"),
-                                              )
-            extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
-            try:
-                starting_conf_uc = await extractor_fw.extract_async(
-                                    outfile=start_conf_name_uc,
-                                    traj_in=self.starting_configurations[conf_num][0],
-                                    idx=self.starting_configurations[conf_num][1],
-                                                                    )
-            except FileExistsError:
-                # if the unconstrained conf exists already but the constrained
-                # one does not we empty the whole folder and start with a new
-                # unconstrained configuration
-                for fn in os.listdir(step_dir):
-                    fp = os.path.join(step_dir, fn)
-                    if os.path.isfile(fp) or os.path.islink(fp):
-                        os.unlink(fp)
-                    elif os.path.isdir(fp):
-                        shutil.rmtree(fp)
-                # and now extract again
-                starting_conf_uc = await extractor_fw.extract_async(
-                                    outfile=start_conf_name_uc,
-                                    traj_in=self.starting_configurations[conf_num][0],
-                                    idx=self.starting_configurations[conf_num][1],
-                                                                    )
-            # this will now always work
-            constraints_engine = self.engine_cls[conf_num](**self.engine_kwargs[conf_num])
-            starting_conf = await constraints_engine.apply_constraints(
-                                                conf_in=starting_conf_uc,
-                                                conf_out_name=start_conf_name,
-                                                wdir=step_dir,
-                                                                       )
-            n = 0
-        else:
-            starting_conf = Trajectory(
-                trajectory_files=start_conf_name,
-                structure_file=self.starting_configurations[conf_num][0].structure_file
-                                       )
-            # get the number of times we crashed/reached max length before
-            n = 0
-            while (os.path.isdir(os.path.join(
-                                        step_dir,
-                                        f"{self.deffnm_engine_out}_{n + 1}max_len"))
-                   or os.path.isdir(os.path.join(
-                                        step_dir,
-                                        f"{self.deffnm_engine_out}_{n + 1}crash"))
-                   ):
-                n += 1
-        # and propagate
-        round_one = True
-        while True:
-            try:
-                out = await propagator.propagate_and_concatenate(
-                                    starting_configuration=starting_conf,
-                                    workdir=step_dir,
-                                    deffnm=self.deffnm_engine_out,
-                                    tra_out=os.path.join(
-                                                step_dir,
-                                                (self.fname_traj_to_state
-                                                 + f".{self.output_traj_type[conf_num]}")
-                                                         ),
-                                    continuation=(continuation and round_one),
-                                    overwrite=overwrite,
-                                                                 )
-            except (MaxStepsReachedError, EngineCrashedError) as e:
-                log_str = (f"MD engine for configuration {self._conf_dirs[conf_num]}, "
-                           + f"shot {shot_num}, deffnm {self.deffnm_engine_out}"
-                           + f" failed for the {n + 1}th time.")
-                if isinstance(e, EngineCrashedError):
-                    subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
-                                                     + f"_{n + 1}crash"))
-                    log_str += " Reason: Engine Crashed."
-                elif isinstance(e, MaxStepsReachedError):
-                    subdir = os.path.join(step_dir, (f"{self.deffnm_engine_out}"
-                                                     + f"_{n + 1}max_len"))
-                    log_str += " Reason: Maximum number of steps."
-                if not (n < self.max_retries_on_crash):
-                    logger.error(log_str + " Not retrying anymore.")
-                    # TODO: do we want to raise the error?!
-                    #       I think this way is better as we can still finish
-                    #       the simulation as expected (just with a shot less)
-                    #raise e from None
-                    return None  # no state reached!
-                # TODO/FIXME: the error handling here assumes gmx engines!
-                logger.warning(log_str + " Moving to subfolder and retrying.")
-                # we only end up here if there is cleanup/moving to do
-                os.mkdir(subdir)
-                all_files = os.listdir(step_dir)
-                for f in all_files:
-                    splits = f.split(".")
-                    if splits[0] == f"{self.deffnm_engine_out}":
-                        # if it is exactly deffnm_out it can only be
-                        # a deffnm.tpr/mdp etc or a deffnm.partXXXX.trr/xtc etc
-                        # so move it
-                        os.rename(os.path.join(step_dir, f), os.path.join(subdir, f))
-                    elif "step" in splits[0] and splits[-1] == "pdb":
-                        # the gromacs stepXXXa/b/c/d.pdb files, that are
-                        # written on decomposition errors/too high forces etc
-                        # move them too!
-                        # Note that we assume that only one engine crashes at a time!
-                        os.rename(os.path.join(step_dir, f), os.path.join(subdir, f))
-            else:
-                # no error, return and get out of here
-                tra_out, state_reached = out
-                logger.info(f"Forward trajectory reached state {state_reached}"
-                            + f" for configuration {self._conf_dirs[conf_num]} shot {shot_num}.")
-                return state_reached
-            finally:
-                n += 1
-                round_one = False
+        trajs, state_reached = await propagator.propagate(
+                                            starting_configuration=trial.sp_conf,
+                                            workdir=trial.workdir,
+                                            deffnm=self.fileout_deffnm_engine,
+                                            continuation=trial.continuation)
+        if trial.tra_out is not None:
+            await propagator.cut_and_concatenate(trajs=trajs,
+                                                 tra_out=trial.tra_out,
+                                                 overwrite=trial.overwrite)
+        return trajs, state_reached
 
-    async def _run_single_trial_tw(self, conf_num, shot_num, step_dir,
-                                   continuation, overwrite):
-        # NOTE: this is a potential misuse of a committor simulation,
-        #       see the note further down for more on why it is/should be ok
-        # propagators
-        propagators = [ConditionalTrajectoryPropagator(
-                                    conditions=self.states,
-                                    engine_cls=self.engine_cls[conf_num],
-                                    engine_kwargs=self.engine_kwargs[conf_num],
-                                    walltime_per_part=self.walltime_per_part,
-                                    max_steps=self.max_steps,
-                                                       )
-                       for _ in range(2)]
-        # forward starting configuration
-        start_conf_name_fw = os.path.join(step_dir,
-                                          (f"{self.start_conf_name_prefix}"
-                                           + f"{self.deffnm_engine_out}.trr"),
-                                          )
-        if not os.path.isfile(start_conf_name_fw):
-            # NOTE: same as for trial_ow, I think we dont need to check for the starting_conf to sort out contnuation or not
-            #       see the note there ;)
-            # if the starting configuration does not exist that probably means we never
-            # started this particular trial, i.e. if we have continuation=True that means we
-            # did a correspondign trial/shotnum for a lower index configuration, but not yet
-            # for this one here, so just reset continuation to False and do this trial from scratch
-            if continuation:
-                logger.info(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
-                            + f"shot {shot_num}, deffnm {self.deffnm_engine_out} "
-                            + f"but no starting_configuration found ({start_conf_name_fw})."
-                            + "Starting this particular trial from scratch, "
-                            + "i.e. setting continuation=False for this trial."
+    async def _prepare_trial_propagation(self, *, conf_num: int, trial_num: int,
+                                         overwrite: bool,
+                                         add_backward_only: bool,
+                                         ) -> list[_PreparedTrialData]:
+        def get_n_previous_fails(dirname: str, suffix: str) -> int:
+            # Helper function to the number of previous fails for a given directory.
+            n = 0
+            while os.path.isdir(f"{os.path.normpath(dirname)}_{suffix}{n + 1}"):
+                n += 1
+            return n
+
+        two_way = self._get_value_corresponding_to_configuration(
+                                self.two_way, conf_num=conf_num)
+        engine_spec = self._get_value_corresponding_to_configuration(
+                                self.committor_engine_spec, conf_num=conf_num)
+        trial_dir = self._get_trial_dir(conf_num=conf_num, trial_num=trial_num)
+        # make sure the directory exists so we can write out the SP(s)
+        os.makedirs(trial_dir, exist_ok=True)
+        workdir_fw = os.path.join(trial_dir, self.directory_forward)
+        # and get/generate the SP
+        sp_fw = await self._get_or_generate_sp_fw(conf_num=conf_num,
+                                                  trial_num=trial_num)
+        # also setup loop variables and put it all in the dataclass
+        trial_data = [_PreparedTrialData(
+                        ns={"max_steps": get_n_previous_fails(workdir_fw, "max_steps"),
+                            "crash": get_n_previous_fails(workdir_fw, "crash")
+                            },
+                        sp_conf=sp_fw,
+                        workdir=workdir_fw,
+                        continuation=os.path.isdir(workdir_fw),
+                        tra_out=os.path.join(
+                                    trial_dir,
+                                    (f"{self.fileout_trajectory_to_state}"
+                                     + f".{engine_spec.output_traj_type}"),
+                                    ) if not add_backward_only else None,
+                        engine_spec=engine_spec,
+                        overwrite=overwrite,
+                        )
+                      ]
+        if two_way:
+            # same as for forward for backward if this is a two_way trial
+            workdir_bw = os.path.join(trial_dir, self.directory_backward)
+            sp_bw = await self._get_or_generate_sp_bw(conf_num=conf_num,
+                                                      trial_num=trial_num,
+                                                      sp_fw=sp_fw)
+            trial_data += [_PreparedTrialData(
+                            ns={"max_steps": get_n_previous_fails(workdir_bw, "max_steps"),
+                                "crash": get_n_previous_fails(workdir_bw, "crash")
+                                },
+                            sp_conf=sp_bw,
+                            workdir=workdir_bw,
+                            continuation=os.path.isdir(workdir_bw),
+                            tra_out=os.path.join(
+                                        trial_dir,
+                                        (f"{self.fileout_trajectory_to_state_backward}"
+                                         + f".{engine_spec.output_traj_type}"),
+                                        ),
+                            engine_spec=engine_spec,
+                            overwrite=overwrite,
                             )
-                continuation = False
-        continuation_fw = continuation
-        if not continuation_fw:
-            start_conf_name_fw_uc = os.path.join(step_dir,
-                                                 (f"{self.start_conf_name_prefix}"
-                                                  + "unconstrained_"
-                                                  + f"{self.deffnm_engine_out}.trr"),
-                                                 )
-            extractor_fw = RandomVelocitiesFrameExtractor(T=self.T[conf_num])
-            try:
-                starting_conf_fw_uc = await extractor_fw.extract_async(
-                                    outfile=start_conf_name_fw_uc,
-                                    traj_in=self.starting_configurations[conf_num][0],
-                                    idx=self.starting_configurations[conf_num][1],
-                                                                       )
-            except FileExistsError:
-                # if the unconstrained conf exists already but the constrained one not
-                # we empty the whole folder and start with a new unconstrained one
-                for fn in os.listdir(step_dir):
-                    fp = os.path.join(step_dir, fn)
-                    if os.path.isfile(fp) or os.path.islink(fp):
-                        os.unlink(fp)
-                    elif os.path.isdir(fp):
-                        shutil.rmtree(fp)
-                # and now extract again
-                starting_conf_fw_uc = await extractor_fw.extract_async(
-                                        outfile=start_conf_name_fw_uc,
-                                        traj_in=self.starting_configurations[conf_num][0],
-                                        idx=self.starting_configurations[conf_num][1],
-                                                                       )
-            # this will now always work, becasue we will always have an folder with just the unconstrained
-            # starting configuration
-            constraints_engine = self.engine_cls[conf_num](**self.engine_kwargs[conf_num])
-            starting_conf_fw = await constraints_engine.apply_constraints(
-                                                conf_in=starting_conf_fw_uc,
-                                                conf_out_name=start_conf_name_fw,
-                                                wdir=step_dir,
-                                                                       )
-            n_fw = 0
-        else:
-            starting_conf_fw = Trajectory(
-                trajectory_files=start_conf_name_fw,
-                structure_file=self.starting_configurations[conf_num][0].structure_file
-                                       )
-            # get the number of times we crashed/reached max length before
-            n_fw = 0
-            while (os.path.isdir(os.path.join(
-                                        step_dir,
-                                        f"{self.deffnm_engine_out}_{n_fw + 1}max_len"))
-                   or os.path.isdir(os.path.join(
-                                        step_dir,
-                                        f"{self.deffnm_engine_out}_{n_fw + 1}crash"))
-                   ):
-                n_fw += 1
-        # backwards starting configuration (forward with inverted velocities)
-        start_conf_name_bw = os.path.join(step_dir,
-                                          (f"{self.start_conf_name_prefix}"
-                                           + f"{self.deffnm_engine_out_bw}.trr"),
-                                          )
-        continuation_bw = continuation
-        if not os.path.isfile(start_conf_name_bw):
-            # NOTE: here we need to sort out continuation or not as it is just for the bw direction
-            #       and we could always do only the forward first and then decide we want to add the backwards later
-            #       but then the folder exists (for fw) and our sorting out in the single_trial func is not sufficient
-            #       to decide if we started bw
-            # if the starting configuration does not exist that probably means we never
-            # started this particular trial, i.e. if we have continuation=True that means we
-            # did a corresponding trial/shotnum for a lower index configuration, but not yet
-            # for this one here, so just reset continuation to False and do this trial from scratch
-            if continuation_bw:
-                logger.info(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
-                            + f"shot {shot_num}, deffnm {self.deffnm_engine_out_bw} "
-                            + f"but no starting_configuration found ({start_conf_name_bw})."
-                            + "Starting this particular trial from scratch, i.e. "
-                            + "setting continuation=False for this trial and bw direction.")
-                continuation_bw = False
-        if not continuation_bw:
-            # write out the starting configuration if it is no continuation
-            extractor_bw = InvertedVelocitiesFrameExtractor()
-            starting_conf_bw = await extractor_bw.extract_async(
-                                  outfile=start_conf_name_bw,
-                                  traj_in=starting_conf_fw,
-                                  idx=0,
-                                                                )
-            n_bw = 0
-        else:
-            # wrap the existing starting configuration as aimmd trajectory if it is a continuation
-            starting_conf_bw = Trajectory(
-                    trajectory_files=start_conf_name_bw,
-                    structure_file=self.starting_configurations[conf_num][0].structure_file
-                                       )
-            # get the number of times we crashed/reached max length before
-            n_bw = 0
-            while (os.path.isdir(os.path.join(
-                                        step_dir,
-                                        f"{self.deffnm_engine_out_bw}_{n_bw + 1}max_len"))
-                   or os.path.isdir(os.path.join(
-                                        step_dir,
-                                        f"{self.deffnm_engine_out_bw}_{n_bw + 1}crash"))
-                   ):
-                n_bw += 1
-        # and propagate
-        ns = [n_fw, n_bw]
-        starting_confs = [starting_conf_fw, starting_conf_bw]
-        deffnms_engine_out = [self.deffnm_engine_out, self.deffnm_engine_out_bw]
-        continuations = [continuation_fw, continuation_bw]
-        trials_pending = [asyncio.create_task(
-                            p.propagate(starting_configuration=sconf,
-                                        workdir=step_dir,
-                                        deffnm=deffnm,
-                                        continuation=cont,
-                                        )
-                            )
-                          for p, sconf, deffnm, cont in zip(propagators,
-                                                            starting_confs,
-                                                            deffnms_engine_out,
-                                                            continuations,
-                                                            )
-                          ]
-        trials_done = [None for _ in range(2)]
-        while any(t is None for t in trials_done):
-            # we leave the loop either when everything is done or via exceptions raised
-            done, pending = await asyncio.wait(trials_pending,
+                           ]
+
+        return trial_data
+
+    async def _handle_trial_run_from_prepared_data(
+                        self, trial_data: list[_PreparedTrialData],
+                        ) -> tuple[
+                                tuple[list[Trajectory], int | None],
+                                tuple[list[Trajectory], int | None] | typing.Literal["NO TRIAL"]
+                                   ]:
+        trials = [asyncio.create_task(self._run_single_trial_propagation(trial=trial))
+                  for trial in trial_data
+                  ]
+        trial_results: list[tuple[list[Trajectory], int | None]] = [
+                ([], None) for _ in trials
+                ]
+        pending = set(trials)
+        while pending:
+            done, pending = await asyncio.wait(pending,
                                                return_when=asyncio.FIRST_EXCEPTION,
                                                )
             for t in done:
-                t_idx = trials_pending.index(t)
-                if isinstance(t.exception(), (EngineCrashedError,
-                                              MaxStepsReachedError)):
-                    log_str = (f"MD engine for configuration {self._conf_dirs[conf_num]}, "
-                               + f"shot {str(shot_num)}, "
-                               + f"deffm {deffnms_engine_out[t_idx]} failed "
-                               + f"for the {ns[t_idx] + 1}th time.")
-                    # catch errors raised when gromacs crashes
-                    # modify the message/subdirname to be specific
-                    if isinstance(t.exception(), EngineCrashedError):
-                        subdir = os.path.join(step_dir,
-                                              (f"{deffnms_engine_out[t_idx]}"
-                                               + f"_{ns[t_idx] + 1}crash")
-                                              )
-                        log_str += " Reason: Engine crashed."
-                    elif isinstance(t.exception(), MaxStepsReachedError):
-                        subdir = os.path.join(step_dir,
-                                              (f"{deffnms_engine_out[t_idx]}"
-                                               + f"_{ns[t_idx] + 1}max_len")
-                                              )
-                        log_str += " Reason: Maximum number of steps."
-                    else:
-                        raise RuntimeError("This should never happen!")
-                    if ns[t_idx] < self.max_retries_on_crash:
-                        # move the files to a subdirectory
-                        logger.warning(log_str + " Moving to subdirectory and retrying.")
-                        os.mkdir(subdir)
-                        # TODO/FIXME: the error handling here assumes gmx engines!
-                        all_files = os.listdir(step_dir)
-                        for f in all_files:
-                            splits = f.split(".")
-                            if splits[0] == f"{deffnms_engine_out[t_idx]}":
-                                # if it is exactly deffnm_out it can only be
-                                # a deffnm.tpr/mdp etc or a deffnm.partXXXX.trr/xtc etc
-                                # so move it
-                                os.rename(os.path.join(step_dir, f),
-                                          os.path.join(subdir, f))
-                            elif "step" in splits[0] and splits[-1] == "pdb":
-                                # the gromacs stepXXXa/b/c/d.pdb files, that are
-                                # written on decomposition errors/too high forces etc
-                                # move them too!
-                                # Note that we assume that only one engine crashes at a time!
-                                os.rename(os.path.join(step_dir, f),
-                                          os.path.join(subdir, f))
-                        # get the task out of the list
-                        _ = trials_pending.pop(t_idx)
-                        # resubmit the task
-                        trials_pending.insert(
-                                        t_idx,
-                                        asyncio.create_task(
-                                            propagators[t_idx].propagate(
-                                               starting_configuration=starting_confs[t_idx],
-                                               workdir=step_dir,
-                                               deffnm=deffnms_engine_out[t_idx],
-                                               # we crashed so there is nothing to continue from anymore
-                                               continuation=False,
-                                                                         )
-                                                            )
-                                              )
-                        # and increase counter
-                        ns[t_idx] += 1
-                    else:
-                        # check if we already know that this trial crashed
-                        # if we do we have set the result to (None, None)
-                        # if we dont know yet the 'result' is still the initial
-                        # value, i.e. None
-                        if trials_done[t_idx] is None:
-                            # reached maximum tries, raise the error and crash the sampling? :)
-                            logger.error(log_str + " Not retrying anymore.")
-                            # TODO: same as for oneway, do we want to raise?!
-                            #       I (hejung) think not, since not raising enables
-                            #       us to finish the simulation adn get a return
-                            #raise t.exception() from None
-                            # no trajs, no state reached
-                            trials_done[t_idx] = (None, None)
-                elif t.exception() is not None:
-                    # any other exception: raise it
-                    # cancel the pending tasks before raising
-                    for task in pending:
-                        task.cancel()
-                    raise t.exception() from None
+                t_idx = trials.index(t)
+                if t.exception() is None:
+                    # no exception raised, just put the result into results...
+                    trial_results[t_idx] = t.result()
+                    continue  # and go to the next trial
+                # exception handling
+                if isinstance(t.exception(), EngineCrashedError):
+                    if trial_data[t_idx].ns["crash"] >= self.max_retries_on_crash:
+                        # raise it if we are above number of retries
+                        raise RuntimeError(
+                            "MD propagation for trial in directory "
+                            f"{trial_data[t_idx].workdir} "
+                            f"failed for the {trial_data[t_idx].ns["crash"] + 1}"
+                            "th time."
+                            ) from t.exception()
+                    # otherwise increase crash counter and handle crash
+                    trial_data[t_idx].ns["crash"] += 1
+                    log_reason = "the engine crashed"
+                    # suffix for moved folder so we have space for retry
+                    move_suffix = f"_crash{trial_data[t_idx].ns['crash']}"
+                elif isinstance(t.exception(), MaxStepsReachedError):
+                    log_reason = "the propagation reached maximum number of steps"
+                    if trial_data[t_idx].ns["max_steps"] >= self.max_retries_on_max_steps:
+                        # log and get out of here because we will not retry
+                        logger.error("MD propagation in folder %s did not reach"
+                                     " a state because %s.",
+                                     trial_data[t_idx].workdir, log_reason)
+                        continue
+                    # increase max_steps counter and retry
+                    trial_data[t_idx].ns["max_steps"] += 1
+                    move_suffix = f"_max_steps{trial_data[t_idx].ns['max_steps']}"
                 else:
-                    # no exception raised
-                    # put the result into trials_done at the right idx
-                    #t_idx = trials_pending.index(t)
-                    trials_done[t_idx] = t.result()
-        # check where they went: construct TP if possible, else concatenate
-        (fw_trajs, fw_state), (bw_trajs, bw_state) = trials_done
-        if (fw_state is None) or (bw_state is None):
-            # if any of the two trials did not finish we return None, i.e. no state reached
-            # TODO: is this what we want? Or should we try to return the state
-            #       reached if one of them finishes
-            #       I (hejung) think None is best, because a half-crashed trial
-            #       should be approached with scrutiny and not just taken as is
-            return None
-        if fw_state == bw_state:
-            logger.info(f"Both trials reached state {fw_state} for "
-                        + f"configuration {self._conf_dirs[conf_num]} shot {shot_num}.")
-        else:
-            # we can form a TP, so do it (low idx state to high idx state)
-            logger.info(f"Forward trajectory reached state {fw_state}, "
-                        + f"backward trajectory reached state {bw_state} for "
-                        + f"configuration {self._conf_dirs[conf_num]} shot {shot_num}.")
-            if fw_state > bw_state:
-                minus_trajs, minus_state = bw_trajs, bw_state
-                plus_trajs, plus_state = fw_trajs, fw_state
-            else:
-                # can only be the other way round
-                minus_trajs, minus_state = fw_trajs, fw_state
-                plus_trajs, plus_state = bw_trajs, bw_state
-            tra_out = os.path.join(step_dir,
-                                   self.fname_transition_traj + f".{self.output_traj_type[conf_num]}")
-            # TODO: we currently dont use the return, should call as _ = ... ?
-            path_traj = await construct_tp_from_plus_and_minus_traj_segments(
-                            minus_trajs=minus_trajs, minus_state=minus_state,
-                            plus_trajs=plus_trajs, plus_state=plus_state,
-                            state_funcs=self.states, tra_out=tra_out,
-                            struct_out=None, overwrite=overwrite,
-                                                                             )
-            logger.info(f"TP from state {minus_state} to {plus_state} was generated"
-                        + f" for configuration {self._conf_dirs[conf_num]} shot {shot_num}.")
-        # TODO: do we want to concatenate the trials to states in any way?
-        # i.e. independent of if we can form a TP? or only for no TP cases?
-        # NOTE: (answer to todo?!)
-        # I think this is best as we can then return the fw trial only
-        # and treat all fw trials as truly independent realizations
-        # i.e. this makes sure the committor simulation stays a committor
-        # simulation, even for users who do not think about velocity
-        # correlation times
-        out_tra_names = [os.path.join(step_dir,
-                                      self.fname_traj_to_state + f".{self.output_traj_type[conf_num]}"),
-                         os.path.join(step_dir,
-                                      self.fname_traj_to_state_bw + f".{self.output_traj_type[conf_num]}"),
-                         ]
-        # TODO: we currently dont use the return, should call as _ = ... ?
-        concats = await asyncio.gather(*(
-                        p.cut_and_concatenate(trajs=trajs, tra_out=tra_out,
-                                              overwrite=overwrite)
-                        for p, trajs, tra_out in zip(propagators,
-                                                     [fw_trajs, bw_trajs],
-                                                     out_tra_names
-                                                     )
-                                         )
-                                       )
-        # (tra_out_fw, fw_state), (tra_out_bw, bw_state) = concats
-        return fw_state
+                    # any other exception (we dont handle): raise it
+                    for task in pending:
+                        task.cancel()  # cancel potential other tasks
+                    raise t.exception() from None
+                logger.error("MD propagation in folder %s did not reach a state "
+                             "because %s. Will retry with a fresh propagation "
+                             "from the same initial configuration now.",
+                             trial_data[t_idx].workdir, log_reason)
+                # if we got until here we are retrying
+                # move the previous directory
+                move_dir = f"{os.path.normpath(trial_data[t_idx].workdir)}{move_suffix}"
+                shutil.move(trial_data[t_idx].workdir, move_dir)
+                logger.info("Moved directory %s to %s. Now retrying a fresh run in %s",
+                            trial_data[t_idx].workdir, move_dir,
+                            trial_data[t_idx].workdir)
+                # create a new trial
+                trial_data[t_idx].continuation = False  # set continuation to False
+                new_trial = asyncio.create_task(
+                    self._run_single_trial_propagation(trial=trial_data[t_idx])
+                    )
+                # remove the old trial from the list of trials
+                _ = trials.pop(t_idx)
+                # and insert the new trial run at its position
+                trials.insert(t_idx, new_trial)
+                # and add it to pending trials so we await it next iteration
+                pending.add(new_trial)
 
-    async def _run_single_trial(self, conf_num, shot_num, two_way,
-                                continuation, overwrite):
-        step_dir = os.path.join(
-                        self.workdir,
-                        self._conf_dirs[conf_num],
-                        f"{self.shot_dir_prefix}{str(shot_num)}",
+        if len(trial_results) > 1:
+            return (trial_results[0], trial_results[1])
+        return (trial_results[0], "NO TRIAL")
+
+    async def _run_trial(self, *, conf_num: int, trial_num: int,
+                         overwrite: bool, add_backward_only: bool,
+                         ) -> tuple[int | None,
+                                    int | None | typing.Literal["NO TRIAL"]
+                                    ]:
+        prepared_trial = await self._prepare_trial_propagation(
+                                        conf_num=conf_num,
+                                        trial_num=trial_num,
+                                        overwrite=overwrite,
+                                        add_backward_only=add_backward_only,
+                                        )
+        fw_res, bw_res = await self._handle_trial_run_from_prepared_data(
+                                                trial_data=prepared_trial,
+                                                )
+        if bw_res == "NO TRIAL":
+            # no backward propagation, so no point in trying to make a transition
+            return (fw_res[1], "NO TRIAL")
+        # we did a forward and a backward trial, so check if we have a transition
+        if (
+            # the state can be None for max_steps reached, and then we cant make
+            # a transition (obviously)
+            fw_res[1] is not None
+            and bw_res[1] is not None
+            and fw_res[1] != bw_res[1]
+        ):
+            # and if we ended in two different states, write out the transition
+            trial_dir = self._get_trial_dir(conf_num=conf_num, trial_num=trial_num)
+            engine_spec = self._get_value_corresponding_to_configuration(
+                                self.committor_engine_spec, conf_num=conf_num,
                                 )
-        #if not continuation:
-        #    # create directory only for new trials
-        #    os.mkdir(step_dir)
-        try:
-            os.mkdir(step_dir)
-        except FileExistsError as e:
-            if not continuation:
-                # if it is not a continuation it should not exists!
-                raise e from None
-        else:
-            # if we can create the folder but have continuation=True
-            # this means we intended to but never started this trial
-            if continuation:
-                logger.info(f"continuation=True for configuration {self._conf_dirs[conf_num]}, "
-                            + f"shot {shot_num}, deffnm {self.deffnm_engine_out} "
-                            + f"but no step directory found ({step_dir})."
-                            + "Starting this particular trial from scratch, "
-                            + "i.e. setting continuation=False for this trial."
-                            )
-                continuation = False
-        if two_way:
-            state_reached = await self._run_single_trial_tw(
-                                                    conf_num=conf_num,
-                                                    shot_num=shot_num,
-                                                    step_dir=step_dir,
-                                                    continuation=continuation,
-                                                    overwrite=overwrite,
-                                                            )
-        else:
-            state_reached = await self._run_single_trial_ow(
-                                                    conf_num=conf_num,
-                                                    shot_num=shot_num,
-                                                    step_dir=step_dir,
-                                                    continuation=continuation,
-                                                    overwrite=overwrite,
-                                                            )
-        if state_reached is None:
-            logger.info("No result due to uncommitted or crashed trajectories "
-                        + f"in trial for configuration {self._conf_dirs[conf_num]} shot {shot_num}.")
-        return state_reached
+            logger.info(
+                "Forward and backward propagation ended in two different "
+                "states for trial in directory %s. "
+                "Will write out a transition trajectory now.",
+                trial_dir
+                )
+            transition_traj_name = os.path.join(
+                                        trial_dir,
+                                        (f"{self.fileout_transition_trajectory}"
+                                         + f".{engine_spec.output_traj_type}"),
+                                        )
+            await construct_tp_from_plus_and_minus_traj_segments(
+                        minus_trajs=bw_res[0], minus_state=bw_res[1],
+                        plus_trajs=fw_res[0], plus_state=fw_res[1],
+                        state_funcs=self.states, tra_out=transition_traj_name,
+                        overwrite=overwrite,
+                        )
 
-    async def _run(self, n_per_struct, continuation, overwrite):
-        # NOTE: make this private so we can use it from reassess with continuation
-        #       but avoid unhappy users who dont understand when/how continuation
-        #       can/should be used
-        # first construct the list of all coroutines
-        # Note that calling them will not (yet) schedule them for execution
-        # we do this later while respecting self.n_max_concurrent
-        # using the little func below
-        async def gather_with_concurrency(n, *tasks):
-            # https://stackoverflow.com/questions/48483348/how-to-limit-concurrency-with-python-asyncio/61478547#61478547
-            semaphore = asyncio.Semaphore(n)
+        # and always return the states reached also for no transition
+        return (fw_res[1], bw_res[1])
+
+    async def _run(self, *, trials_per_configuration: int, overwrite: bool,
+                   n_max_concurrent: int | None, add_backward_only: bool,
+                   ) -> None:
+        # construct the tasks all at once,
+        # ordering is such that we first finish all trials for configuration 0
+        # then configuration 1, i.e. we order by configuration and not by trial_num
+        tasks = []
+        # if we only add backward shots we need to start with the 0th trial for
+        # every configuration
+        start_trial = self.trial_counter if not add_backward_only else 0
+        end_trial = (self.trial_counter + trials_per_configuration
+                     if not add_backward_only else self.trial_counter)
+        for conf_num in range(len(self.configurations)):
+            tasks += [self._run_trial(conf_num=conf_num,
+                                      trial_num=trial_num,
+                                      overwrite=overwrite,
+                                      add_backward_only=add_backward_only,
+                                      )
+                      for trial_num in range(start_trial, end_trial)
+                      ]
+        if n_max_concurrent is not None:
+            # wrap all tasks with a semaphore so only n_max_concurrent of them
+            # can run simultaneously
+            semaphore = asyncio.Semaphore(n_max_concurrent)
 
             async def sem_task(task):
                 async with semaphore:
                     return await task
-            return await asyncio.gather(*(sem_task(task) for task in tasks))
+            tasks = [sem_task(task) for task in tasks]
+        # run them all (and add a tqdm status bar)
+        results = await tqdm_asyncio.gather(*tasks)
+        # results is a list of tuples with the idx to the states reached
+        # we unpack it and add it to the internal states_reached counters
+        for conf_num in range(len(self.configurations)):
+            start = conf_num * trials_per_configuration
+            stop = (conf_num + 1) * trials_per_configuration
+            # only add the forward results if we actually did forward, i.e.
+            # if we did only backward we already know about the fw results
+            if not add_backward_only:
+                self._states_reached[conf_num] += [r[0] for r in results[start:stop]]
+            # only add the backward results where we actually performed a trial
+            # due to two_way being True
+            self._states_reached_bw[conf_num] += [r[1] for r in results[start:stop]
+                                                  if r[1] != "NO TRIAL"
+                                                  ]
+        # increment internal trial (per struct) counter
+        if not add_backward_only:
+            # if we only added the missing backward shots, naturally we do not
+            # increment
+            self._trial_counter += trials_per_configuration
 
-        # construct the tasks all at once,
-        # ordering is such that we first finish all trials for configuration 0
-        # then configuration 1, i.e. we order by configuration and not by shotnum
-        tasks = []
-        for cnum in range(len(self.starting_configurations)):
-            tasks += [self._run_single_trial(conf_num=cnum,
-                                             shot_num=snum,
-                                             two_way=self.two_way[cnum],
-                                             continuation=continuation,
-                                             overwrite=overwrite,
-                                             )
-                      for snum in range(self._shot_counter,
-                                        self._shot_counter + n_per_struct
-                                        )
-                      ]
-        results = await gather_with_concurrency(self.n_max_concurrent, *tasks)
-        # results is a list of idx to the states reached
-        # we unpack it and add it to the internal states_reached counter
-        for cnum in range(len(self.starting_configurations)):
-            self._states_reached[cnum] += results[cnum * n_per_struct:
-                                                  (cnum + 1) * n_per_struct]
-        # increment internal shot (per struct) counter
-        self._shot_counter += n_per_struct
-        # TODO: we return the total states reached per shot?!
-        #       or should we return only for this run?
-        return self.states_reached_per_shot
+    async def run(self, trials_per_configuration: int, overwrite: bool = False,
+                  n_max_concurrent: int | None = None,
+                  ) -> None:
+        """
+        Run ``trials_per_configuration`` additional committor trials for each configuration.
+
+        Parameters
+        ----------
+        trials_per_configuration : int
+            Number of additional trial runs to perform per configuration.
+        overwrite : bool, optional
+            Whether to overwrite potentially existing output trajectories, e.g.
+            trajectory_to_state, by default True.
+        n_max_concurrent : int | None, optional
+            How many trials to run concurrently at maximum. None means unlimited,
+            by default None.
+        """
+        if self._potentially_missing_backward_trials:
+            logger.warning("There might be missing backward trials. "
+                           "Will ensure consistency by running "
+                           "`add_missing_backward_trials` first.")
+            await self.add_missing_backward_trials(overwrite=overwrite,
+                                                   n_max_concurrent=n_max_concurrent,
+                                                   )
+        await self._run(trials_per_configuration=trials_per_configuration,
+                        overwrite=overwrite,
+                        n_max_concurrent=n_max_concurrent,
+                        add_backward_only=False,
+                        )
+
+    async def add_missing_backward_trials(self, overwrite: bool = False,
+                                          n_max_concurrent: int | None = None,
+                                          ) -> None:
+        """
+        Add potentially missing backward trials, if ``two_way`` has been modified.
+
+        Parameters
+        ----------
+        overwrite : bool, optional
+            Whether to overwrite potentially existing output trajectories, e.g.
+            trajectory_to_state, by default True.
+        n_max_concurrent : int | None, optional
+            How many trials to run concurrently at maximum. None means unlimited,
+            by default None.
+        """
+        if self._potentially_missing_backward_trials:
+            # only do something if there might be something to do
+            await self._run(trials_per_configuration=self._trial_counter,
+                            overwrite=overwrite,
+                            n_max_concurrent=n_max_concurrent,
+                            add_backward_only=True,
+                            )
+            self._potentially_missing_backward_trials = False
+
+    async def reinitialize_from_workdir(self, overwrite: bool = True,
+                                        n_max_concurrent: int | None = None,
+                                        ) -> None:
+        """
+        Reassess all trials in workdir and populate ``states_reached`` counters.
+
+        Possibly extend trials if no state has been reached yet and also add
+        potentially missing backward trials.
+        Can be used to extend (or shorten) a simulation with modified states or
+        to recover after a crash.
+
+        Parameters
+        ----------
+        overwrite : bool, optional
+            Whether to overwrite potentially existing output trajectories, e.g.
+            trajectory_to_state, by default True.
+        n_max_concurrent : int | None, optional
+            How many trials to run concurrently at maximum. None means unlimited,
+            by default None.
+        """
+        # make sure we set everything to zero before we start!
+        self._trial_counter = 0
+        # we will/would add them now if they are missing, so set to False
+        self._potentially_missing_backward_trials = False
+        self._states_reached = [[] for _ in range(len(self.configurations))]
+        self._states_reached_bw = [[] for _ in range(len(self.configurations))]
+        # find out how many trials we did per configuration, the first
+        # configuration should be the one with the most directories created
+        # even if we failed/crashed before everything was created, the
+        # run_trial_propagation method will take care of creating the missing
+        # directories and initial configurations as appropriate. This way we
+        # will end up with as many trials done in each configuration as for the
+        # first one
+        dir_list = os.listdir(self._get_conf_dir(conf_num=0))
+        # build a list of all possible dir names
+        # (these will be too many if there are other files in conf dir)
+        possible_dirnames = [os.path.split(self._get_trial_dir(conf_num=0,
+                                                               trial_num=i)
+                                           )[1]  # take only the dirname
+                             for i in range(len(dir_list))
+                             ]
+        # now filter to check that only stuff that is a dir and in possible
+        # names will be taken, then count them: this is the number of trials
+        # we have done already
+        filtered = [d for d in dir_list
+                    if (d in possible_dirnames
+                        # Note: we can be sure it is there (it just came from
+                        # listdir), but we are protecting against there being a
+                        # file with the same name as the directory we use ;)
+                        and os.path.isdir(os.path.join(
+                                            self._get_conf_dir(conf_num=0), d,
+                                            )
+                                          )
+                        )
+                    ]
+        n_trials = len(filtered)
+        # we can just use the run-method as it will start with trial 0
+        # and the _prepare_trial_propagation method sorts out if we continue, etc
+        await self.run(trials_per_configuration=n_trials, overwrite=overwrite,
+                       n_max_concurrent=n_max_concurrent)

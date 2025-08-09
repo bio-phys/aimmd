@@ -12,6 +12,7 @@ dependencies = ["numpy >= 1.17", "cython",
                 "networkx",
                 "h5py >= 3",
                 "asyncmd >= 0.4.1",
+                "tqdm >= 4.62.0",  # asyncio.gather with progress bar
                 ]
 requires-python = ">=3.10"
 authors = [{ name = "Hendrik Jung", email = "hendrik.jung@biophys.mpg.de"}]
