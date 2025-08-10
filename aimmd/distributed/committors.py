@@ -81,11 +81,24 @@ class CommittorEngineSpec:
     max_steps : int
         The maximum number of integration steps to perform without reaching a
         state, i.e. upper cutoff for uncommitted trials.
+    full_precision_traj_type : str
+        The trajectory type for the full precision trajectories used by this engine.
+        Will be used as file-ending for the shooting points.
+        Note: Must be a format that stores velocities and coordinates!
+        By default "trr".
+
+    Attributes
+    ----------
+    output_traj_type : str
+        The (potentially lossy) output trajectory type of the engine, will be
+        inferred automatically from engine_cls and engine_kwargs.
+        Note: Only needs to store coordinates (no velocities).
     """
     engine_cls: type["MDEngine"]
     engine_kwargs: dict[str, typing.Any]
     walltime_per_part: float
     max_steps: int | None = None
+    full_precision_traj_type: str = "trr"
     output_traj_type: str = dataclasses.field(init=False)
 
     def __post_init__(self) -> None:
@@ -150,7 +163,6 @@ class _CommittorSimulationOutFilenames:
     transition: str = "transition_trajectory"
     initial_conf: str = "initial_configuration"
     initial_conf_bw: str = "initial_configuration_backward"
-    full_precision_traj_type: str = "trr"
     deffnm_engine: str = "committor"
 
 
@@ -184,6 +196,12 @@ class _PreparedTrialData:
 
 
 class CommittorSimulation:
+    # this class is "just" very complex, but most of its methods are properties
+    # and pylint also gets thrown off in counting attrs due to the way we set
+    # the properties in init (each of them counts twice [one for the property
+    # and one for the private/underscored version])...so:
+    # pylint: disable=too-many-instance-attributes
+    # pylint: disable=too-many-public-methods
     """
     Run committor simulation for multiple configurations in parallel.
 
@@ -209,10 +227,11 @@ class CommittorSimulation:
     output trajectories and a directory for each the forward and the backward
     propagation, respectively.
     """
+    # pylint: disable-next=too-many-arguments
     def __init__(
         self,
         workdir: str,
-        configurations: list[CommittorConfiguration],
+        configurations: list[CommittorConfiguration], *,
         states: list["TrajectoryFunctionWrapper"],
         temperature: float | list[float],
         committor_engine_spec: CommittorEngineSpec | list[CommittorEngineSpec],
@@ -267,15 +286,16 @@ class CommittorSimulation:
         # internal counter (needed for the properties [below] to work)
         self._trial_counter = 0  # trials per configuration
         # sort out the arguments we always need/get
-        self.workdir = os.path.relpath(workdir)
+        # Note: workdir, configurations, and states are read-only properties
+        self._workdir = os.path.relpath(workdir)
         if not os.path.isdir(self.workdir):
             logger.warning("Working directory (workdir=%s) does not exist."
                            "We will create it when we need it.", self.workdir)
             # we will create directories as needed so no need to create it here
             # (as we might error below if there are multiple configurations with
             #  the same name)
-        self.configurations = configurations
-        self.states = states
+        self._configurations = configurations
+        self._states = states
         # use the properties to set (and check the values)
         self.temperature = temperature
         self.committor_engine_spec = committor_engine_spec
@@ -307,12 +327,26 @@ class CommittorSimulation:
                              "multiple configurations?"
                              )
 
+    @property
+    def workdir(self) -> str:
+        """Toplevel working directory of this simulation."""
+        return self._workdir
+
+    @property
+    def configurations(self) -> list[CommittorConfiguration]:
+        """List of input configurations to perform committor simulation for."""
+        return self._configurations
+
+    @property
+    def states(self) -> list["TrajectoryFunctionWrapper"]:
+        """List of states (stopping conditions) for trial propagation."""
+        return self._states
+
     def _ensure_list_len_or_single(self, val: "T | list[T]", name: str
                                    ) -> "T | list[T]":
         """
         Make sure that a value is either one value or a list of values of the
         same length as self.configurations.
-
         Used to ensure proper format for values we allow to be set on a
         per-configuration basis, e.g., temperature, engine_spec, two_way.
         """
@@ -328,7 +362,6 @@ class CommittorSimulation:
         """
         Get the corresponding value from value or optionally a list of values
         for configuration identified by conf_num.
-
         This is used to ensure we always easily get (the correct) single value
         for all the attributes/values we allow to be set on a per-configuration
         basis.
@@ -337,32 +370,50 @@ class CommittorSimulation:
             return value[conf_num]
         return value
 
+    def _ensure_consistent_engine_specs(self) -> None:
+        """
+        Method called when setting property that influences the trial propagation,
+        its sole purpose is to raise an error when we already done any trials, i.e.,
+        changing the settings is not possible (easily) anymore.
+        """
+        if self._trial_counter > 0:
+            raise ValueError("Changing the engine specification is not supported after "
+                             "trials have been performed or reinitialized from workdir."
+                             )
+
     @property
     def temperature(self) -> float | list[float]:
+        """Temperature(s) used to generate Maxwell-Boltzmann velocities, in Kelvin."""
         return self._temperature
 
     @temperature.setter
     def temperature(self, val: float | list[float]) -> None:
+        self._ensure_consistent_engine_specs()
         self._temperature = self._ensure_list_len_or_single(val, "temperature")
 
     @property
     def committor_engine_spec(self) -> CommittorEngineSpec | list[CommittorEngineSpec]:
+        """Specification(s) of the MD engines used for the trial propagation."""
         return self._committor_engine_spec
 
     @committor_engine_spec.setter
     def committor_engine_spec(self, val: CommittorEngineSpec | list[CommittorEngineSpec],
                               ) -> None:
+        self._ensure_consistent_engine_specs()
         self._committor_engine_spec = self._ensure_list_len_or_single(
                                                 val, "committor_engine_spec")
 
     @property
     def two_way(self) -> bool | list[bool]:
+        """Whether to perform two way trials."""
         return self._two_way
 
     @two_way.setter
     def two_way(self, val: bool | list[bool]) -> None:
         self._two_way = self._ensure_list_len_or_single(val, "two_way")
         if self._trial_counter > 0:
+            # Note: This is possible, since we just add the backward trials
+            #       (and do not change the engine_spec itself)
             logger.warning("Changing two_way after trials have been performed. "
                            "Please call `add_missing_backward_trials` method "
                            "to ensure consistency."
@@ -383,6 +434,10 @@ class CommittorSimulation:
 
     @property
     def directory_configuration_prefix(self) -> str:
+        """
+        The prefix for the configuration directories, used only for un-named configurations.
+        The directory name will be ``$DIRECTORY_CONFIGURATION_PREFIX_$CONF_NUM``.
+        """
         return self._dirs.configuration_prefix
 
     @directory_configuration_prefix.setter
@@ -392,6 +447,10 @@ class CommittorSimulation:
 
     @property
     def directory_trial_prefix(self) -> str:
+        """
+        The prefix for the trial directories, the directory name will be
+        ``$DIRECTORY_TRIAL_PREFIX_$TRIAL_NUM``.
+        """
         return self._dirs.trial_prefix
 
     @directory_trial_prefix.setter
@@ -401,6 +460,7 @@ class CommittorSimulation:
 
     @property
     def directory_forward(self) -> str:
+        """The directory name used for the forward propagation."""
         return self._dirs.forward
 
     @directory_forward.setter
@@ -410,6 +470,7 @@ class CommittorSimulation:
 
     @property
     def directory_backward(self) -> str:
+        """The directory name used for the backward propagation."""
         return self._dirs.backward
 
     @directory_backward.setter
@@ -419,6 +480,13 @@ class CommittorSimulation:
 
     @property
     def fileout_trajectory_to_state(self) -> str:
+        """
+        The filename for the output trajectories to the forward state to be written
+        to each trial directory.
+
+        Note: Without fileending, the fileending will be inferred from the respective
+        committor engine specification.
+        """
         return self._fnames.traj_to_state
 
     @fileout_trajectory_to_state.setter
@@ -428,6 +496,13 @@ class CommittorSimulation:
 
     @property
     def fileout_trajectory_to_state_backward(self) -> str:
+        """
+        The filename for the output trajectories to the backward state to be written
+        to each trial directory.
+
+        Note: Without fileending, the fileending will be inferred from the respective
+        committor engine specification.
+        """
         return self._fnames.traj_to_state_bw
 
     @fileout_trajectory_to_state_backward.setter
@@ -437,6 +512,13 @@ class CommittorSimulation:
 
     @property
     def fileout_transition_trajectory(self) -> str:
+        """
+        The filename for the output transition trajectories to be written to the
+        trial directories.
+
+        Note: Without fileending, the fileending will be inferred from the respective
+        committor engine specification.
+        """
         return self._fnames.transition
 
     @fileout_transition_trajectory.setter
@@ -446,6 +528,13 @@ class CommittorSimulation:
 
     @property
     def fileout_initial_configuration(self) -> str:
+        """
+        The filename for the initial configuration (including velocities) for the
+        forward trial to be written to each trial directory.
+
+        Note: Without fileending, because the file-ending defined in
+        :attr:`committor_engine_spec` will be added.
+        """
         return self._fnames.initial_conf
 
     @fileout_initial_configuration.setter
@@ -455,6 +544,13 @@ class CommittorSimulation:
 
     @property
     def fileout_initial_configuration_backward(self) -> str:
+        """
+        The filename for the initial configuration (including velocities) for the
+        backward trial to be written to each trial directory.
+
+        Note: Without fileending, because the file-ending defined in
+        :attr:`committor_engine_spec` will be added.
+        """
         return self._fnames.initial_conf_bw
 
     @fileout_initial_configuration_backward.setter
@@ -463,16 +559,8 @@ class CommittorSimulation:
         self._fnames.initial_conf_bw = val
 
     @property
-    def fileout_full_precision_trajectory_type(self) -> str:
-        return self._fnames.full_precision_traj_type
-
-    @fileout_full_precision_trajectory_type.setter
-    def fileout_full_precision_trajectory_type(self, val: str) -> None:
-        self._ensure_consistent_dirnames_and_fnames()
-        self._fnames.full_precision_traj_type = val
-
-    @property
     def fileout_deffnm_engine(self) -> str:
+        """The deffnm used for the MD engines in trial propagation."""
         return self._fnames.deffnm_engine
 
     @fileout_deffnm_engine.setter
@@ -482,6 +570,11 @@ class CommittorSimulation:
 
     @property
     def max_retries_on_crash(self) -> int:
+        """
+        Maximum number of retries (per trial) in case of MD engine crash.
+
+        Note: After max_retries is reached the error will be raised!
+        """
         return self._retries.crash
 
     @max_retries_on_crash.setter
@@ -490,6 +583,13 @@ class CommittorSimulation:
 
     @property
     def max_retries_on_max_steps(self) -> int:
+        """
+        Maximum number of retries (per trial) in case of max_steps reached.
+
+        Note: If no state is reached after max_retries + 1 tries, the trial will
+        have state_reached=None and simply not be included in the state_reached
+        properties. No error will be raised!
+        """
         return self._retries.max_steps
 
     @max_retries_on_max_steps.setter
@@ -504,6 +604,10 @@ class CommittorSimulation:
     def _process_states_reached(self,
                                 internal_states_reached: list[list[int | None]],
                                 ) -> np.ndarray:
+        """
+        Helper function for states_reached and states_reached_backward properties.
+        Takes internal states reached representation and turns it into a np.array.
+        """
         ret = np.zeros((len(self.configurations), len(self.states)))
         for i, results_for_conf in enumerate(internal_states_reached):
             for state_reached in results_for_conf:
@@ -514,10 +618,9 @@ class CommittorSimulation:
         Return states_reached per configuration (i.e. summed over trials).
         These are only the results of the {} propagation.
 
-        Return states_reached as a np.array with shape (n_conf, n_states),
-        where the entries give the counts of states reached, i.e. the format is
-        as in an `aimmd.TrainSet`.
-        """  # TODO: improve formulation
+        Return states_reached as a np.array with shape (n_conf, n_states), where
+        the entries give the counts of states reached for a given configuration.
+        """
 
     @property
     @_is_documented_by(_PROCESS_STATES_REACHED_DOCSTRING, "forward")
@@ -534,6 +637,10 @@ class CommittorSimulation:
     def _process_states_reached_per_trial(self,
                                           internal_states_reached: list[list[int | None]],
                                           ) -> np.ndarray:
+        """
+        Helper method for states_reached_per_trial and states_reached_per_trial_backward.
+        Takes internal states reached representation and turns it into a np.array.
+        """
         ret = np.zeros(
                 (len(self.configurations), self._trial_counter, len(self.states))
                 )
@@ -549,7 +656,7 @@ class CommittorSimulation:
         Return a np.array shape (n_conf, n_trials, n_states), where the entries
         give the counts of states reached for every single trial, i.e. summing
         over the last (n_states) axis will always give 1.
-        """  # TODO: improve formulation
+        """
 
     @property
     @_is_documented_by(_PROCESS_STATES_REACHED_DOCSTRING, "forward")
@@ -564,9 +671,12 @@ class CommittorSimulation:
         return self._process_states_reached_per_trial(self._states_reached_bw)
 
     def _find_trajs_to_state(self, traj_fname: str) -> list[list[Trajectory]]:
-        # TODO: write a docstring/comment for this method and note that it is
-        #       important to keep the isfile check since it is also used in the
-        #       transitions property
+        """
+        Helper function to find trajectories_to_state, also backward, and the
+        transitions.
+        NOTE: Because we use this for the transitions too, it is important to
+        keep the isfile check!
+        """
         trajs_to_state = []
         for conf_num, conf in enumerate(self.configurations):
             trajs_per_conf = []
@@ -591,10 +701,9 @@ class CommittorSimulation:
     _FIND_TRAJS_TO_STATE_DOCSTRING = """
         Return all {} trajectories until a state generated so far.
 
-        They are sorted as a list of lists. The outer list is configurations,
-        the inner list is trials, i.e. the outer list will always have
-        len=configurations and the inner lists will all have len=self.trial_counter.
-        """  # TODO: improve formulation
+        The return value is a list of lists, the outer list corresponds to
+        configurations, the inner lists to the trials.
+        """
 
     @property
     @_is_documented_by(_FIND_TRAJS_TO_STATE_DOCSTRING, "forward")
@@ -611,7 +720,6 @@ class CommittorSimulation:
                             traj_fname=self.fileout_trajectory_to_state_backward,
                             )
 
-    # TODO: improve docstring formulation
     @property
     def transition_trajectories(self) -> list[list[Trajectory]]:
         """
@@ -619,10 +727,9 @@ class CommittorSimulation:
 
         A transition is defined as a trajectory that connects two different states.
 
-        They are sorted as a list of lists. The outer list is per configuration,
-        the inner list is per trial, i.e. the outer list will always have
-        len=configurations and the inner lists then just contains all transitions
-        for the respective configuration (and can also be empty).
+        The return value is a list of lists, the outer list corresponds to
+        configurations, the inner lists to the trials. The inner lists may be
+        empty if no transitions exist for a particluar configuration.
         """
         # can not have any transitions if we did no two_way trials
         if (  # this looks a bit strange, but two_way can be a list of bools:
@@ -642,6 +749,10 @@ class CommittorSimulation:
                                 )
 
     def _get_conf_dir(self, conf_num: int) -> str:
+        """
+        Helper method to get the path to the configuration directory for a given
+        ``conf_num``.
+        """
         conf = self.configurations[conf_num]
         return os.path.join(
                     self.workdir,
@@ -650,6 +761,10 @@ class CommittorSimulation:
                     )
 
     def _get_trial_dir(self, conf_num: int, trial_num: int) -> str:
+        """
+        Helper method to get path to the trial directory corresponding to
+        ``conf_num`` and ``trial_num``.
+        """
         return os.path.join(
                     self._get_conf_dir(conf_num=conf_num),
                     f"{self.directory_trial_prefix}{trial_num}",
@@ -657,13 +772,30 @@ class CommittorSimulation:
 
     async def _get_or_generate_sp_fw(self, conf_num: int, trial_num: int,
                                      ) -> Trajectory:
+        """
+        Get or generate forward shooting point.
+
+        Parameters
+        ----------
+        conf_num : int
+            The number of the configuration to get/generate the SP for.
+        trial_num : int
+            The number of the trial to get/generate the SP for.
+
+        Returns
+        -------
+        Trajectory
+            The forward shooting point.
+        """
         # generate SP forward (or get and return if it already there)
         init_conf = self.configurations[conf_num]
         trial_dir = self._get_trial_dir(conf_num=conf_num, trial_num=trial_num)
+        full_prec_out = self._get_value_corresponding_to_configuration(
+                                self.committor_engine_spec, conf_num=conf_num,
+                            ).full_precision_traj_type
         sp_name = os.path.join(
                     trial_dir,
-                    (self.fileout_initial_configuration
-                     + f".{self.fileout_full_precision_trajectory_type}"),
+                    f"{self.fileout_initial_configuration}.{full_prec_out}",
                     )
         if os.path.isfile(sp_name):
             # already there, so just return it
@@ -677,7 +809,7 @@ class CommittorSimulation:
         sp_name_unconstrained = os.path.join(
                     trial_dir,
                     (self.fileout_initial_configuration + "_unconstrained"
-                     + f".{self.fileout_full_precision_trajectory_type}"),
+                     + f".{full_prec_out}"),
                     )
         engine_spec = self._get_value_corresponding_to_configuration(
                             value=self.committor_engine_spec, conf_num=conf_num)
@@ -703,13 +835,32 @@ class CommittorSimulation:
 
     async def _get_or_generate_sp_bw(self, conf_num: int, trial_num: int,
                                      sp_fw: Trajectory) -> Trajectory:
+        """
+        Get or generate backward shooting point from forward shooting point.
+
+        Parameters
+        ----------
+        conf_num : int
+            The number of the configuration to get/generate the SP for.
+        trial_num : int
+            The number of the trial to get/generate the SP for.
+        sp_fw : Trajectory
+            The forward shooting point (to invert the velocities).
+
+        Returns
+        -------
+        Trajectory
+            The backward shooting point.
+        """
         # generate backward SP from forward SP, i.e. forward must exist!
         # as for _generate_sp_fw, if it is already there we just return it
         trial_dir = self._get_trial_dir(conf_num=conf_num, trial_num=trial_num)
+        full_prec_out = self._get_value_corresponding_to_configuration(
+                                self.committor_engine_spec, conf_num=conf_num,
+                            ).full_precision_traj_type
         sp_name = os.path.join(
                     trial_dir,
-                    (self.fileout_initial_configuration_backward
-                     + f".{self.fileout_full_precision_trajectory_type}"),
+                    f"{self.fileout_initial_configuration_backward}.{full_prec_out}",
                     )
         if os.path.isfile(sp_name):
             # already there, so just return it
@@ -724,6 +875,19 @@ class CommittorSimulation:
 
     async def _run_single_trial_propagation(self, trial: _PreparedTrialData,
                                             ) -> tuple[list[Trajectory], int]:
+        """
+        Run a single trial propagation, no error handling.
+
+        Parameters
+        ----------
+        trial : _PreparedTrialData
+            Dataclass describing prepared trial to propagate.
+
+        Returns
+        -------
+        tuple[list[Trajectory], int]
+            trajectory_segments, state_reached
+        """
         os.makedirs(trial.workdir, exist_ok=True)
         propagator = ConditionalTrajectoryPropagator(
                             conditions=self.states,
@@ -747,6 +911,26 @@ class CommittorSimulation:
                                          overwrite: bool,
                                          add_backward_only: bool,
                                          ) -> list[_PreparedTrialData]:
+        """
+        Prepare trial propagation for given ``conf_num`` and ``trial_num``.
+
+        Parameters
+        ----------
+        conf_num : int
+            The number of the configuration to get/generate the SP for.
+        trial_num : int
+            The number of the trial to get/generate the SP for.
+        overwrite : bool
+            Whether to overwrite potentially existing outfiles (traj_to_state etc).
+        add_backward_only : bool
+            Whether to only add the potentially missing backward shots for all
+            trials performed yet.
+
+        Returns
+        -------
+        list[_PreparedTrialData]
+            List of dataclasses describing the forward and/or backward propagation.
+        """
         def get_n_previous_fails(dirname: str, suffix: str) -> int:
             # Helper function to the number of previous fails for a given directory.
             n = 0
@@ -813,6 +997,30 @@ class CommittorSimulation:
                                 tuple[list[Trajectory], int | None],
                                 tuple[list[Trajectory], int | None] | typing.Literal["NO TRIAL"]
                                    ]:
+        """
+        Handle trial propagation (including error handling and retries) from
+        prepared trial dataclass.
+
+        Parameters
+        ----------
+        trial_data : _PreparedTrialData
+            Dataclass describing the prepared trial propagation.
+
+        Returns
+        -------
+        tuple[tuple[list[Trajectory], int | None],
+              tuple[list[Trajectory], int | None] | typing.Literal["NO TRIAL"]
+              ]
+            tuple of (forward_result, backward_result), where each result is a
+            tuple of trajectory_segments, state_reached.
+            If no backward trial is performed (bc two_way=False), return literal
+            "NO TRIAL" for backward.
+
+        Raises
+        ------
+        EngineCrashedError
+            Reraised if the engine crashed more than ``max_retries_on_crash`` times.
+        """
         trials = [asyncio.create_task(self._run_single_trial_propagation(trial=trial))
                   for trial in trial_data
                   ]
@@ -893,6 +1101,32 @@ class CommittorSimulation:
                          ) -> tuple[int | None,
                                     int | None | typing.Literal["NO TRIAL"]
                                     ]:
+        """
+        Run a trial specified by ``conf_num`` and ``trial_num``.
+
+        Takes care of propagating the forward and potentially backward trial,
+        also generates all output trajectories (trajectory_to_state forward and
+        backward, and transition_trajectory).
+
+        Parameters
+        ----------
+        conf_num : int
+            The number of the configuration to get/generate the SP for.
+        trial_num : int
+            The number of the trial to get/generate the SP for.
+        overwrite : bool
+            Whether to overwrite potentially existing outfiles (traj_to_state etc).
+        add_backward_only : bool
+            Whether to only add the potentially missing backward shots for all
+            trials performed yet.
+
+        Returns
+        -------
+        tuple[int | None, int | None | typing.Literal["NO TRIAL"]]
+            Tuple of (fw_state_reached, bw_state_reached). state_reached will be
+            None if the trial did not reach any state, literal "NO TRIAL" is used
+            if no backward trial is performed (because two_way=False).
+        """
         prepared_trial = await self._prepare_trial_propagation(
                                         conf_num=conf_num,
                                         trial_num=trial_num,
@@ -942,6 +1176,22 @@ class CommittorSimulation:
     async def _run(self, *, trials_per_configuration: int, overwrite: bool,
                    n_max_concurrent: int | None, add_backward_only: bool,
                    ) -> None:
+        """
+        Run ``trial_per_configuration`` (additional) trials for each configuration.
+
+        Parameters
+        ----------
+        trials_per_configuration : int
+            Number of additional trials to perform per configuration.
+        overwrite : bool
+            Whether to overwrite potentially existing outfiles (traj_to_state etc).
+        n_max_concurrent : int | None, optional
+            How many trials to run concurrently at maximum. None means unlimited,
+            by default None.
+        add_backward_only : bool
+            Whether to only add the potentially missing backward shots for all
+            trials performed yet.
+        """
         # construct the tasks all at once,
         # ordering is such that we first finish all trials for configuration 0
         # then configuration 1, i.e. we order by configuration and not by trial_num
