@@ -1045,7 +1045,7 @@ class CommittorSimulation:
                         raise RuntimeError(
                             "MD propagation for trial in directory "
                             f"{trial_data[t_idx].workdir} "
-                            f"failed for the {trial_data[t_idx].ns["crash"] + 1}"
+                            f"failed for the {trial_data[t_idx].ns['crash'] + 1}"
                             "th time."
                             ) from t.exception()
                     # otherwise increase crash counter and handle crash
