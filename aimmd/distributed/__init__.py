@@ -15,6 +15,6 @@ You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 from . import config
-from .committors import CommittorSimulation
+from .committors import CommittorSimulation, CommittorConfiguration, CommittorEngineSpec
 # TODO: what PathSampling stuff do we want to have available at the top level?
 from .pathsampling import Brain
