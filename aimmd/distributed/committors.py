@@ -209,7 +209,7 @@ class CommittorSimulation:
     list of states propagate trajectories until any of the states is reached.
     Writes out the concatenated trajectory from the starting configuration to
     the first state reached.
-    If `two_way` is True, trials will also be performed with inverted momenta,
+    If :attr:`two_way` is True, trials will also be performed with inverted momenta,
     i.e. backward. For these trials concatenated output trajectories will also
     be written, but additionally transition trajectories are written out if the
     forward and backward propagation of the same trial end in different states.
@@ -239,14 +239,12 @@ class CommittorSimulation:
         **kwargs: dict,
     ) -> None:
         """
-        Initialize a :class:`CommittorSimulation`.
-
         All attributes and properties can be set at initialization by passing
         keyword arguments with their name.
 
         Note, that the :class:`CommittorSimulation` allows to vary some of the
         simulation parameters on a per configuration basis. These can be either
-        a list of values (length must then be equal to the number of `configurations`)
+        a list of values (length must then be equal to the number of :attr:`configurations`)
         or a single value.
         This means you can simulate systems differing in the number of
         molecules, at different pressures, or at different temperatures (by using
@@ -260,7 +258,7 @@ class CommittorSimulation:
             The working directory of the simulation.
         configurations : list[CommittorConfiguration]
             List of input configurations to perform committor simulation for.
-        states : list[TrajectoryFunctionWrapper]
+        states : list[asyncmd.trajectory.functionwrapper.TrajectoryFunctionWrapper]
             List of states (stopping conditions) for the trial propagation.
         temperature : float | list[float]
             Temperature used to draw random Maxwell-Boltzmann velocities. Measured
@@ -280,8 +278,9 @@ class CommittorSimulation:
         Raises
         ------
         ValueError
-            If the given `name`s for the :class:`CommittorConfiguration`s would
-            lead to non-unique directory names.
+            If multiple :class:`CommittorConfiguration` have the same given ``name``,
+            i.e. the :attr:`configurations` passed would lead to non-unique directory
+            names.
         """
         # internal counter (needed for the properties [below] to work)
         self._trial_counter = 0  # trials per configuration
@@ -729,7 +728,7 @@ class CommittorSimulation:
 
         The return value is a list of lists, the outer list corresponds to
         configurations, the inner lists to the trials. The inner lists may be
-        empty if no transitions exist for a particluar configuration.
+        empty if no transitions exist for a particular configuration.
         """
         # can not have any transitions if we did no two_way trials
         if (  # this looks a bit strange, but two_way can be a list of bools:
@@ -1260,7 +1259,7 @@ class CommittorSimulation:
         if self._potentially_missing_backward_trials:
             logger.warning("There might be missing backward trials. "
                            "Will ensure consistency by running "
-                           "`add_missing_backward_trials` first.")
+                           "``add_missing_backward_trials`` first.")
             await self.add_missing_backward_trials(overwrite=overwrite,
                                                    n_max_concurrent=n_max_concurrent,
                                                    )
