@@ -56,7 +56,8 @@ logger = logging.getLogger(__name__)
 def _is_documented_by(docstring, *format_args):
     """
     Decorator to add the given docstring to the decorated method.
-    Optionally perform formatting on the string with ``format_args``.
+    Optionally perform formatting on the string with ``format_args``, i.e. call
+    ``docstring.format(*format_args)`` before decorating.
     """
     def wrapper(target):
         target.__doc__ = docstring.format(*format_args)
@@ -570,7 +571,7 @@ class CommittorSimulation:
     @property
     def max_retries_on_crash(self) -> int:
         """
-        Maximum number of retries (per trial) in case of MD engine crash.
+        Maximum number of **retries** (per trial) in case of MD engine crash.
 
         Note: After max_retries is reached the error will be raised!
         """
@@ -583,7 +584,7 @@ class CommittorSimulation:
     @property
     def max_retries_on_max_steps(self) -> int:
         """
-        Maximum number of retries (per trial) in case of max_steps reached.
+        Maximum number of **retries** (per trial) in case of max_steps reached.
 
         Note: If no state is reached after max_retries + 1 tries, the trial will
         have state_reached=None and simply not be included in the state_reached
@@ -1273,7 +1274,7 @@ class CommittorSimulation:
                                           n_max_concurrent: int | None = None,
                                           ) -> None:
         """
-        Add potentially missing backward trials, if ``two_way`` has been modified.
+        Add potentially missing backward trials, if :attr:`two_way` has been modified.
 
         Parameters
         ----------
@@ -1297,7 +1298,7 @@ class CommittorSimulation:
                                         n_max_concurrent: int | None = None,
                                         ) -> None:
         """
-        Reassess all trials in workdir and populate ``states_reached`` counters.
+        Reassess all trials in workdir and populate :attr:`states_reached` counters.
 
         Possibly extend trials if no state has been reached yet and also add
         potentially missing backward trials.
