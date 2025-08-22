@@ -66,6 +66,25 @@ def _is_documented_by(docstring, *format_args):
 
 
 @dataclasses.dataclass
+class CommittorConfiguration:
+    """
+    Specify configurations for :class:`CommittorSimulation`
+
+    Parameters
+    ----------
+    trajectory : asyncmd.Trajectory
+        The trajectory on which the configuration lies.
+    index : int
+        The index of the configuration in the trajectory.
+    name : str | None
+        An optional name used to identify the configuration.
+    """
+    trajectory: Trajectory
+    index: int
+    name: str | None = None
+
+
+@dataclasses.dataclass
 class CommittorEngineSpec:
     """
     Specify MDEngine and other propagation options for :class:`CommittorSimulation`.
@@ -125,25 +144,6 @@ class CommittorEngineSpec:
 
 
 @dataclasses.dataclass
-class CommittorConfiguration:
-    """
-    Specify configurations for :class:`CommittorSimulation`
-
-    Parameters
-    ----------
-    trajectory : asyncmd.Trajectory
-        The trajectory on which the configuration lies.
-    index : int
-        The index of the configuration in the trajectory.
-    name : str | None
-        An optional name used to identify the configuration.
-    """
-    trajectory: Trajectory
-    index: int
-    name: str | None = None
-
-
-@dataclasses.dataclass
 class _CommittorSimulationDirectoryPrefixes:
     """
     Store (default) values for directory (prefixes) used by :class:`CommittorSimulation`.
@@ -186,6 +186,9 @@ class _PreparedTrialData:
     Store data needed to run one trial (one direction) of the :class:`CommittorSimulation`.
 
     Used internally to pass data between methods.
+
+    NOTE: Setting ``tra_out=None`` means "do not produce concatenated output trajectory",
+    i.e. it makes ``overwrite`` irrelevant if set to ``None``.
     """
     ns: dict[str, int]
     sp_conf: Trajectory
@@ -249,7 +252,7 @@ class CommittorSimulation:
         or a single value.
         This means you can simulate systems differing in the number of
         molecules, at different pressures, or at different temperatures (by using
-        different :class:`CommittorEngineSpec` and even perform two way trials
+        different :class:`CommittorEngineSpec`) and even perform two way trials
         only for a selected subset of configurations (e.g. the ones you expect
         to be a transition state).
 
@@ -287,7 +290,7 @@ class CommittorSimulation:
         self._trial_counter = 0  # trials per configuration
         # sort out the arguments we always need/get
         # Note: workdir, configurations, and states are read-only properties
-        self._workdir = os.path.relpath(workdir)
+        self._workdir = os.path.relpath(os.path.expanduser(workdir))
         if not os.path.isdir(self.workdir):
             logger.warning("Working directory (workdir=%s) does not exist."
                            "We will create it when we need it.", self.workdir)
@@ -295,8 +298,8 @@ class CommittorSimulation:
             # (as we might error below if there are multiple configurations with
             #  the same name)
         self._configurations = configurations
-        self._states = states
         # use the properties to set (and check the values)
+        self.states = states
         self.temperature = temperature
         self.committor_engine_spec = committor_engine_spec
         self.two_way = two_way
@@ -315,6 +318,8 @@ class CommittorSimulation:
         # variable that stores whether we might miss some backward trials because
         # we changed the two_way setting (we will add them as requested and in run)
         self._potentially_missing_backward_trials = False
+        # variable that stores whether we need reinitialization (bc we changed the states)
+        self._needs_reinitialization = False
         # now attach all additional kwargs to self
         _attach_kwargs_to_object(obj=self, logger=logger, **kwargs)
         # finally, make sure that we will have unique configuration directory names
@@ -341,6 +346,18 @@ class CommittorSimulation:
     def states(self) -> list["TrajectoryFunctionWrapper"]:
         """List of states (stopping conditions) for trial propagation."""
         return self._states
+
+    @states.setter
+    def states(self, val: list["TrajectoryFunctionWrapper"]):
+        self._states = val
+        if self._trial_counter > 0:
+            # Note: This is possible, since we just add the backward trials
+            #       (and do not change the engine_spec itself)
+            logger.warning("Changing states after trials have been performed. "
+                           "Please call `reinitialize_from_workdir` method "
+                           "to ensure consistency."
+                           )
+            self._needs_reinitialization = True
 
     def _ensure_list_len_or_single(self, val: "T | list[T]", name: str
                                    ) -> "T | list[T]":
@@ -427,7 +444,8 @@ class CommittorSimulation:
         structure, i.e. when changing the names is not possible anymore (easily).
         """
         if self._trial_counter > 0:
-            raise ValueError("Changing the directory names is not supported after "
+            raise ValueError("Changing names of directories, engine deffnm or the "
+                             "name for initial configurations is not supported after "
                              "the directory structure has been created. I.e. when "
                              "trials have been performed or reinitialized from workdir."
                              )
@@ -491,7 +509,8 @@ class CommittorSimulation:
 
     @fileout_trajectory_to_state.setter
     def fileout_trajectory_to_state(self, val: str) -> None:
-        self._ensure_consistent_dirnames_and_fnames()
+        # Note: we allow output concatenated trajectory names to be changed
+        # after trials have been performed, i.e. no _ensure_consistent_dirnames_and_fnames
         self._fnames.traj_to_state = val
 
     @property
@@ -507,7 +526,8 @@ class CommittorSimulation:
 
     @fileout_trajectory_to_state_backward.setter
     def fileout_trajectory_to_state_backward(self, val: str) -> None:
-        self._ensure_consistent_dirnames_and_fnames()
+        # Note: we allow output concatenated trajectory names to be changed
+        # after trials have been performed, i.e. no _ensure_consistent_dirnames_and_fnames
         self._fnames.traj_to_state_bw = val
 
     @property
@@ -523,7 +543,8 @@ class CommittorSimulation:
 
     @fileout_transition_trajectory.setter
     def fileout_transition_trajectory(self, val: str) -> None:
-        self._ensure_consistent_dirnames_and_fnames()
+        # Note: we allow output concatenated trajectory names to be changed
+        # after trials have been performed, i.e. no _ensure_consistent_dirnames_and_fnames
         self._fnames.transition = val
 
     @property
@@ -1098,6 +1119,7 @@ class CommittorSimulation:
 
     async def _run_trial(self, *, conf_num: int, trial_num: int,
                          overwrite: bool, add_backward_only: bool,
+                         raise_if_dir_exists: bool,
                          ) -> tuple[int | None,
                                     int | None | typing.Literal["NO TRIAL"]
                                     ]:
@@ -1119,6 +1141,8 @@ class CommittorSimulation:
         add_backward_only : bool
             Whether to only add the potentially missing backward shots for all
             trials performed yet.
+        raise_if_dir_exists : bool
+            Whether to raise an (early) error if the trial directory exists.
 
         Returns
         -------
@@ -1126,7 +1150,25 @@ class CommittorSimulation:
             Tuple of (fw_state_reached, bw_state_reached). state_reached will be
             None if the trial did not reach any state, literal "NO TRIAL" is used
             if no backward trial is performed (because two_way=False).
+
+        Raises
+        ------
+        FileExistsError
+            If the trial directory exists and ``raise_if_dir_exists`` is ``True``.
         """
+        if raise_if_dir_exists and not (overwrite or add_backward_only):
+            # raise/bail out early if the trial directory exists but we dont
+            # intend to overwrite/extend or add missing backwards trials only
+            trial_dir = self._get_trial_dir(conf_num=conf_num,
+                                            trial_num=trial_num)
+            if os.path.isdir(trial_dir):
+                raise FileExistsError(
+                    "Directory for trial propagation already exists! "
+                    "If you intend to reinitialize an existing simulation "
+                    "use the `reinitialize_from_workdir` method, otherwise "
+                    "choose a different working directory. "
+                    f"The directory is: {trial_dir}."
+                    )
         prepared_trial = await self._prepare_trial_propagation(
                                         conf_num=conf_num,
                                         trial_num=trial_num,
@@ -1175,6 +1217,7 @@ class CommittorSimulation:
 
     async def _run(self, *, trials_per_configuration: int, overwrite: bool,
                    n_max_concurrent: int | None, add_backward_only: bool,
+                   raise_if_dir_exists: bool,
                    ) -> None:
         """
         Run ``trial_per_configuration`` (additional) trials for each configuration.
@@ -1191,6 +1234,8 @@ class CommittorSimulation:
         add_backward_only : bool
             Whether to only add the potentially missing backward shots for all
             trials performed yet.
+        raise_if_dir_exists : bool
+            Whether to raise an (early) error if any of the trial directories exist.
         """
         # construct the tasks all at once,
         # ordering is such that we first finish all trials for configuration 0
@@ -1206,6 +1251,7 @@ class CommittorSimulation:
                                       trial_num=trial_num,
                                       overwrite=overwrite,
                                       add_backward_only=add_backward_only,
+                                      raise_if_dir_exists=raise_if_dir_exists,
                                       )
                       for trial_num in range(start_trial, end_trial)
                       ]
@@ -1240,8 +1286,7 @@ class CommittorSimulation:
             # increment
             self._trial_counter += trials_per_configuration
 
-    async def run(self, trials_per_configuration: int, overwrite: bool = False,
-                  n_max_concurrent: int | None = None,
+    async def run(self, trials_per_configuration: int, n_max_concurrent: int | None = None,
                   ) -> None:
         """
         Run ``trials_per_configuration`` additional committor trials for each configuration.
@@ -1250,47 +1295,52 @@ class CommittorSimulation:
         ----------
         trials_per_configuration : int
             Number of additional trial runs to perform per configuration.
-        overwrite : bool, optional
-            Whether to overwrite potentially existing output trajectories, e.g.
-            trajectory_to_state, by default True.
         n_max_concurrent : int | None, optional
             How many trials to run concurrently at maximum. None means unlimited,
             by default None.
         """
+        if self._needs_reinitialization:
+            logger.warning("The `CommittorSimulation` needs to be reinitialized "
+                           "because the states have changed. Ensuring consistency "
+                           "by calling `reinitialize_from_workdir` now."
+                           )
+            await self.reinitialize_from_workdir(n_max_concurrent=n_max_concurrent)
         if self._potentially_missing_backward_trials:
             logger.warning("There might be missing backward trials. "
-                           "Will ensure consistency by running "
+                           "Will ensure consistency now by running "
                            "``add_missing_backward_trials`` first.")
-            await self.add_missing_backward_trials(overwrite=overwrite,
-                                                   n_max_concurrent=n_max_concurrent,
-                                                   )
+            await self.add_missing_backward_trials(n_max_concurrent=n_max_concurrent)
         await self._run(trials_per_configuration=trials_per_configuration,
-                        overwrite=overwrite,
+                        overwrite=False,
                         n_max_concurrent=n_max_concurrent,
                         add_backward_only=False,
+                        raise_if_dir_exists=True,
                         )
 
-    async def add_missing_backward_trials(self, overwrite: bool = False,
-                                          n_max_concurrent: int | None = None,
+    async def add_missing_backward_trials(self, n_max_concurrent: int | None = None,
                                           ) -> None:
         """
         Add potentially missing backward trials, if :attr:`two_way` has been modified.
 
         Parameters
         ----------
-        overwrite : bool, optional
-            Whether to overwrite potentially existing output trajectories, e.g.
-            trajectory_to_state, by default True.
         n_max_concurrent : int | None, optional
             How many trials to run concurrently at maximum. None means unlimited,
             by default None.
         """
+        if self._needs_reinitialization:
+            logger.warning("The `CommittorSimulation` needs to be reinitialized "
+                           "because the states have changed. Ensuring consistency "
+                           "by calling `reinitialize_from_workdir` now."
+                           )
+            await self.reinitialize_from_workdir(n_max_concurrent=n_max_concurrent)
         if self._potentially_missing_backward_trials:
             # only do something if there might be something to do
             await self._run(trials_per_configuration=self._trial_counter,
-                            overwrite=overwrite,
+                            overwrite=False,
                             n_max_concurrent=n_max_concurrent,
                             add_backward_only=True,
+                            raise_if_dir_exists=True,
                             )
             self._potentially_missing_backward_trials = False
 
@@ -1318,6 +1368,8 @@ class CommittorSimulation:
         self._trial_counter = 0
         # we will/would add them now if they are missing, so set to False
         self._potentially_missing_backward_trials = False
+        # and naturally we wont need another reinitialization
+        self._needs_reinitialization = False
         self._states_reached = [[] for _ in range(len(self.configurations))]
         self._states_reached_bw = [[] for _ in range(len(self.configurations))]
         # find out how many trials we did per configuration, the first
@@ -1350,7 +1402,9 @@ class CommittorSimulation:
                         )
                     ]
         n_trials = len(filtered)
-        # we can just use the run-method as it will start with trial 0
+        # we can just use the _run-method as it will start with trial 0
         # and the _prepare_trial_propagation method sorts out if we continue, etc
-        await self.run(trials_per_configuration=n_trials, overwrite=overwrite,
-                       n_max_concurrent=n_max_concurrent)
+        await self._run(trials_per_configuration=n_trials, overwrite=overwrite,
+                        n_max_concurrent=n_max_concurrent, add_backward_only=False,
+                        raise_if_dir_exists=False,
+                        )
