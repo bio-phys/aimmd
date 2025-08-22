@@ -95,6 +95,11 @@ autodoc_default_options = {
                     "members": False,
                            }
 
+autodoc_mock_imports = [
+                # mock import _symmetry to enable doc build
+                "aimmd.coords._symmetry",
+                ]
+
 # -- Options for intersphinx extension ----------------------------------------
 intersphinx_mapping = {
             "asyncmd": ("https://asyncmd.readthedocs.io/en/latest/", None),
