@@ -29,13 +29,13 @@ LOGCONFIG = {'version': 1,
                                       'level': 'WARN',
                                       'formatter': 'standardFormatter'
                                       },
-                          'initf': {
-                                    'class': 'logging.FileHandler',
-                                    'level': 'INFO',
-                                    'mode': 'w',
-                                    'filename': 'initialization.log',
-                                    'formatter': 'standardFormatter'
-                                    },
+                          #'initf': {
+                          #          'class': 'logging.FileHandler',
+                          #          'level': 'INFO',
+                          #          'mode': 'w',
+                          #          'filename': 'initialization.log',
+                          #          'formatter': 'standardFormatter'
+                          #          },
                           'stdf': {
                                    'class': 'logging.FileHandler',
                                    'level': 'INFO',
@@ -56,14 +56,14 @@ LOGCONFIG = {'version': 1,
                                    # inherited from the root-logger!
                                    #'handlers': ['stdf', 'warnout'],
                                    },
-                         'openpathsampling': {
-                                              'level': 'INFO',
-                                              },
-                         'openpathsampling.initialization': {
-                                'level': 'INFO',
-                                'handlers': ['initf'],
-                                'qualname': 'openpathsampling.initialization',
-                                'propagate': 0
-                                                             }
+                         #'openpathsampling': {
+                         #                     'level': 'INFO',
+                         #                     },
+                         #'openpathsampling.initialization': {
+                         #       'level': 'INFO',
+                         #       'handlers': ['initf'],
+                         #       'qualname': 'openpathsampling.initialization',
+                         #       'propagate': 0
+                         #                                    }
                          }
              }

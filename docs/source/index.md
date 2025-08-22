@@ -26,6 +26,7 @@ You might also want to have a look at the [example jupyter notebooks](example-no
 :maxdepth: 2
 :caption: User guide
 
+aimmd.distributed <guide/distributed/overview>
 ```
 
 ## Community guide

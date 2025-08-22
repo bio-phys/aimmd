@@ -3,8 +3,7 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
-# -- Path setup --------------------------------------------------------------
-
+# -- Path setup ---------------------------------------------------------------
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
@@ -16,7 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__),
                                    )
                 )
 
-# -- Project information -----------------------------------------------------
+# -- Project information ------------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 import importlib.metadata
@@ -46,9 +45,7 @@ templates_path = ['_templates']
 # This pattern also affects html_static_path and html_extra_path.
 exclude_patterns = []
 
-
-# -- Options for HTML output -------------------------------------------------
-
+# -- Options for HTML output --------------------------------------------------
 # The theme to use for HTML and HTML Help pages. See the documentation for
 # a list of builtin themes.
 #
@@ -88,26 +85,30 @@ html_theme_options = {
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
 
-
-# -- Options for autosummary extension----------------------------------------
+# -- Options for autosummary extension-----------------------------------------
 autosummary_imported_members = False  # default = False
 autosummary_ignore_module_all = True  # default = True
 
-# -- Options for autodoc extension -------------------------------------------
+# -- Options for autodoc extension --------------------------------------------
 autodoc_default_options = {
                     # document members (default = False)
                     "members": False,
                            }
 
+autodoc_mock_imports = [
+                # mock import _symmetry to enable doc build
+                "aimmd.coords._symmetry",
+                ]
+
 # -- Options for intersphinx extension ----------------------------------------
 intersphinx_mapping = {
+            "asyncmd": ("https://asyncmd.readthedocs.io/en/latest/", None),
             #"h5py": ("https://docs.h5py.org/en/stable", None),
             }
 
-# -- Options for MyST (Parser)
-
+# -- Options for MyST (Parser) ------------------------------------------------
 myst_enable_extensions = ["dollarmath", "amsmath",  # enable math rendering
                           ]
 
-# -- Options for MyST-NB
+# -- Options for MyST-NB ------------------------------------------------------
 nb_execution_mode = "off"  # render the notebooks as they are in the repository
