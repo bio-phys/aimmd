@@ -78,6 +78,8 @@ class BytesStreamtoH5py:
 
 
 # buffered version, seems to be a bit faster(?)
+# TODO: inherit from BytesIO/FileIO or the corresponding ABC
+#class BytesStreamtoH5pyBuffered(io.BytesIO):
 class BytesStreamtoH5pyBuffered:
     """
     'Translate' from python bytes objects to arrays of uint8. Buffered Version.
@@ -168,6 +170,8 @@ class BytesStreamtoH5pyBuffered:
         return add_len
 
 
+# TODO: inherit from BytesIO/FileIO or the corresponding ABC
+#class H5pytoBytesStream(io.BytesIO):
 class H5pytoBytesStream:
     """
     'Translate' from arrays of uint8s to python bytes objects.
@@ -866,13 +870,13 @@ class Storage:
         self._dirname = os.path.dirname(os.path.abspath(os.path.join(os.getcwd(), fname)))
         if ("w" in mode) or ("a" in mode and not fexists):
             # first creation of file: write aimmd compatibility version string
-            self._store.attrs["storage_version"] = np.string_(
+            self._store.attrs["storage_version"] = np.bytes_(
                                                     self._compatibility_version
                                                               )
-            self._store.attrs["aimmd_version"] = np.string_(__version__)
+            self._store.attrs["aimmd_version"] = np.bytes_(__version__)
             # save the current (i.e. where the file is when we opened it) dirname to attrs
             # we need this to be able to save tensorflow models properly
-            self._store.attrs["dirname"] = np.string_(self._dirname)
+            self._store.attrs["dirname"] = np.bytes_(self._dirname)
         else:
             store_version = parse_version(
                             self._store.attrs["storage_version"].decode("ASCII")
@@ -894,7 +898,7 @@ class Storage:
                 # i.e. try to not break backwards compatibility
                 if mode != "r":
                     # storage open with write intent, so just add the attr for dirname
-                    self._store.attrs["dirname"] = np.string_(self._dirname)
+                    self._store.attrs["dirname"] = np.bytes_(self._dirname)
                     logger.debug("Converted 'old' storage to 'new' format by adding "
                                  + "the 'dirname' attr.")
                 else:
@@ -915,7 +919,7 @@ class Storage:
                                      + "if you did not copy the KerasRCmodel directory yourself.")
                     else:
                         # we can just change the path
-                        self._store.attrs["dirname"] = np.string_(self._dirname)
+                        self._store.attrs["dirname"] = np.bytes_(self._dirname)
                         # but we warn because the folder with the models must be copied
                         # TODO/FIXME: automatically copy the folder from old to new location?
                         logger.warn("The directory containing the storage changed, we updated it in the storage."
