@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `aimmd.distributed.pathmovers`: shooting pathmovers now use the `aimmd.distribute.MDEngineSpec` dataclass as input argument to specify all the MD engine/propagation options together instead of as previously specifying each argument separately
 - Complete rewrite of `aimmd.distributed.CommittorSimulation`, update and improve corresponding example notebook.
 
 ## [0.9.3] - 2025-08-03
