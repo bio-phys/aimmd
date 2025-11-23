@@ -1494,7 +1494,7 @@ class PathChainSampler:
             # and do the actual step
             try:
                 outstep = await mover.move(instep=instep, stepnum=self._stepnum,
-                                           wdir=step_dir, model=model,
+                                           workdir=step_dir, model=model,
                                            continuation=continuation,
                                            )
             except MaxStepsReachedError as e:
