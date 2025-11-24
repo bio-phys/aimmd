@@ -17,7 +17,6 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 # logic code to steer a distributed (T)PS simulations
 import os
 import abc
-import time
 import pickle
 import shutil
 import typing
@@ -26,6 +25,7 @@ import logging
 import datetime
 import functools
 import numpy as np
+from tqdm.auto import tqdm
 
 from asyncmd.mdengine import EngineError, EngineCrashedError
 from asyncmd.trajectory.propagate import MaxStepsReachedError
@@ -35,6 +35,9 @@ from ._config import _SEMAPHORES
 from .. import TrainSet
 from .pathmovers import (MCstep, PathMover, ModelDependentPathMover)
 from .utils import accepted_trajs_from_aimmd_storage
+
+if typing.TYPE_CHECKING:  # pragma: no cover
+    import collections.abc
 
 
 logger = logging.getLogger(__name__)
@@ -819,53 +822,55 @@ class Brain:
                                  for steps in steps_by_samplers]
         steptimes_sorted = sorted(sum(steptimes_by_samplers, []))
         # add the finished steps in the right order
-        while len(steptimes_sorted) > 0:
-            st = steptimes_sorted.pop(0)
-            # find the index of the sampler it comes from
+        for st in tqdm(steptimes_sorted, desc="Reading finished steps"):
+            # find the index of the sampler this step(time) comes from
             for sidx, steptimes in enumerate(steptimes_by_samplers):
-                if st in steptimes:
-                    step = steps_by_samplers[sidx][st]
-                    # remove this time from this sampler (so we would get the
-                    #  next sampler with exactly the same time if that ever
-                    #  happens)
-                    steptimes_by_samplers[sidx].remove(st)
-                    # Note that our initial seeded steps have mover=None,
-                    # they should not trigger stepnum increase or task
-                    # execution and are also not included in the list to
-                    # mapp steps to samplers
-                    if step.mover is not None:
-                        # NOTE: same order as when the step is intitially
-                        #       produced, stepnum is increased at the start of
-                        #       make_step, tasks are run in/directly after the
-                        #       step finishes, then it is stored and finally
-                        #       processed/added to self
-                        # increase the samplers step counter
-                        self.samplers[sidx]._stepnum += 1
-                        # run tasks (if we should)
-                        if run_tasks:
-                            # repredict committors for SP using the current
-                            # model to ensure its training feedback is its own
-                            if step.predicted_committors_sp is not None:
-                                step.predicted_committors_sp = (
-                                    await self.model(step.shooting_snap))[0]
-                            # run the tasks
-                            await self._run_tasks(mcstep=step, sampler_idx=sidx)
-                        # store the finished step for the sampler it came from
-                        self.samplers[sidx]._store_finished_step(
+                if not (st in steptimes):
+                    # not this sampler
+                    continue
+                # it is this sampler(index), run tasks and store step
+                step = steps_by_samplers[sidx][st]
+                # remove this time from this sampler (so we would get the
+                #  next sampler with exactly the same time if that ever
+                #  happens)
+                steptimes_by_samplers[sidx].remove(st)
+                # Note that our initial seeded steps have mover=None,
+                # they should not trigger stepnum increase or task
+                # execution and are also not included in the list to
+                # mapp steps to samplers
+                if step.mover is not None:
+                    # NOTE: same order as when the step is intitially
+                    #       produced, stepnum is increased at the start of
+                    #       make_step, tasks are run in/directly after the
+                    #       step finishes, then it is stored and finally
+                    #       processed/added to self
+                    # increase the samplers step counter
+                    self.samplers[sidx]._stepnum += 1
+                    # run tasks (if we should)
+                    if run_tasks:
+                        # repredict committors for SP using the current
+                        # model to ensure its training feedback is its own
+                        if step.predicted_committors_sp is not None:
+                            step.predicted_committors_sp = (
+                                await self.model(step.shooting_snap))[0]
+                        # run the tasks
+                        await self._run_tasks(mcstep=step, sampler_idx=sidx)
+                    # store the finished step for the sampler it came from
+                    self.samplers[sidx]._store_finished_step(
                                             step=step,
                                             save_step_pckl=resave_mcstep_pckl,
                                             make_symlink=False,
-                                                                 )
-                        # add the step to self
-                        self._sampler_idxs_for_steps += [sidx]
-                    else:
-                        # store the zeroth step, do not add to sampler._accepts
-                        self.samplers[sidx]._store_finished_step(
+                                                             )
+                    # add the step to self
+                    self._sampler_idxs_for_steps += [sidx]
+                else:
+                    # store the zeroth step, do not add to sampler._accepts
+                    self.samplers[sidx]._store_finished_step(
                                             step=step,
                                             save_step_pckl=resave_mcstep_pckl,
                                             make_symlink=False,
                                             is_step_zero=True,
-                                                                 )
+                                            )
 
         info_str = f"After adding all finished steps we have a total of {self.total_steps} steps."
         if finish_steps:
@@ -891,6 +896,7 @@ class Brain:
                          for s_idx, s in enumerate(self.samplers)]
         # run them all and get the results in the order they are done
         pending = sampler_tasks
+        steps_tqdm = tqdm(total=len(pending), desc="Finishing steps")
         while len(pending) > 0:
             done, pending = await asyncio.wait(pending,
                                                return_when=asyncio.FIRST_COMPLETED)
@@ -901,9 +907,10 @@ class Brain:
                     # no unfinished steps in this sampler, go to next result
                     continue
                 self._sampler_idxs_for_steps += [sampler_idx]
+                steps_tqdm.update(1)
+        steps_tqdm.close()
 
-    async def run_for_n_accepts(self, n_accepts: int,
-                                print_progress: typing.Optional[int] = None):
+    async def run_for_n_accepts(self, n_accepts: int) -> None:
         """
         Run simulation until `n_accepts` accepts have been produced.
 
@@ -915,13 +922,7 @@ class Brain:
         ----------
         n_accepts : int
             Total number of accepts to produce.
-        print_progress : typing.Optional[int], optional
-            Print a short progress summary every `print_progress` steps,
-            print nothing if `print_progress=None`, by default None
         """
-        if print_progress is not None:
-            start_time = time.time()
-            print(f"Starting simulation at {time.ctime(start_time)}.")
         # run for n_accepts in total over all samplers
         acc = 0
         sampler_tasks = [asyncio.create_task(
@@ -932,7 +933,8 @@ class Brain:
                                         )
                                              )
                          for s_idx, s in enumerate(self.samplers)]
-        n_done = 0
+        accepts_tqdm = tqdm(total=n_accepts, desc="Accepts")
+        steps_tqdm = tqdm(total=float("inf"), desc="Steps")
         while acc < n_accepts:
             done, pending = await asyncio.wait(sampler_tasks,
                                                return_when=asyncio.FIRST_COMPLETED)
@@ -949,16 +951,8 @@ class Brain:
                 self._sampler_idxs_for_steps += [sampler_idx]
                 if mcstep.accepted:
                     acc += 1
-                n_done += 1
-                if print_progress is not None:
-                    if n_done % print_progress == 0:
-                        self._print_progress(
-                                start_time=start_time,
-                                steps=n_done,
-                                accepts=acc,
-                                target=n_accepts,
-                                target_is_steps=False,
-                                             )
+                    accepts_tqdm.update(1)
+                steps_tqdm.update(1)
                 # remove old task from list and start next step in the sampler
                 # that just finished
                 _ = sampler_tasks.pop(sampler_idx)
@@ -983,20 +977,12 @@ class Brain:
                 mcstep = await result
                 self._sampler_idxs_for_steps += [sampler_idx]
                 if mcstep.accepted:
-                    acc += 1
-                n_done += 1
-                if print_progress is not None:
-                    if n_done % print_progress == 0:
-                        self._print_progress(
-                                start_time=start_time,
-                                steps=n_done,
-                                accepts=acc,
-                                target=n_accepts,
-                                target_is_steps=False,
-                                             )
+                    accepts_tqdm.update(1)
+                steps_tqdm.update(1)
+        steps_tqdm.close()
+        accepts_tqdm.close()
 
-    async def run_for_n_steps(self, n_steps: int,
-                              print_progress: typing.Optional[int] = None):
+    async def run_for_n_steps(self, n_steps: int) -> None:
         """
         Run path sampling simulation for `n_steps` steps.
 
@@ -1006,13 +992,7 @@ class Brain:
         ----------
         n_steps : int
             Total number of steps (Monte Carlo trials) to run.
-        print_progress : typing.Optional[int], optional
-            Print a short progress summary every `print_progress` steps,
-            print nothing if `print_progress=None`, by default None
         """
-        if print_progress is not None:
-            start_time = time.time()
-            print(f"Starting simulation at {time.ctime(start_time)}.")
         if n_steps < len(self.samplers):
             # Do not start a step in every sampler, but only as many as
             # requested. Check which samplers contain unfinished steps and do
@@ -1071,7 +1051,9 @@ class Brain:
         # we only go into the loop below if the user requested more steps than
         # we have samplers, otherwise we will skip to the last loop directly
         # (because then n_started = n_steps)
-        n_done = 0
+        steps_tqdm = tqdm(total=n_steps, desc="Steps")
+        # TODO: do we want to use n_steps as total here (as an upper bound?)
+        accepts_tqdm = tqdm(total=float("inf"), desc="Accepts")
         while n_started < n_steps:
             done, pending = await asyncio.wait(sampler_tasks,
                                                return_when=asyncio.FIRST_COMPLETED)
@@ -1084,16 +1066,9 @@ class Brain:
                     # bail out because this mcstep was a dummy sampler, i.e. None
                     continue
                 self._sampler_idxs_for_steps += [sampler_idx]
-                n_done += 1
-                if print_progress is not None:
-                    if n_done % print_progress == 0:
-                        self._print_progress(
-                                start_time=start_time,
-                                steps=n_done,
-                                accepts=sum(self.accepts[-n_done:]),
-                                target=n_steps,
-                                target_is_steps=True,
-                                             )
+                steps_tqdm.update(1)
+                if mcstep.accepted:
+                    accepts_tqdm.update(1)
                 # remove old task from list and start next step in the sampler
                 # that just finished
                 _ = sampler_tasks.pop(sampler_idx)
@@ -1121,60 +1096,12 @@ class Brain:
                     # bail out because this mcstep is a dummy sampler, i.e. None
                     continue
                 self._sampler_idxs_for_steps += [sampler_idx]
-                n_done += 1
-                if print_progress is not None:
-                    if n_done % print_progress == 0:
-                        self._print_progress(
-                                start_time=start_time,
-                                steps=n_done,
-                                accepts=sum(self.accepts[-n_done:]),
-                                target=n_steps,
-                                target_is_steps=True,
-                                             )
-
-    def _print_progress(self,
-                        start_time: float,
-                        steps: int,
-                        accepts: int,
-                        target: int,
-                        target_is_steps: bool,
-                        ):
-        """
-        Print the progress string during simulation.
-
-        (Try to) estimate the expected finishing time of the simulation from
-        `start_time` and the ratio of steps/accepts to target steps/accepts.
-
-        Parameters
-        ----------
-        start_time : float
-            Start time of the simulation
-        steps : int
-            Number of steps done so far.
-        accepts : int
-            Number of accepts produced so far.
-        target : int
-            Target value for steps/accepts (see also `target_is_steps`).
-        target_is_steps : bool
-            Whether the target values is a given number of steps (True) or a
-            given number of accepts (False).
-        """
-        current_time = time.time()
-        pstr = f"{time.ctime(current_time)}: {steps}"
-        if target_is_steps:
-            pstr += f" (of {target})"
-        pstr += " steps done."
-        pstr += f" Produced {accepts}"
-        if not target_is_steps:
-            pstr += f" (of {target})"
-        pstr += " new accepts so far."
-        done = steps if target_is_steps else accepts
-        if done > 0:
-            # can only estimate time if we have at least one step/accept
-            elapsed_time = current_time - start_time
-            eta = start_time + elapsed_time * (target / done)
-            pstr += f" Estimated end time is {time.ctime(eta)}."
-        print(pstr)
+                steps_tqdm.update(1)
+                if mcstep.accepted:
+                    accepts_tqdm.update(1)
+        # close the tqdm bars
+        accepts_tqdm.close()
+        steps_tqdm.close()
 
     async def _run_tasks(self, mcstep, sampler_idx):
         for t in self.tasks:
@@ -1207,7 +1134,7 @@ class PathChainSampler:
 
     def __init__(self, workdir: str, mcstep_collection, modelstore,
                  sampler_idx: int, movers: list[PathMover],
-                 mover_weights: typing.Optional["list[float]"] = None):
+                 mover_weights: list[float] | None = None):
         self.workdir = os.path.relpath(workdir)
         self.mcstep_collection = mcstep_collection
         self.modelstore = modelstore
@@ -1233,18 +1160,18 @@ class PathChainSampler:
         else:
             self.mover_weights = mover_weights
         self._rng = np.random.default_rng()
-        self._accepts = []  # list of zeros and ones, one entry per trial
+        self._accepts: list[int] = []  # list of zeros and ones, one entry per trial
         self._current_step = None
         self._stepnum = 0
 
     @property
-    def current_step(self):
+    def current_step(self) -> MCstep | None:
         """The current active MCStep of the `PathChainSampler`."""
         return self._current_step
 
     # TODO/FIXME: set self._step_num, self._accepts etc?!
     @current_step.setter
-    def current_step(self, step):
+    def current_step(self, step: MCstep):
         self._current_step = step
 
     @property
@@ -1314,7 +1241,7 @@ class PathChainSampler:
     def _store_finished_step(self, step: MCstep,
                              save_step_pckl: bool = False,
                              make_symlink: bool = False,
-                             instep: typing.Optional[MCstep] = None,
+                             instep: MCstep | None = None,
                              is_step_zero: bool = False,
                              ):
         self.mcstep_collection.append(step)
@@ -1363,7 +1290,7 @@ class PathChainSampler:
 
     async def finish_step(self,
                           model,
-                          brain_task_callback: typing.Optional[typing.Coroutine] = None,
+                          brain_task_callback: "collections.abc.Coroutine | None" = None,
                           ):
         """
         Finish the current MCStep (if any).
@@ -1377,7 +1304,7 @@ class PathChainSampler:
         model : aimmd.RCModel
             The reaction coordinate (committor) model used to bias the shooting
             point selection.
-        brain_task_callback : typing.Optional[typing.Coroutine], optional
+        brain_task_callback : collections.abc.Coroutine | None, optional
             The callback to run the `BrainTask`s, will be run after finishing
             (but before saving) the MCstep. It must accept the finished MCStep
             as the only argument.
@@ -1416,8 +1343,8 @@ class PathChainSampler:
 
     async def make_step(self,
                         model,
-                        brain_task_callback: typing.Optional[typing.Coroutine] = None,
-                        ):
+                        brain_task_callback: "collections.abc.Coroutine | None" = None,
+                        ) -> MCstep:
         """
         Make one Monte Carlo step from current step.
 
@@ -1426,7 +1353,7 @@ class PathChainSampler:
         model : RCModelAsync
             The reaction coordinate/committor model passed to the mover, e.g.
             used to select an optiomal shooting point for a shooting move.
-        brain_task_callback : typing.Optional[typing.Coroutine], optional
+        brain_task_callback : collections.abc.Coroutine | None, optional
             The callback to run the `BrainTask`s, will be run after finishing
             (but before saving) the MCstep. It must accept the finished MCStep
             as the only argument.
@@ -1451,8 +1378,7 @@ class PathChainSampler:
             # make_step will always return a valid mcstep as expected
             return await self.finish_step(model, brain_task_callback)
         # no restart file found, so do a step from scratch
-        instep = self.current_step
-        if instep is None:
+        if (instep := self.current_step) is None:
             logger.warning("Sampler %d: Instep is None."
                            " This will only work with sampling schemes that"
                            " generate their own shooting points.",
@@ -1465,9 +1391,9 @@ class PathChainSampler:
                                      continuation=False)
 
     async def _make_step(self, model, mover: PathMover,
-                         instep: typing.Optional[MCstep],
-                         brain_task_callback: typing.Optional[typing.Coroutine],
-                         continuation: bool):
+                         instep: MCstep,
+                         brain_task_callback: "collections.abc.Coroutine | None",
+                         continuation: bool) -> MCstep:
         self._stepnum += 1
         step_dir = os.path.join(self.workdir,
                                 f"{self.mcstep_foldername_prefix}{self._stepnum}"
