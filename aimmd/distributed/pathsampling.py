@@ -1052,8 +1052,7 @@ class Brain:
         # we have samplers, otherwise we will skip to the last loop directly
         # (because then n_started = n_steps)
         steps_tqdm = tqdm(total=n_steps, desc="Steps")
-        # TODO: do we want to use n_steps as total here (as an upper bound?)
-        accepts_tqdm = tqdm(total=float("inf"), desc="Accepts")
+        accepts_tqdm = tqdm(total=float("inf"), desc="Accepts (with weight > 0)")
         while n_started < n_steps:
             done, pending = await asyncio.wait(sampler_tasks,
                                                return_when=asyncio.FIRST_COMPLETED)
@@ -1067,7 +1066,7 @@ class Brain:
                     continue
                 self._sampler_idxs_for_steps += [sampler_idx]
                 steps_tqdm.update(1)
-                if mcstep.accepted:
+                if mcstep.accepted and mcstep.weight > 0:
                     accepts_tqdm.update(1)
                 # remove old task from list and start next step in the sampler
                 # that just finished
@@ -1097,7 +1096,7 @@ class Brain:
                     continue
                 self._sampler_idxs_for_steps += [sampler_idx]
                 steps_tqdm.update(1)
-                if mcstep.accepted:
+                if mcstep.accepted and mcstep.weight > 0:
                     accepts_tqdm.update(1)
         # close the tqdm bars
         accepts_tqdm.close()
