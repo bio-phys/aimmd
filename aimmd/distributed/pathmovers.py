@@ -192,9 +192,9 @@ class PathMover(abc.ABC):
         """
         Perform a move in the MC chain, i.e. generate a new MCstep.
 
-        NOTE: Subclasses should overwrite the :meth:`generate_move` method, to
-              enable reuse of the same save/delete logic for every (model-dependant)
-              pathmover.
+        Note: Subclasses should overwrite the :meth:`generate_move` method, to
+        enable reuse of the same save/delete logic for every (model-dependant)
+        pathmover.
 
         Parameters
         ----------

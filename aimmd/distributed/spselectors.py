@@ -423,8 +423,7 @@ class RCModelSPSelector(SPSelector):  # pylint: disable=too-many-instance-attrib
         """
         z_sels = await model.z_sel(trajectory)
         if (any_nan := np.any(np.isnan(z_sels))):
-            logger.error('The model predicts NaNs. '
-                         'We used np.nan_to_num to proceed')
+            logger.error("The model predicts NaNs. We used np.nan_to_num to proceed")
             z_sels = np.nan_to_num(z_sels)
         ret = self._f_sel(z_sels)
         if self.density_adaptation_params is not None:
@@ -871,6 +870,8 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
             density_adaption_params.trajectories_to_flatten_weights = equilibrium_weights
             # ensure we dont reset so we dont loose the trajectories
             density_adaption_params.reset_before_pick = False
+            # and ensure that we do not add the trajectories passed to pick method
+            density_adaption_params.add_trajectories_from_pick = False
         super().__init__(scale=scale,
                          distribution=distribution,
                          density_adaptation_params=density_adaption_params,
