@@ -1,20 +1,22 @@
+# This file is part of aimmd
+#
+# aimmd is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# aimmd is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with aimmd. If not, see <https://www.gnu.org/licenses/>.
 """
-This file is part of AIMMD.
-
-AIMMD is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-AIMMD is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
+This file contains top-level logic code to steer distributed (T)PS simulations.
 """
-# logic code to steer a distributed (T)PS simulations
+# TODO: expand docstring (when we know what stays here,
+#       e.g. if we move the Chains or Tasks to separate files)
 import os
 import abc
 import pickle
@@ -33,8 +35,8 @@ from asyncmd.trajectory.functionwrapper import TrajectoryFunctionWrapper
 
 from ._config import _SEMAPHORES
 from .. import TrainSet
-from .pathmovers import (MCstep, PathMover, ModelDependentPathMover)
-from .utils import accepted_trajs_from_aimmd_storage
+from .dataclasses import MCstep
+from .pathmovers import PathMover
 
 if typing.TYPE_CHECKING:  # pragma: no cover
     import collections.abc
@@ -154,160 +156,6 @@ class TrainingTask(BrainTask):
                 # call the train hook every time, the model 'decides' on its
                 # own if it trains
                 self.model.train_hook(self.trainset)
-
-
-class DensityCollectionTask(BrainTask):
-    """
-    Perform density collection and update the estimate as requested.
-
-    Density collection keeps track of the density of potential shooting points
-    projected into the space of the committor. This enables flattening the
-    shooting point distribution and the biasing towards the transition state is
-    not influenced by non-uniform distribution of points in committor space.
-
-    This class supports different `modes` which refer to the distribution that
-    should be flattened (and which should match the the shooting point
-    distribution):
-
-        - "p_x_TP" flattens the density of points along transitions, p(x|TP),
-          useful if your shooting points are selected from the last accepted
-          transition
-
-        - "custom" flattens the density of points from a given list of
-          trajectories, optionally with associated weights provided as a list
-          of np.ndarrays. They are provided at initialization as `trajectories`
-          and `trajectory_weights` respectively.
-    """
-
-    def __init__(self, model, first_collection: int = 100,
-                 recreate_interval: int = 500, mode: str = "p_x_TP",
-                 trajectories=None, trajectory_weights=None,
-                 ):
-        """
-        Initialize a :class:`DensityCollectionTask`.
-
-        Parameters
-        ----------
-        model : aimmd.rcmodel.RCModel
-            The reaction coordinate model for which we should do density
-            collection.
-        first_collection : int, optional
-            After how many simulation steps we should do the first collection,
-            by default 100
-        recreate_interval : int, optional
-            After how many simulation steps should we use the current model to
-            update the estimate of the density (because the model predictions
-            have changed sufficiently enough), by default 500
-        mode : str, optional
-            Which distribution of points should we try to flatten, can be one
-            of "p_x_TP" or "custom", by default "p_x_TP"
-        trajectories : list[Trajectory], optional
-            Only relevant for mode "custom", the configurations of the ensemble
-            of points we want to flatten, by default None
-        trajectory_weights : list[np.ndarray], optional
-            Only relevant for mode "custom", the optional weights for the
-            configurations provided as `trajectories`, by default None
-        """
-        # we use interval=1 because we check for first_collection and recreate
-        super().__init__(interval=1)
-        self.model = model
-        self.first_collection = first_collection
-        self.recreate_interval = recreate_interval
-        self._last_collection = None  # starting step values for collections
-        self._has_never_run = True
-        self.mode = mode
-        # TODO: check that trajectories and trajectory_weights are not None if
-        #       we are in "custom" mode?!
-        self._trajectories = trajectories
-        self._trajectory_weights = trajectory_weights
-
-    @property
-    def mode(self):
-        return self._mode
-
-    @mode.setter
-    def mode(self, val: str):
-        allowed = ["p_x_TP", "custom"]
-        if val not in allowed:
-            raise ValueError(f"`mode` must be one of {allowed} (was {val}).")
-        self._mode = val
-
-    async def _run_p_x_TP(self, brain, mcstep: MCstep, sampler_idx: int):
-        if brain.storage is None:
-            logger.error("Density collection/adaptation is currently only "
-                         "possible for simulations with attached storage."
-                         )
-            return
-        if self._has_never_run:
-            # get the start values from a possible previous simulation
-            self._last_collection = [
-                    len(mcstep_collection)
-                    for mcstep_collection in brain.storage.mcstep_collections
-                                     ]
-            # minus the step we just finished before we ran
-            collection_idx = brain.sampler_to_mcstepcollection[sampler_idx]
-            self._last_collection[collection_idx] -= 1
-            self._has_never_run = False
-        dc = self.model.density_collector
-        if brain.total_steps - self.first_collection >= 0:
-            if ((brain.total_steps % self.interval == 0)
-                    or (brain.total_steps - self.first_collection == 0)):
-                trajs, counts = accepted_trajs_from_aimmd_storage(
-                                                storage=brain.storage,
-                                                per_mcstep_collection=False,
-                                                starts=self._last_collection,
-                                                                  )
-                async with _SEMAPHORES["BRAIN_MODEL"]:
-                    await dc.add_density_for_trajectories(model=self.model,
-                                                          trajectories=trajs,
-                                                          counts=counts,
-                                                          )
-                # remember the start values for next time
-                self._last_collection = [
-                    len(mcstep_collection)
-                    for mcstep_collection in brain.storage.mcstep_collections
-                                         ]
-            # Note that this below is an if because reevaluation should be
-            # independent of adding new TPs in the same MCStep
-            if brain.total_steps % self.recreate_interval == 0:
-                # reevaluation time
-                async with _SEMAPHORES["BRAIN_MODEL"]:
-                    await dc.reevaluate_density(model=self.model)
-
-    async def _run_custom(self, brain, mcstep: MCstep, sampler_idx: int):
-        dc = self.model.density_collector
-        if brain.total_steps - self.first_collection >= 0:
-            if brain.total_steps - self.first_collection == 0:
-                async with _SEMAPHORES["BRAIN_MODEL"]:
-                    await dc.add_density_for_trajectories(
-                                            model=self.model,
-                                            trajectories=self._trajectories,
-                                            counts=self._trajectory_weights,
-                                                          )
-                self._has_never_run = False
-        if brain.total_steps % self.recreate_interval == 0:
-            if self._has_never_run:
-                # if we have not added the trajectories yet we need to do that
-                async with _SEMAPHORES["BRAIN_MODEL"]:
-                    await dc.add_density_for_trajectories(
-                                            model=self.model,
-                                            trajectories=self._trajectories,
-                                            counts=self._trajectory_weights,
-                                                          )
-                self._has_never_run = False
-            else:
-                # otherwise we can just reevaluate with the current model
-                async with _SEMAPHORES["BRAIN_MODEL"]:
-                    await dc.reevaluate_density(model=self.model)
-
-    async def run(self, brain, mcstep: MCstep, sampler_idx):
-        """This method is called by the `Brain` every `interval` steps."""
-        if self.mode == "p_x_TP":
-            await self._run_p_x_TP(brain=brain, mcstep=mcstep,
-                                   sampler_idx=sampler_idx)
-        elif self.mode == "custom":
-            await self._run_custom(brain=brain, mcstep=mcstep,
-                                   sampler_idx=sampler_idx)
 
 
 class StorageCheckpointTask(BrainTask):
@@ -1149,11 +997,10 @@ class PathChainSampler:
         self.always_accept_next_TP = False
         for mover in self.movers:
             mover.sampler_idx = self.sampler_idx
-            # set the store for all ModelDependentpathMovers
+            # set the store for all PathMovers
             # this way we can initialize them without a store
             # also set the sampler_idx such that they can save the rcmodels
-            if isinstance(mover, ModelDependentPathMover):
-                mover.modelstore = self.modelstore
+            mover.modelstore = self.modelstore
         if mover_weights is None:
             self.mover_weights = [1/len(movers) for _ in range(len(movers))]
         else:
@@ -1328,9 +1175,8 @@ class PathChainSampler:
             mover = restart_info["mover"]
             # (re)set the sampler idx
             mover.sampler_idx = self.sampler_idx
-            if isinstance(mover, ModelDependentPathMover):
-                # (re)set the modelstore
-                mover.modelstore = self.modelstore
+            # (re)set the modelstore
+            mover.modelstore = self.modelstore
             # finish the step and return it
             return await self._make_step(model=model, instep=instep,
                                          mover=mover,

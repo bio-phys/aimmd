@@ -22,11 +22,12 @@ import collections.abc
 import h5py
 import asyncmd
 import numpy as np
-from pkg_resources import parse_version
+#from pkg_resources import parse_version  # pkg_resources is deprecated
+from packaging.version import parse as parse_version
 
 from . import _H5PY_PATH_DICT
 from .trainset import TrainSet
-from ..distributed.pathmovers import ModelDependentPathMover
+from ..distributed.pathmovers import PathMover
 from .. import __version__
 
 
@@ -445,7 +446,7 @@ class MCstepMemory(MutableObjectShelf):
 
     def save(self, mcstep):
         mover = mcstep.mover
-        if isinstance(mover, ModelDependentPathMover):
+        if isinstance(mover, PathMover):
             mover_modelstore = mover.modelstore
             # check if they use the same hdf5 group, the RCModelshelf objects
             # do not need to be the same (and most often often are not)
@@ -453,15 +454,15 @@ class MCstepMemory(MutableObjectShelf):
                 # movers that have been pickled can have modelstore=None
                 if mover_modelstore._group != self._modelstore._group:
                     logger.error("saving a mcstep with a 'foreign' modelstore")
-            mcstep.mover.modelstore = None
+                mcstep.mover.modelstore = None
         super().save(obj=mcstep, overwrite=False, buffsize=2**22)
-        if isinstance(mover, ModelDependentPathMover):
+        if isinstance(mover, PathMover):
             # reset the modelstore of the mc.mover in case we use it somewhere else
             mcstep.mover.modelstore = mover_modelstore
 
     def load(self):
         mcstep = super().load(buffsize=2**22)
-        if isinstance(mcstep.mover, ModelDependentPathMover):
+        if isinstance(mcstep.mover, PathMover):
             mcstep.mover.modelstore = self._modelstore
         return mcstep
 
@@ -639,7 +640,7 @@ class ChainSamplerStore(MutableObjectShelf):
         obj.modelstore = None
         mover_modelstores = []
         for mover in obj.movers:
-            if isinstance(mover, ModelDependentPathMover):
+            if isinstance(mover, PathMover):
                 if mover.modelstore._group != self.modelstore._group:
                     logger.error("Saving a mover in the PathSamplingChain with"
                                  " a different modelstore.")
@@ -657,7 +658,7 @@ class ChainSamplerStore(MutableObjectShelf):
         obj.mcstep_collection = pcs_step_collection
         obj.modelstore = pcs_modelstore
         for mover, mover_ms in zip(obj.movers, mover_modelstores):
-            if isinstance(mover, ModelDependentPathMover):
+            if isinstance(mover, PathMover):
                 mover.modelstore = mover_ms
         return
 
@@ -668,7 +669,7 @@ class ChainSamplerStore(MutableObjectShelf):
         #       the step will not have a modelstore set anymore because it has
         #       been pickled)
         for mover in obj.movers:
-            if isinstance(mover, ModelDependentPathMover):
+            if isinstance(mover, PathMover):
                 mover.modelstore = self.modelstore
         obj.modelstore = self.modelstore
         return obj

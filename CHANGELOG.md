@@ -9,9 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `aimmd.distributed`: Improve `aimmd.distributed.pathmovers.PathMover` class inheritance structure
+- `aimmd.distributed`: The density adaption is now a part of the `aimmd.distributed.SPSelector` classes, the additional density adaption scheme "lazzeri" has been added.
 - `aimmd.distributed.Brain`: use tqdm progress bars
 - `aimmd.distributed.pathmovers`: shooting pathmovers now use the `aimmd.distributed.MDEngineSpec` dataclass as input argument to specify all the MD engine/propagation options together instead of as previously specifying each argument separately
 - Complete rewrite of `aimmd.distributed.CommittorSimulation`, update and improve corresponding example notebook.
+
+### Removed
+
+- `aimmd.distributed`:  The density collection `BrainTask` has been removed as it is no longer needed due to the rework of density collection (see changed).
 
 ## [0.9.3] - 2025-08-03
 

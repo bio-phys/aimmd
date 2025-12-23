@@ -1,31 +1,40 @@
+# This file is part of aimmd
+#
+# aimmd is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# aimmd is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with aimmd. If not, see <https://www.gnu.org/licenses/>.
 """
-This file is part of AIMMD.
+This file contains various shooting point selector classes.
 
-AIMMD is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-AIMMD is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
+They are used to select a shooting configuration either from an input trajectory
+or a predefined reservoir of configurations (also trajectories, but with associated
+weights for each frame).
 """
 import abc
-import typing
 import asyncio
 import logging
 import collections.abc
+import typing
 import numpy as np
 import numpy.typing as npt
 
 from asyncmd import Trajectory
 from asyncmd.trajectory.convert import FrameExtractor
 
-from ..base.rcmodel import RCModelAsyncMixin
+from ..base.density_collection import DensityCollectorAsync
+from .dataclasses import DensityAdaptionParameters
+
+if typing.TYPE_CHECKING:  # pragma: no cover
+    from ..base.rcmodel import RCModelAsyncMixin
 
 
 logger = logging.getLogger(__name__)
@@ -42,7 +51,7 @@ class SPSelector(abc.ABC):
     #       every trial with a weight (as in [1]) and therefore avoid the MCMC
     #       chain needed in standard TPS. It allows shooting from an ensemble
     #       of SPs (instead of SPs picked from the last accepted TP), but it
-    #       neccessitates knowing the Boltzmann weight of every potential SP
+    #       necessitates knowing the Boltzmann weight of every potential SP
     #       (or the factor by which the frequency of configurations in the SP
     #        ensemble differs from an Boltzmann ensemble)
     #       [1] Falkner et al, Mach. Learn. Sci. Technol., 2023,
@@ -55,7 +64,8 @@ class SPSelector(abc.ABC):
 
     @abc.abstractmethod
     async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
-                          model: typing.Optional[RCModelAsyncMixin] = None,
+                          step_num: int, *,
+                          model: "RCModelAsyncMixin",
                           ) -> float:
         """Return the proposal probability for the given snapshot."""
         # NOTE:
@@ -74,8 +84,11 @@ class SPSelector(abc.ABC):
 
     @abc.abstractmethod
     async def pick(self, outfile: str, frame_extractor: FrameExtractor,
-                   trajectory: typing.Optional[Trajectory] = None,
-                   model: typing.Optional[RCModelAsyncMixin] = None,
+                   step_num: int, *,
+                   # we can use step_num, e.g., for tuning the selection distribution
+                   # over time or for knowing when to reset/reestimate density
+                   model: "RCModelAsyncMixin",
+                   trajectory: Trajectory | None = None,
                    ) -> Trajectory:
         """Pick and return a snapshot to shot from."""
         # NOTE:
@@ -116,7 +129,8 @@ class UniformSPSelector(SPSelector):
         self.exclude_frames = exclude_frames
 
     async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
-                          model: typing.Optional[RCModelAsyncMixin] = None,
+                          step_num: int, *,
+                          model: "RCModelAsyncMixin",
                           ) -> float:
         """
         Return proposal probability to pick (any) `snapshot` from `trajectory`.
@@ -131,8 +145,11 @@ class UniformSPSelector(SPSelector):
             The snapshot in question.
         trajectory : Trajectory
             The trajectory to pick snapshot from.
-        model : RCModelAsyncMixin, optional
-            Completely ignored in uniform selection, by default None.
+        step_num : int
+            The number of the current step in the MC chain, i.e. the number of
+            steps performed in the sampler performing this step.
+        model : RCModelAsyncMixin
+            Completely ignored in uniform selection.
 
         Returns
         -------
@@ -141,15 +158,15 @@ class UniformSPSelector(SPSelector):
         """
         # FIXME? we currently dont check if the snapshot is in Trajectory, i.e.
         #       if we could even pick this snapshot from the Trajectory
-        traj_len = len(trajectory)
-        if traj_len <= 2 * self.exclude_frames:
+        if (traj_len := len(trajectory)) <= 2 * self.exclude_frames:
             # can not pick a frame if the trajectory is too short!
             return 0.
         return 1 / (traj_len - 2 * self.exclude_frames)
 
     async def pick(self, outfile: str, frame_extractor: FrameExtractor,
-                   trajectory: typing.Optional[Trajectory] = None,
-                   model: typing.Optional[RCModelAsyncMixin] = None,
+                   step_num: int, *,
+                   model: "RCModelAsyncMixin",
+                   trajectory: Trajectory | None = None,
                    ) -> Trajectory:
         """
         Pick and return a random snapshot from `trajectory`.
@@ -163,11 +180,14 @@ class UniformSPSelector(SPSelector):
         frame_extractor : FrameExtractor
             `asyncmd.FrameExtractor` subclass used to extract the chosen frame
             from `trajectory`.
+        step_num : int
+            The number of the current step in the MC chain, i.e. the number of
+            steps performed in the sampler performing this step.
+        model : RCModelAsyncMixin
+            Completely ignored in uniform selection.
         trajectory : Trajectory
             The trajectory to pick the snapshot from, required although by
             default None.
-        model : RCModelAsyncMixin, optional
-            Completely ignored in uniform selection, by default None.
 
         Returns
         -------
@@ -187,8 +207,7 @@ class UniformSPSelector(SPSelector):
                 "The `UniformSPSelector` requires an input trajectory to pick"
                 " a snapshot from."
                              )
-        traj_len = len(trajectory)
-        if traj_len <= 2 * self.exclude_frames:
+        if (traj_len := len(trajectory)) <= 2 * self.exclude_frames:
             raise ValueError(
                     f"Can not pick a SP from a trajectory of len {traj_len}"
                     f" while excluding {self.exclude_frames} at each end."
@@ -203,7 +222,9 @@ class UniformSPSelector(SPSelector):
         return snapshot
 
 
-class RCModelSPSelector(SPSelector):
+# pylint counts both, the "private" attributes (like _scale) and the corresponding
+# properties (like scale), so we disable the warning
+class RCModelSPSelector(SPSelector):  # pylint: disable=too-many-instance-attributes
     """
     Select SPs biased towards the transition state according to a RCModel.
 
@@ -217,14 +238,15 @@ class RCModelSPSelector(SPSelector):
     the transition state ensemble.
     It supports the use of density adaptation, i.e. it can optionally take into
     account a flattening factor correcting for the density of configurations
-    along the predicted committor.
+    along the predicted committor using various schemes. See also the
+    :class:`DensityAdaptionParameters` for more.
 
     Note that this class is an ABC, i.e. it can not be instantiated because it
-    is missing the required methods `pick` and `probability`.
+    is missing two required methods `pick_snapshot` and `probability`.
     """
 
-    def __init__(self, scale: float, distribution: str,
-                 density_adaptation: bool = True,
+    def __init__(self, scale: float, distribution: str, *,
+                 density_adaptation_params: DensityAdaptionParameters | None = None,
                  f_sel: collections.abc.Callable | None = None,
                  ) -> None:
         """
@@ -241,10 +263,12 @@ class RCModelSPSelector(SPSelector):
             A string indicating the distribution to use when selecting SPs
             around the transition state, can be "lorentzian", "gaussian",
             "uniform_phi", "uniform", or "custom" (see also `f_sel`).
-        density_adaptation : bool, optional
-            Whether to include an additional correction factor to flatten the
-            density of potential SP configurations along the predicted
-            committor, by default True.
+        density_adaptation_params : DensityAdaptionParameters or None
+            Parameters for density adaption, which includes an additional
+            correction factor to flatten the density of potential SP configurations
+            along the predicted committor. See also the :class:`DensityAdaptionParameters`
+            for more.
+            If set to `None`, no density adaption will be performed.
         f_sel : Callable or None, optional
             If given, sets the shooting point selection distribution function
             to any Callable taking a single np.array of shape (n_frames,) and
@@ -259,19 +283,8 @@ class RCModelSPSelector(SPSelector):
             # the self.f_sel setter already sets self._distribution to "custom"
             self.distribution = distribution
         self.scale = scale
-        self.density_adaptation = density_adaptation
-
-    def __setstate__(self, d: dict):
-        # make it possible to unpickle "RCModelSPSelector"s from before the
-        # rename/refactor of scale -> _scale
-        # v0.9.0 -> 0.9.1
-        try:
-            scale = d["scale"]
-            d["_scale"] = scale
-            del d["scale"]
-        except KeyError:
-            pass
-        self.__dict__.update(d)
+        self.density_adaptation_params = density_adaptation_params
+        self.density_collector: DensityCollectorAsync | None = None
 
     @property
     def distribution(self) -> str:
@@ -282,7 +295,7 @@ class RCModelSPSelector(SPSelector):
         For "lorentzian" f_sel(z) = scale / (scale**2 + z**2).
         For "gaussian" f_sel(z) = exp(-z**2 / scale).
         For "uniform_phi" f_sel(z) = exp(-z) / (1 + exp(-z))**2 , resulting in
-        a uniform selection weigth along the committor phi = 1 / (1 + exp(-z)).
+        a uniform selection weight along the committor phi = 1 / (1 + exp(-z)).
         For "uniform" f_sel(z) = 1, resulting in a selection that favours
         points close to the states, f_sel(phi) = 1 / (phi - phi**2).
         """
@@ -354,8 +367,9 @@ class RCModelSPSelector(SPSelector):
         self._f_sel = val
         self._distribution = "custom"
 
-    async def sum_bias(self, trajectory: Trajectory, model: RCModelAsyncMixin,
-                       ) -> float:
+    async def sum_bias(self, trajectory: Trajectory, model: "RCModelAsyncMixin",
+                       exclude_frames: int = 0,
+                       ) -> np.floating:
         """
         Return the sum of all selection biases for `trajectory` under `model`.
 
@@ -365,123 +379,23 @@ class RCModelSPSelector(SPSelector):
             The trajectory over which the bias values are summed.
         model : RCModelAsyncMixin
             The reaction coordinate model used to calculate the biases.
+        exclude_frames : int
+            How many frames to exclude at the start and end of the trajectory,
+            e.g., if exclude_frames=2 we exclude the first and last 2 frames,
+            by default 0.
 
         Returns
         -------
         float
             The sum of all bias values on `trajectory` under `model`.
         """
-        biases = await self.biases(trajectory, model)
+        biases = await self.biases(trajectory, model,
+                                   exclude_frames=exclude_frames,
+                                   )
         return np.sum(biases)
 
-    async def biases(self, trajectory: Trajectory, model: RCModelAsyncMixin,
-                     ) -> npt.NDArray[np.floating]:
-        """
-        Return array with bias values for each configuration in `trajectory`.
-
-        Parameters
-        ----------
-        trajectory : Trajectory
-            The trajectory to calculate bias values for.
-        model : RCModelAsyncMixin
-            The reaction coordinate model from which the biases are calculated.
-
-        Returns
-        -------
-        npt.NDArray[np.floating]
-            One dimensional array (of the same length as `trajectory`) with the
-            bias values.
-        """
-        z_sels = await model.z_sel(trajectory)
-        any_nan = np.any(np.isnan(z_sels))
-        if any_nan:
-            logger.error('The model predicts NaNs. '
-                         'We used np.nan_to_num to proceed')
-            z_sels = np.nan_to_num(z_sels)
-        ret = self._f_sel(z_sels)
-        if self.density_adaptation:
-            committor_probs = await model(trajectory)
-            if any_nan:
-                committor_probs = np.nan_to_num(committor_probs)
-            density_fact = model.density_collector.get_correction(
-                                                            committor_probs
-                                                                  )
-            ret *= density_fact
-        return ret
-
-
-class RCModelSPSelectorFromTraj(RCModelSPSelector):
-    """
-    Select SPs from a given in-trajectory (usually a TP) using a RCModel.
-
-    SP selection is biased towards the current best guess of the transition
-    state of the RCModel according to the models `z_sel` method. The SPs are
-    selected according to bias weights according to `distribution` f_sel(z_sel)
-    centered around z_sel = 0.
-    """
-
-    def __init__(self, scale: float = 1., distribution: str = "lorentzian",
-                 density_adaptation: bool = True,
-                 exclude_frames: int = 1,
-                 f_sel: collections.abc.Callable | None = None,
-                 ) -> None:
-        """
-        Initialize a `RCModelSPSelectorFromTraj`.
-
-        Parameters
-        ----------
-        scale : float, optional
-            Scale of the SP selection distribution, by default 1.
-        distribution : str
-            A string indicating the distribution to use when selecting SPs
-            around the transition state, can be "lorentzian", "gaussian",
-            "uniform_phi", "uniform", or "custom" (see also `f_sel`).
-        density_adaptation : bool, optional
-            Whether to include an additional correction factor to flatten the
-            density of potential SP configurations along the predicted
-            committor, by default True.
-        exclude_frames : int, optional
-            How many frames to exclude from the selection at the start and end
-            of the trajectory, e.g. if exclude_frames=2 we exclude the first
-            and last 2 frames, by default 1.
-        f_sel : Callable or None, optional
-            If given, sets the shooting point selection distribution function
-            to any Callable taking a single np.array of shape (n_frames,) and
-            returning an array of the same shape containing bias weights.
-            Note that, in this case `distribution` will be ignored and set to
-            "custom".
-        """
-        super().__init__(scale=scale,
-                         distribution=distribution,
-                         density_adaptation=density_adaptation,
-                         f_sel=f_sel,
-                         )
-        # whether we allow to choose first and last frame
-        # if False they will also not contribute to sum_bias and accept/reject
-        self.exclude_frames = exclude_frames
-
-    def __setstate__(self, d: dict):
-        # make it possible to unpickle "RCModelSPSelectorFromTraj"s from before
-        # the rename/refactor of "exclude_first_last_frame" to "exclude_frames"
-        # v0.9.0 -> 0.9.1
-        try:
-            exclude_first_last_frame = d["exclude_first_last_frame"]
-            d["_exclude_frames"] = 1 if exclude_first_last_frame else 0
-            del d["exclude_first_last_frame"]
-        except KeyError:
-            pass
-        super().__setstate__(d)
-
-    @property
-    def exclude_frames(self) -> int:
-        """Return/set the number of excluded frames at the begining and end."""
-        return self._exclude_frames
-
-    @exclude_frames.setter
-    def exclude_frames(self, val) -> None:
-        self._exclude_frames = int(val)
-
-    async def biases(self, trajectory: Trajectory, model: RCModelAsyncMixin,
+    async def biases(self, trajectory: Trajectory, model: "RCModelAsyncMixin",
+                     exclude_frames: int = 0,
                      ) -> npt.NDArray[np.floating]:
         """
         Return array with bias values for each configuration in `trajectory`.
@@ -496,22 +410,228 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
             The trajectory to calculate bias values for.
         model : RCModelAsyncMixin
             The reaction coordinate model from which the biases are calculated.
+        exclude_frames : int
+            How many frames to exclude at the start and end of the trajectory,
+            e.g., if exclude_frames=2 we exclude the first and last 2 frames,
+            by default 0.
 
         Returns
         -------
         npt.NDArray[np.floating]
-            One dimensional array with the bias values. The array is of length
-            len(trajectory) - 2 * exclude_frames.
+            One dimensional array (of the same length as `trajectory` - 2 * `exclude_frames`)
+            with the bias values.
         """
-        # NOTE: Need to overwrite biases method from baseclass to take into
-        #       account the excluded frames.
-        ret = await super().biases(trajectory=trajectory, model=model)
-        if self.exclude_frames > 0:
-            ret = ret[self.exclude_frames:-self.exclude_frames]
+        z_sels = await model.z_sel(trajectory)
+        if (any_nan := np.any(np.isnan(z_sels))):
+            logger.error('The model predicts NaNs. '
+                         'We used np.nan_to_num to proceed')
+            z_sels = np.nan_to_num(z_sels)
+        ret = self._f_sel(z_sels)
+        if self.density_adaptation_params is not None:
+            committor_probs = await model(trajectory)
+            if any_nan:
+                committor_probs = np.nan_to_num(committor_probs)
+            density_fact = self.density_collector.get_correction(committor_probs)
+            ret *= density_fact
+        if exclude_frames > 0:
+            ret = ret[exclude_frames:-exclude_frames]
         return ret
 
+    async def pick(self, outfile: str, frame_extractor: FrameExtractor,
+                   step_num: int, *,
+                   model: "RCModelAsyncMixin",
+                   trajectory: Trajectory | None = None,
+                   ) -> Trajectory:
+        # here we take care of adding trajectories to density adaption and
+        # optionally update the density estimate from stored trajectories
+        # using the current model
+        await self._pre_pick(step_num=step_num, model=model, trajectory=trajectory)
+        snap = await self.pick_snapshot(outfile=outfile, frame_extractor=frame_extractor,
+                                        step_num=step_num, trajectory=trajectory,
+                                        model=model,
+                                        )
+        return snap
+
+    @abc.abstractmethod
+    async def pick_snapshot(self, outfile: str, frame_extractor: FrameExtractor,
+                            step_num: int, *, model: "RCModelAsyncMixin",
+                            trajectory: Trajectory | None = None,
+                            ) -> Trajectory:
+        """
+        Subclasses must implement this to pick/select a shooting snapshot.
+
+        Parameters
+        ----------
+        outfile : str
+            The filename of the selected snapshot to write out.
+        frame_extractor : FrameExtractor
+            The FrameExtractor class that will be used to extract the selected
+            snapshot.
+        step_num : int
+            The number of the current step in the MC chain, i.e. the number of
+            steps performed in the sampler performing this step.
+        model : RCModelAsyncMixin
+            The committor model to use to select the snapshot.
+        trajectory : Trajectory | None, optional
+            An optional input trajectory to select the snapshot from, e.g. an
+            input transition path. Can be None for example when selecting from
+            a pregenerated reservoir of configurations, by default None.
+
+        Returns
+        -------
+        Trajectory
+            The selected shooting snapshot.
+        """
+        raise NotImplementedError
+
+    async def _pre_pick(self, step_num: int, model: "RCModelAsyncMixin",
+                        trajectory: Trajectory | None = None
+                        ) -> None:
+        """
+        Perform needed operations for density adaption pre-pick.
+
+        This method will reset or reevaluate the density estimate and add the
+        given trajectory to the estimate, all depending on the settings in
+        `density_adaption_params`.
+        In case the density collector has not been initialized, this method will
+        initialize it.
+
+        Parameters
+        ----------
+        step_num : int
+            The number of the current step in the MC chain, i.e. the number of
+            steps performed in the sampler performing this step.
+        model : RCModelAsyncMixin
+            The committor model used for this step.
+        trajectory : Trajectory | None, optional
+            The trajectory to add to the density estimate, usually this will be
+            an input transition path. Can be None for example when selecting from
+            a reservoir of configurations, by default None.
+        """
+        if self.density_adaptation_params is None:  # we do not do density adaption
+            return
+        if self.density_collector is None:  # setup DensityCollector (if we need one)
+            self.density_collector = DensityCollectorAsync(
+                                        n_dim=model.n_out,
+                                        bins=self.density_adaptation_params.n_bins,
+                                        )
+            if len(self.density_adaptation_params.trajectories_to_flatten):
+                await self.density_collector.add_density_for_trajectories(
+                        model=model,
+                        trajectories=self.density_adaptation_params.trajectories_to_flatten,
+                        weights=self.density_adaptation_params.trajectories_to_flatten_weights,
+                        )
+        # NOTE:
+        # Different density correction schemes are possible depending on the
+        # combination of density_adaption_params
+        # Possible options include:
+        # 1.) By resetting the density (i.e. clearing it) and then adding only
+        #     the trajectory we pick from, the density correction scheme is similar to
+        #     the one from Lazzeri et al, https://pubs.acs.org/doi/10.1021/acs.jctc.3c00821
+        #     Here the density of only the configurations we pick from is flattened and
+        #     this will therefore be potentially more efficient then the next option
+        # 2.) Not resetting and always adding the trajectories from pick we arrive at
+        #     a density correction scheme similar to the one from the original aimmd
+        #     publication, where the density of configurations on transition paths, p(x|TP),
+        #     is flattened. In this case regular reevaluations using the current models
+        #     predictions make sense.
+        # 3.) Instantiating the density adaption with trajectories and (equilibrium) weights,
+        #     e.g., the trajectories used as a shooting point "reservoir" for shooting from
+        #     equilibrium configurations, this will flatten the density of configurations in
+        #     the reservoir. Here also regular reevaluations of the stored density estimate
+        #     using the current models predictions make sense (at least if the model changes
+        #     over time)
+
+        # first do any reset and recalculation of committor predictions for previously
+        # stored trajectories (if we do so)
+        if self.density_adaptation_params.reset_before_pick:
+            self.density_collector.reset()
+        if self.density_adaptation_params.reevaluate_density_interval is not None:
+            # check if we do reevaluation at all (not None)
+            # and if so check if it is a step_num (which will be the total number
+            # of steps done so far in the sampler) at which we reevaluate
+            if not step_num % self.density_adaptation_params.reevaluate_density_interval:
+                await self.density_collector.reevaluate_density(model=model)
+        # now add trajectories (if we do so)
+        if self.density_adaptation_params.add_trajectories_from_pick:
+            await self.density_collector.add_density_for_trajectories(
+                                                model=model,
+                                                trajectories=[trajectory]
+                                                )
+
+
+class RCModelSPSelectorFromTraj(RCModelSPSelector):
+    """
+    Select SPs from a given in-trajectory (usually a TP) using a RCModel.
+
+    SP selection is biased towards the current best guess of the transition
+    state of the RCModel according to the models `z_sel` method. The SPs are
+    selected according to bias weights according to `distribution` f_sel(z_sel)
+    centered around z_sel = 0.
+    """
+
+    def __init__(
+        self,
+        scale: float = 1.0,
+        distribution: str = "lorentzian",
+        *,
+        density_adaptation_params: (
+            DensityAdaptionParameters | None
+        ) = DensityAdaptionParameters(scheme="lazzeri"),
+        exclude_frames: int = 1,
+        f_sel: collections.abc.Callable | None = None,
+    ) -> None:
+        """
+        Initialize a `RCModelSPSelectorFromTraj`.
+
+        Parameters
+        ----------
+        scale : float, optional
+            Scale of the SP selection distribution, by default 1.
+        distribution : str
+            A string indicating the distribution to use when selecting SPs
+            around the transition state, can be "lorentzian", "gaussian",
+            "uniform_phi", "uniform", or "custom" (see also `f_sel`).
+        density_adaptation_params : DensityAdaptionParameters or None
+            Parameters for density adaption, which includes an additional
+            correction factor to flatten the density of potential SP configurations
+            along the predicted committor. See also the :class:`DensityAdaptionParameters`
+            for more. If set to `None`, no density adaption will be performed.
+            By default density adaption following the scheme introduced in
+            Lazzeri et. al. (JCTC 2023, https://doi.org/10.1021/acs.jctc.3c00821)
+            will be performed.
+        exclude_frames : int, optional
+            How many frames to exclude from the selection at the start and end
+            of the trajectory, e.g. if exclude_frames=2 we exclude the first
+            and last 2 frames, by default 1.
+        f_sel : Callable or None, optional
+            If given, sets the shooting point selection distribution function
+            to any Callable taking a single np.array of shape (n_frames,) and
+            returning an array of the same shape containing bias weights.
+            Note that, in this case `distribution` will be ignored and set to
+            "custom".
+        """
+        super().__init__(scale=scale,
+                         distribution=distribution,
+                         density_adaptation_params=density_adaptation_params,
+                         f_sel=f_sel,
+                         )
+        # whether we allow to choose first and last frame
+        # if False they will also not contribute to sum_bias and accept/reject
+        self.exclude_frames = exclude_frames
+
+    @property
+    def exclude_frames(self) -> int:
+        """Return/set the number of excluded frames at the beginning and end."""
+        return self._exclude_frames
+
+    @exclude_frames.setter
+    def exclude_frames(self, val) -> None:
+        self._exclude_frames = int(val)
+
     async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
-                          model: typing.Optional[RCModelAsyncMixin] = None,
+                          step_num: int, *,
+                          model: "RCModelAsyncMixin",
                           ) -> float:
         """
         Return proposal probability to pick `snapshot` from `trajectory`.
@@ -529,6 +649,9 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
             The snapshot in question.
         trajectory : Trajectory
             The trajectory to pick `snapshot` from.
+        step_num : int
+            The number of the current step in the MC chain, i.e. the number of
+            steps performed in the sampler performing this step.
         model : RCModelAsyncMixin
             The reaction coordinate model used to pick the snapshot.
 
@@ -536,40 +659,32 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
         -------
         float
             Proposal probability to pick `snapshot` from `trajectory`.
-
-        Raises
-        ------
-        ValueError
-            If no `model` is given.
         """
-        if model is None:
-            raise ValueError(
-                "The `RCModelSPSelectorFromTraj` needs a model to calculate"
-                " the picking probability.")
         if len(trajectory) <= 2 * self.exclude_frames:
             # Trajectory is too short to select a snapshot from if we discard
             # exclude_frames at the start and end, so f = p = 0.
             return 0.
-        # NOTE: use super().biases for the snapshot to have no excluded frames
         sum_bias, f_val = await asyncio.gather(
-                                          self.sum_bias(trajectory, model),
-                                          super().biases(snapshot, model),
-                                               )
+                                        self.sum_bias(trajectory, model,
+                                                      exclude_frames=self.exclude_frames),
+                                        # dont exclude any frames for the bias of the snapshot
+                                        self.biases(snapshot, model, exclude_frames=0),
+                                        )
         # only scalar arrays can be cast to float, so this (also) ensures that
         # snapshot was indeed a 1-frame trajectory (i.e. had length=1)
         f_val = float(f_val)
-        if sum_bias == 0.:
+        if not sum_bias:
             logger.error(
                     "All shooting point weights are 0."
                     " Using equal probability for each configuration."
-                         )
+                    )
             return 1. / (len(trajectory) - 2 * self.exclude_frames)
         return f_val / sum_bias
 
-    async def pick(self, outfile: str, frame_extractor: FrameExtractor,
-                   trajectory: typing.Optional[Trajectory] = None,
-                   model: typing.Optional[RCModelAsyncMixin] = None,
-                   ) -> Trajectory:
+    async def pick_snapshot(self, outfile: str, frame_extractor: FrameExtractor,
+                            step_num: int, *, model: "RCModelAsyncMixin",
+                            trajectory: Trajectory | None = None,
+                            ) -> Trajectory:
         """
         Pick and return a shooting snapshot from `trajectory`.
 
@@ -582,13 +697,16 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
         outfile : str
             Path to write out the selected snapshot.
         frame_extractor : FrameExtractor
-            The framextractor to use when getting the snapshot from the
+            The frame extractor to use when getting the snapshot from the
             trajectory, e.g. RandomVelocities for TwoWayShooting.
-        trajectory : Trajectory
-            The input trajectory from which we select the snapshot.
+        step_num : int
+            The number of the current step in the MC chain, i.e. the number of
+            steps performed in the sampler performing this step.
         model : RCModelAsyncMixin
             The RCModel that is used to bias the selection towards the current
             best guess of the transition state.
+        trajectory : Trajectory
+            The input trajectory from which we select the snapshot.
 
         Returns
         -------
@@ -598,15 +716,9 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
         Raises
         ------
         ValueError
-            If no `model` is given.
-        ValueError
             If the input `trajectory` is to short to pick a snapshot from after
             discarding the first and last `exclude_frames` frames.
         """
-        if model is None:
-            raise ValueError(
-                "The `RCModelSPSelectorFromTraj` needs a model to calculate"
-                " the picking probability.")
         if trajectory is None:
             raise ValueError(
                 "The `RCModelSPSelectorFromTraj` needs a trajectory to pick a"
@@ -618,15 +730,17 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
                 f"Can not pick a SP from a trajectory of len {len(trajectory)}"
                 f" while excluding {self.exclude_frames} at each end."
                              )
-        biases = await self.biases(trajectory, model)
-        sum_bias = np.sum(biases)
-        if sum_bias == 0.:
-            logger.error("Model not able to give educated guess. "
-                         "Choosing based on luck.")
-            # we can not give any meaningfull advice and choose at random
+        biases = await self.biases(trajectory, model,
+                                   exclude_frames=self.exclude_frames,
+                                   )
+        if not (sum_bias := np.sum(biases)):
+            logger.error("Model not able to give educated guess. Choosing at random.")
+            # we can not give any meaningful advice and choose at random
             # choose in [self.exclude_frames, len(traj) - self.exclude_frames )
             idx = self._rng.integers(self.exclude_frames,
-                                     len(trajectory) - self.exclude_frames)
+                                     len(trajectory) - self.exclude_frames,
+                                     dtype=int,
+                                     )
         else:
             # if self.exclude_frames > 0, biases will have the length of
             # traj - 2 * self.exclude_frames, i.e. biases already excludes the
@@ -656,7 +770,7 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
 
     SP selection is biased towards the current best guess of the transition
     state of the RCModel according to the models `z_sel` method. The SPs are
-    selected according to their equilibrium weight and biasd according to
+    selected according to their equilibrium weight and biased according to
     `distribution` f_sel(z_sel) centered around z_sel = 0.
 
     Note that :meth:`probability` does not return the probability to pick a
@@ -667,15 +781,21 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
 
     probability_is_ensemble_weight = True
 
-    def __init__(self,
-                 trajectories: list[Trajectory] | Trajectory,
-                 equilibrium_weights: (list[npt.NDArray[np.floating]]
-                                       | npt.NDArray[np.floating]),
-                 scale: float = 1.,
-                 distribution: str = "lorentzian",
-                 density_adaptation: bool = True,
-                 f_sel: collections.abc.Callable | None = None,
-                 ) -> None:
+    def __init__(
+        self,
+        scale: float = 1.0,
+        distribution: str = "lorentzian",
+        *,
+        trajectories: list[Trajectory],
+        equilibrium_weights: list[npt.NDArray[np.floating]],
+        density_adaption_params: (
+            DensityAdaptionParameters | None
+        ) = DensityAdaptionParameters(reevaluate_density_interval=10,
+                                      reset_before_pick=False,
+                                      add_trajectories_from_pick=False,
+                                      ),
+        f_sel: collections.abc.Callable | None = None,
+    ) -> None:
         """
         Initialize a `RCModelSPSelectorFromEQ`.
 
@@ -693,10 +813,16 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
             A string indicating the distribution to use when selecting SPs
             around the transition state, can be "lorentzian", "gaussian",
             "uniform_phi", "uniform", or "custom" (see also `f_sel`).
-        density_adaptation : bool, optional
-            Whether to include an additional correction factor to flatten the
-            density of potential SP configurations along the predicted
-            committor, by default True.
+        density_adaptation_params : DensityAdaptionParameters or None
+            Parameters for density adaption, which includes an additional
+            correction factor to flatten the density of potential SP configurations
+            along the predicted committor. See also the :class:`DensityAdaptionParameters`
+            for more. If set to `None`, no density adaption will be performed.
+            Note that, `trajectories` and `equilibrium_weights` will both be set
+            in the density_adaption_parameters as trajectories and weights.
+            Additionally it is ensured that no new trajectories are added during
+            pick. I.e., density adaption will always flatten the committor distribution
+            observed in the potential shooting points.
         f_sel : Callable or None, optional
             If given, sets the shooting point selection distribution function
             to any Callable taking a single np.array of shape (n_frames,) and
@@ -739,16 +865,19 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
         #          sampling run
         #       -> the equilibrium weights from binless WHAM if from multiple
         #          biased sampling runs
+        if density_adaption_params is not None:
+            # Set trajectories and weights for density adaption
+            density_adaption_params.trajectories_to_flatten = trajectories
+            density_adaption_params.trajectories_to_flatten_weights = equilibrium_weights
+            # ensure we dont reset so we dont loose the trajectories
+            density_adaption_params.reset_before_pick = False
         super().__init__(scale=scale,
                          distribution=distribution,
-                         density_adaptation=density_adaptation,
+                         density_adaptation_params=density_adaption_params,
                          f_sel=f_sel,
                          )
-        if isinstance(trajectories, Trajectory):
-            trajectories = [trajectories]
-        if isinstance(equilibrium_weights, list):
-            # concatenate the equilibrium weights into one array
-            equilibrium_weights = np.concatenate(equilibrium_weights, axis=0)
+        # concatenate the equilibrium weights into one array
+        equilibrium_weights = np.concatenate(equilibrium_weights, axis=0)
         # make sure trajectories and equilibrium_weights match in length
         if equilibrium_weights.shape[0] != sum(len(t) for t in trajectories):
             raise ValueError(
@@ -766,7 +895,8 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
     #        the new points (on the trajectory) come from the reservoir
     #        ensemble and are already included in the normalizing sum [Z_bias])
     async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
-                          model: typing.Optional[RCModelAsyncMixin] = None,
+                          step_num: int, *,
+                          model: "RCModelAsyncMixin",
                           ) -> float:
         """
         Return the equilibrium ensemble weight for `trajectory`.
@@ -779,9 +909,12 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
         Parameters
         ----------
         snapshot : Trajectory
-            Ignored, not needed to calculate ensemble weight of `trajecory`.
+            Ignored, not needed to calculate ensemble weight of `trajectory`.
         trajectory : Trajectory
             The trajectory to calculate the ensemble weight for.
+        step_num : int
+            The number of the current step in the MC chain, i.e. the number of
+            steps performed in the sampler performing this step.
         model : RCModelAsyncMixin
             The reaction coordinate model used to pick the snapshot.
 
@@ -789,16 +922,7 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
         -------
         float
             Ensemble weight for `trajectory`.
-
-        Raises
-        ------
-        ValueError
-            If no `model` is given.
         """
-        if model is None:
-            raise ValueError(
-                "The `RCModelSPSelectorFromTraj` needs a model to calculate"
-                " the picking probability.")
         # get bias according to current model estimate of TSE
         all_biases = await asyncio.gather(
                                 *(self.biases(trajectory=t,
@@ -806,15 +930,15 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
                                   for t in self.trajectories + [trajectory]
                                   )
                                           )
-        biases_for_SP_ensemble = np.concatenate(all_biases[:-1], axis=0)
+        biases_for_sp_ensemble = np.concatenate(all_biases[:-1], axis=0)
         biases_for_new_traj = all_biases[-1]
-        Z_bias = np.sum(biases_for_SP_ensemble)
-        return Z_bias / np.sum(biases_for_new_traj)
+        z_bias = np.sum(biases_for_sp_ensemble)
+        return z_bias / np.sum(biases_for_new_traj)
 
-    async def pick(self, outfile: str, frame_extractor: FrameExtractor,
-                   trajectory: typing.Optional[Trajectory] = None,
-                   model: typing.Optional[RCModelAsyncMixin] = None,
-                   ) -> Trajectory:
+    async def pick_snapshot(self, outfile: str, frame_extractor: FrameExtractor,
+                            step_num: int, *, model: "RCModelAsyncMixin",
+                            trajectory: Trajectory | None = None,
+                            ) -> Trajectory:
         """
         Pick and return a snapshot from the ensemble of potential snapshots.
 
@@ -827,30 +951,24 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
         outfile : str
             Path to write out the selected snapshot.
         frame_extractor : FrameExtractor
-            The framextractor to use when getting the snapshot from the
+            The frame extractor to use when getting the snapshot from the
             trajectory, e.g. RandomVelocities for TwoWayShooting.
+        step_num : int
+            The number of the current step in the MC chain, i.e. the number of
+            steps performed in the sampler performing this step.
+        model : RCModelAsyncMixin
+            The RCModel that is used to bias the selection towards the current
+            best guess of the transition state.
         trajectory : typing.Optional[Trajectory], optional
             Ignored, by default None. No trajectory is needed to pick a
             snapshot from. The argument is only retained to keep API
             compatibility with the other SPSelectors.
-        model : RCModelAsyncMixin
-            The RCModel that is used to bias the selection towards the current
-            best guess of the transition state.
 
         Returns
         -------
         Trajectory
             The selected shooting snapshot.
-
-        Raises
-        ------
-        ValueError
-            If no `model` is given.
         """
-        if model is None:
-            raise ValueError(
-                "The `RCModelSPSelectorFromTraj` needs a model to calculate"
-                " the picking probability.")
         # get bias according to current model estimate of TSE
         all_biases = await asyncio.gather(*(self.biases(trajectory=t,
                                                         model=model)
@@ -872,7 +990,7 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
             traj_index += 1
         logger.debug("Selected SP with idx %d on trajectory %s.",
                      index, self.trajectories[traj_index])
-        # write out the choosen snapshot using frame_extractor
+        # write out the chosen snapshot using frame_extractor
         snapshot = await frame_extractor.extract_async(
                                         outfile=outfile,
                                         traj_in=self.trajectories[traj_index],

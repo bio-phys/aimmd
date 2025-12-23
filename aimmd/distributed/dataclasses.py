@@ -14,15 +14,21 @@
 # along with aimmd. If not, see <https://www.gnu.org/licenses/>.
 """
 This file contains various dataclasses used to tie together input arguments
-commonly used together, such as the MDEngineSpec.
+commonly used together, such as the MDEngineSpec or the MCstep.
 """
 import dataclasses
+import os
+import pickle
 import typing
 
 from asyncmd.utils import ensure_mdconfig_options
 
 if typing.TYPE_CHECKING:  # pragma: no cover
+    import numpy as np
+    import numpy.typing as npt
+    from asyncmd.trajectory.trajectory import Trajectory
     from asyncmd.mdengine import MDEngine
+    from .pathmovers import PathMover
 
 
 @dataclasses.dataclass
@@ -84,3 +90,148 @@ class MDEngineSpec:
             # it is not, so we use the engine_class default
             output_traj_type = self.engine_cls.output_traj_type
         self.output_traj_type = output_traj_type.lower()
+
+
+@dataclasses.dataclass
+class MCstep:
+    mover: "PathMover"
+    stepnum: int
+    directory: str
+    path: "Trajectory"
+    accepted: bool = False
+    p_acc: float = 0.
+    weight: float = 1.
+    predicted_committors_sp: "npt.NDArray | None" = None
+    shooting_snap: "Trajectory | None" = None
+    states_reached: "npt.NDArray | None" = None
+    trial_trajectories: "list[Trajectory]" = dataclasses.field(
+                                                default_factory=lambda: []
+                                                )
+    default_savename: str = "mcstep_data.pckl"
+
+    def save(self, fname: str | None = None,
+             overwrite: bool = False) -> None:
+        """
+        Save this :class:`MCstep`.
+
+        Parameters
+        ----------
+        fname : str | None, optional
+            The filename to use, by default None. If None the filename is constructed
+            from ``self.directory`` and ``self.default_savename`` attributes.
+        overwrite : bool, optional
+            Whether to overwrite any existing files with the same name, by default False.
+
+        Raises
+        ------
+        ValueError
+            If a file with filename exists but ``overwrite`` is ``False``.
+        """
+        if fname is None:
+            fname = os.path.join(self.directory, self.default_savename)
+        if not overwrite and os.path.exists(fname):
+            # we check if it exists, because pickle/open will happily overwrite
+            raise ValueError(f"{fname} exists but overwrite=False.")
+        with open(fname, "wb") as pfile:
+            pickle.dump(self, pfile)
+
+    @classmethod
+    def load(cls, directory: str | None = None,
+             fname: str | None = None) -> "MCstep":
+        """
+        Load a :class:`MCstep` from file.
+
+        Parameters
+        ----------
+        directory : str | None, optional
+            The directory to load the :class:`MCstep` from, by default None.
+            If None the current working directory is used.
+        fname : str | None, optional
+            The filename to load the :class:`MCstep` from, by default None.
+            If None, the class attribute :attr:`MCstep.default_savename` will be
+            used.
+
+        Returns
+        -------
+        MCstep
+            The loaded :class:`MCstep`.
+        """
+        if directory is None:
+            directory = os.getcwd()
+        if fname is None:
+            fname = cls.default_savename
+        fname = os.path.join(directory, fname)
+        with open(fname, "rb") as pfile:
+            obj = pickle.load(pfile)
+        return obj
+
+
+@dataclasses.dataclass
+class DensityAdaptionParameters:
+    """
+    Dataclass to specify parameters for density adaption in :class:`RCModelSPSelector`.
+
+    This dataclass includes predefined schemes that will ensure consistency of
+    the arguments used for this scheme. Currently these are "lazzeri" and "p_x_tp",
+    the former flattens the committor observed on the input transition path while
+    the latter flattens the committor on the ensemble of transition paths observed
+    so far.
+
+    Parameters
+    ----------
+    n_bins : int
+        The number of bins to use (in each dimension of the model prediction) in
+        the histogram used for density estimation.
+    scheme: Literal["lazzeri", "p_x_tp"] | None
+        A string indicating one of the aforementioned predefined schemes or None.
+        None means no parameter consistency checking will be performed.
+    reevaluate_density_interval : int | None
+        The interval (in steps done by the sampler) in which to reevaluate the
+        density estimate using the current model. None means do not reevaluate
+        ever, it should only be used if your model prediction does not change.
+        It can be ignored for schemes that reset before every pick, e.g. "lazzeri",
+        since the current model is always used to add the trajectory.
+    reset_before_pick : bool
+        Whether the density estimate should be cleared before every pick and
+        before (potentially) adding the trajectory from this pick. Setting this
+        to True and adding only the trajectory from each pick one arrives at the
+        "lazzeri" scheme. By default True.
+    add_trajectories_from_pick : bool
+        Whether to add the trajectory used to pick the shooting configuration to
+        the density estimate. By default True.
+    trajectories_to_flatten : list[Trajectory]
+        An (initial) list of trajectories to flatten the density from. When selecting
+        configurations from a predefined reservoir, these trajectories should be
+        added here. Could also be used to kickstart density adaption with an initial
+        guess. By default an empty list is used.
+    trajectories_to_flatten_weights : list[np.ndarray] | None
+        List of numpy arrays with weights for the `trajectories_to_flatten`, the
+        list must contain as many numpy arrays as there are trajectories and the
+        lengths of the arrays must match the corresponding trajectories.
+        Can also be None, in that case equal weights for each configuration will
+        be used (in case `trajectories_to_flatten` is not empty). By default None.
+    """
+    n_bins: int = 10
+    # commonly used predefined schemes that will ensure consistency for (some) arguments
+    scheme: typing.Literal["lazzeri", "p_x_tp"] | None = None
+    reevaluate_density_interval: int | None = None
+    reset_before_pick: bool = True
+    add_trajectories_from_pick: bool = True
+    trajectories_to_flatten: "list[Trajectory]" = dataclasses.field(
+                                                    default_factory=lambda: []
+                                                    )
+    trajectories_to_flatten_weights: "list[npt.NDArray[np.floating]] | None" = None
+
+    def __post_init__(self) -> None:
+        """Ensure consistency of arguments for predefined schemes."""
+        if self.scheme is None:
+            return
+        if self.scheme.lower() == "lazzeri":
+            self.reset_before_pick = True
+            self.add_trajectories_from_pick = True
+            # No need to reevaluate as we always only have
+            # one trajectory in the density
+            self.reevaluate_density_interval = None
+        elif self.scheme.lower() == "p_x_tp":
+            self.reset_before_pick = False
+            self.add_trajectories_from_pick = True
