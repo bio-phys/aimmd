@@ -25,7 +25,6 @@ import typing
 import asyncio
 import logging
 import datetime
-import functools
 import numpy as np
 from tqdm.auto import tqdm
 
@@ -36,7 +35,9 @@ from asyncmd.trajectory.functionwrapper import TrajectoryFunctionWrapper
 from ._config import _SEMAPHORES
 from .. import TrainSet
 from .dataclasses import MCstep
+from .dataclasses_internal import PathSamplingSimStateInfo
 from .pathmovers import PathMover
+from ..tools import attach_kwargs_to_object as _attach_kwargs_to_object
 
 if typing.TYPE_CHECKING:  # pragma: no cover
     import collections.abc
@@ -49,7 +50,7 @@ class BrainTask(abc.ABC):
     """
     Abstract base class for all `BrainTask`s.
 
-    `BrainTask`s are run at the specifed interval after a step is done. They
+    `BrainTask`s are run at the specified interval after a step is done. They
     can be used to keep track of simulation results and alter the behavior of
     the simulation easily. See e.g. the `SaveTask` or `TrainingTask` (which
     adds the steps to a training set and trains the model). They are similar
@@ -295,7 +296,7 @@ class Brain:
             The outer list contains a list for each PathChainSampler, defining
             the movers this sampler should use. I.e. the outer list has the
             same length as we have/want `PathChainSampler`s, the inner lists
-            can be of different lenght for each sampler and contain different
+            can be of different length for each sampler and contain different
             `PathMover`s (just take care that the weights match the movers).
         mover_weights_per_sampler : None or list[list[float]]
             The outer list contains a list for each PathChainSampler, defining
@@ -321,18 +322,7 @@ class Brain:
         self.sampler_to_mcstepcollection = sampler_to_mcstepcollection
         # make it possible to set all existing attributes via kwargs
         # check the type for attributes with default values
-        dval = object()
-        for kwarg, value in kwargs.items():
-            cval = getattr(self, kwarg, dval)
-            if cval is not dval:
-                if isinstance(value, type(cval)):
-                    # value is of same type as default so set it
-                    setattr(self, kwarg, value)
-                else:
-                    raise TypeError(f"Setting attribute {kwarg} with "
-                                    + f"mismatching type ({type(value)}). "
-                                    + f" Default type is {type(cval)}."
-                                    )
+        _attach_kwargs_to_object(obj=self, logger=logger, **kwargs)
         # Keep track of which sampler did which step, we just have a list with
         # one sampler idx for each step done in the order they have finished
         self._sampler_idxs_for_steps = []
@@ -377,7 +367,7 @@ class Brain:
             - that the model has states and if they are callable and async
             - the model.density_collector.cache file is set to storage
         """
-        # if we warn about anything not beeing set as expected we should also
+        # if we warn about anything not being set as expected we should also
         # tell the user about model.ee_params (which will then most likely also
         #  be at their defaults)
         any_warned = False
@@ -478,7 +468,7 @@ class Brain:
         """
         Initialize :class:`Brain` with n_sampler identical `PathChainSampler`s.
 
-        This is a convienience function to set up a brain with multiple
+        This is a convenience function to set up a brain with multiple
         identical samplers, each sampler is created with the movers defined by
         `movers_cls`, `movers_kwargs` (and the optional `mover_weights`).
         If `samplers_use_same_stepcollection = True`, all sampler will use the
@@ -499,7 +489,7 @@ class Brain:
         n_sampler : int
             The number of (identical) `PathChainSampler`s to create.
         movers_cls : list[PathMover_classes]
-            A list of (uninitialzed) `PathMover` classes defining the sampling
+            A list of (uninitialized) `PathMover` classes defining the sampling
             scheme.
         movers_kwargs : list[dict]
             The keyword arguments used to initialize each of the mover classes
@@ -585,7 +575,7 @@ class Brain:
                         f"{sampler.mcstep_foldername_prefix}{sampler._stepnum}"
                                     )
             os.mkdir(step_dir)
-            s = MCstep(mover=None, stepnum=0, directory=step_dir,  # required
+            s = MCstep(mover=None, step_num=0, directory=step_dir,  # required
                        # our initial seed path for this sampler
                        path=trajectories[idx],
                        # initial step must be an accepted MCstate
@@ -642,8 +632,8 @@ class Brain:
             directly after this function with the amount of steps/accepts you
             want to add. The benefit of this strategy is that the new and the
             unfinished steps will then be done concurrently, instead of waiting
-            for the unfinished steps to be done and then after they are all
-            done start the new steps.
+            for the unfinished steps to be done and then, after they are all
+            done, start the new steps.
         resave_mcstep_pckl : bool, optional
             Whether we should rewrite the MCStep pickle file, by default False.
             This can be useful e.g. to update all python objects to a new
@@ -702,7 +692,7 @@ class Brain:
                             step.predicted_committors_sp = (
                                 await self.model(step.shooting_snap))[0]
                         # run the tasks
-                        await self._run_tasks(mcstep=step, sampler_idx=sidx)
+                        await self.run_tasks(mcstep=step, sampler_idx=sidx)
                     # store the finished step for the sampler it came from
                     self.samplers[sidx]._store_finished_step(
                                             step=step,
@@ -735,11 +725,7 @@ class Brain:
         # we run them by running finish_step in each sampler, it finishes and
         # returns the step or returns None if no unfinished steps are present
         sampler_tasks = [asyncio.create_task(
-                            s.finish_step(
-                                model=self.model,
-                                brain_task_callback=functools.partial(self._run_tasks,
-                                                                      sampler_idx=s_idx)
-                                          )
+                            s.finish_step(model=self.model, brain=self)
                                              )
                          for s_idx, s in enumerate(self.samplers)]
         # run them all and get the results in the order they are done
@@ -774,12 +760,8 @@ class Brain:
         # run for n_accepts in total over all samplers
         acc = 0
         sampler_tasks = [asyncio.create_task(
-                            s.make_step(
-                                model=self.model,
-                                brain_task_callback=functools.partial(self._run_tasks,
-                                                                      sampler_idx=s_idx)
-                                        )
-                                             )
+                            s.make_step(model=self.model, brain=self)
+                            )
                          for s_idx, s in enumerate(self.samplers)]
         accepts_tqdm = tqdm(total=n_accepts, desc="Accepts")
         steps_tqdm = tqdm(total=float("inf"), desc="Steps")
@@ -808,10 +790,8 @@ class Brain:
                                 sampler_idx,
                                 asyncio.create_task(
                                     self.samplers[sampler_idx].make_step(
-                                        model=self.model,
-                                        brain_task_callback=functools.partial(self._run_tasks,
-                                                                              sampler_idx=sampler_idx)
-                                                                         )
+                                                model=self.model, brain=self
+                                                )
                                                     )
                                      )
         # now that we have enough accepts finish all that are still pending
@@ -856,14 +836,11 @@ class Brain:
             s_idx = 0
             while n_started < n_steps:
                 sampler = self.samplers[s_idx]
-                brain_task_callback = functools.partial(self._run_tasks,
-                                                        sampler_idx=s_idx)
                 if sampler.contains_partial_step:
                     sampler_tasks += [asyncio.create_task(
                                         sampler.make_step(
-                                            model=self.model,
-                                            brain_task_callback=brain_task_callback,
-                                                          )
+                                                model=self.model, brain=self,
+                                                )
                                                           )
                                       ]
                     n_started += 1
@@ -871,9 +848,8 @@ class Brain:
                     # we still got fresh samplers to start
                     sampler_tasks += [asyncio.create_task(
                                         sampler.make_step(
-                                            model=self.model,
-                                            brain_task_callback=brain_task_callback,
-                                                          )
+                                                model=self.model, brain=self,
+                                                )
                                                           )
                                       ]
                     n_started += 1
@@ -889,10 +865,8 @@ class Brain:
             # sampler and then go into the while loop below
             sampler_tasks = [asyncio.create_task(
                                 s.make_step(
-                                    model=self.model,
-                                    brain_task_callback=functools.partial(self._run_tasks,
-                                                                          sampler_idx=s_idx)
-                                            )
+                                    model=self.model, brain=self,
+                                    )
                                                  )
                              for s_idx, s in enumerate(self.samplers)]
             n_started = len(sampler_tasks)
@@ -923,10 +897,8 @@ class Brain:
                                 sampler_idx,
                                 asyncio.create_task(
                                     self.samplers[sampler_idx].make_step(
-                                        model=self.model,
-                                        brain_task_callback=functools.partial(self._run_tasks,
-                                                                              sampler_idx=sampler_idx)
-                                                                         )
+                                        model=self.model, brain=self,
+                                        )
                                                     )
                                      )
                 n_started += 1
@@ -950,7 +922,10 @@ class Brain:
         accepts_tqdm.close()
         steps_tqdm.close()
 
-    async def _run_tasks(self, mcstep, sampler_idx):
+    # TODO: use the PathSamplingSimStateInfo dataclass here too?!
+    # (instead of sampler_idx)
+    # TODO: Document!
+    async def run_tasks(self, mcstep, sampler_idx):
         for t in self.tasks:
             if self.total_steps % t.interval == 0:
                 await t.run(brain=self, mcstep=mcstep,
@@ -1135,8 +1110,7 @@ class PathChainSampler:
                 os.close(fd)
 
     async def finish_step(self,
-                          model,
-                          brain_task_callback: "collections.abc.Coroutine | None" = None,
+                          model, brain,
                           ):
         """
         Finish the current MCStep (if any).
@@ -1150,11 +1124,8 @@ class PathChainSampler:
         model : aimmd.RCModel
             The reaction coordinate (committor) model used to bias the shooting
             point selection.
-        brain_task_callback : collections.abc.Coroutine | None, optional
-            The callback to run the `BrainTask`s, will be run after finishing
-            (but before saving) the MCstep. It must accept the finished MCStep
-            as the only argument.
-            By default None, which means run no callback/BrainTasks
+        brain : Brain
+            The :class:`Brain` running the simulation.
 
         Returns
         -------
@@ -1178,17 +1149,16 @@ class PathChainSampler:
             # (re)set the modelstore
             mover.modelstore = self.modelstore
             # finish the step and return it
-            return await self._make_step(model=model, instep=instep,
-                                         mover=mover,
-                                         brain_task_callback=brain_task_callback,
+            return await self._make_step(model=model, mover=mover,
+                                         instep=instep,
+                                         brain=brain,
                                          continuation=True)
         # no restart file means no unfinshed step
         # we return None
         return None
 
     async def make_step(self,
-                        model,
-                        brain_task_callback: "collections.abc.Coroutine | None" = None,
+                        model, brain,
                         ) -> MCstep:
         """
         Make one Monte Carlo step from current step.
@@ -1198,11 +1168,8 @@ class PathChainSampler:
         model : RCModelAsync
             The reaction coordinate/committor model passed to the mover, e.g.
             used to select an optiomal shooting point for a shooting move.
-        brain_task_callback : collections.abc.Coroutine | None, optional
-            The callback to run the `BrainTask`s, will be run after finishing
-            (but before saving) the MCstep. It must accept the finished MCStep
-            as the only argument.
-            By default None, which means run no callback/BrainTasks
+        brain : Brain
+            The :class:`Brain` running the simulation.
 
         Returns
         -------
@@ -1221,7 +1188,7 @@ class PathChainSampler:
             # note that finish step will in this case always return a MC step
             # (instead of None), because there is a restart file, such that
             # make_step will always return a valid mcstep as expected
-            return await self.finish_step(model, brain_task_callback)
+            return await self.finish_step(model, brain)
         # no restart file found, so do a step from scratch
         if (instep := self.current_step) is None:
             logger.warning("Sampler %d: Instep is None."
@@ -1232,28 +1199,31 @@ class PathChainSampler:
         mover = self._rng.choice(self.movers, p=self.mover_weights)
         # and make/run the actual step
         return await self._make_step(model=model, instep=instep, mover=mover,
-                                     brain_task_callback=brain_task_callback,
+                                     brain=brain,
                                      continuation=False)
 
     async def _make_step(self, model, mover: PathMover,
                          instep: MCstep,
-                         brain_task_callback: "collections.abc.Coroutine | None",
+                         brain: Brain,
                          continuation: bool) -> MCstep:
         self._stepnum += 1
         step_dir = os.path.join(self.workdir,
                                 f"{self.mcstep_foldername_prefix}{self._stepnum}"
                                 )
-        if continuation:
-            n_crash = 0
-            n_maxlen = 0
-            # get the number of times we crashed/reached max length
-            while os.path.isdir(step_dir + f"_max_len{n_maxlen+1}"):
-                n_maxlen += 1
-            while os.path.isdir(step_dir + f"_crash{n_crash+1}"):
-                n_crash += 1
-        else:
-            n_crash = 0
-            n_maxlen = 0
+        simstate_info = PathSamplingSimStateInfo(brain=brain,
+                                                 sampler_idx=self.sampler_idx,
+                                                 step_num=self._stepnum,
+                                                 step_dir=step_dir,
+                                                 continuation=continuation,
+                                                 )
+        # get the number of times we crashed/reached max length
+        # (for the same step_dir we are using currently)
+        n_crash = 0
+        n_maxlen = 0
+        while os.path.isdir(step_dir + f"_max_len{n_maxlen+1}"):
+            n_maxlen += 1
+        while os.path.isdir(step_dir + f"_crash{n_crash+1}"):
+            n_crash += 1
         done = False
         while not done:
             if not continuation:
@@ -1264,9 +1234,9 @@ class PathChainSampler:
                     pickle.dump({"instep": instep, "mover": mover}, pf)
             # and do the actual step
             try:
-                outstep = await mover.move(instep=instep, stepnum=self._stepnum,
-                                           workdir=step_dir, model=model,
-                                           continuation=continuation,
+                outstep = await mover.move(instep=instep,
+                                           simstate_info=simstate_info,
+                                           model=model,
                                            )
             except MaxStepsReachedError as e:
                 # error raised when any trial takes "too long" to commit
@@ -1275,7 +1245,7 @@ class PathChainSampler:
                              )
                 os.rename(step_dir, step_dir + f"_max_len{n_maxlen+1}")
                 n_maxlen += 1
-                continuation = False
+                continuation = simstate_info.continuation = False
             except EngineCrashedError as e:
                 # catch error raised when gromacs crashes
                 if n_crash < self.max_retries_on_crash:
@@ -1289,7 +1259,7 @@ class PathChainSampler:
                     # move stepdir and retry
                     os.rename(step_dir, step_dir + f"_crash{n_crash+1}")
                     n_crash += 1
-                    continuation = False
+                    continuation = simstate_info.continuation = False
                 else:
                     # reached maximum tries, raise the error and crash the sampling :)
                     raise e from None
@@ -1311,8 +1281,9 @@ class PathChainSampler:
                 outstep.p_acc = np.inf
 
         # Call the brains BrainTaks (if any)
-        if brain_task_callback is not None:
-            outstep = await brain_task_callback(mcstep=outstep)
+        # Note that the outstep could be modified by the tasks so it is important
+        # to use the return value of the run_tasks method
+        outstep = await brain.run_tasks(mcstep=outstep, sampler_idx=self.sampler_idx)
 
         self._store_finished_step(outstep, save_step_pckl=True,
                                   make_symlink=True, instep=instep,

@@ -43,6 +43,7 @@ from asyncmd.utils import nstout_from_mdconfig
 
 from ._config import _SEMAPHORES
 from .dataclasses import MDEngineSpec, MCstep
+from .dataclasses_internal import PathSamplingSimStateInfo
 from .spselectors import (SPSelector,
                           RCModelSPSelectorFromTraj,
                           )
@@ -87,11 +88,6 @@ class PathMover(abc.ABC):
         self.modelstore = modelstore
         _attach_kwargs_to_object(obj=self, logger=logger, **kwargs)
 
-    # NOTE: (this is used in MCStep.__str__ so it should not be too long)
-    @abc.abstractmethod
-    def __str__(self) -> str:
-        raise NotImplementedError
-
     # TODO: reformulate or remove the bit below? And then make it part of __getstate__ docstring?!
     # NOTE: we take care of the modelstore in storage (and
     #       PathChainSampler.__init__) to enable us to set the mover object as
@@ -117,19 +113,19 @@ class PathMover(abc.ABC):
     def __setstate__(self, state: dict):
         self.__dict__ = state
 
-    def _model_name(self, stepnum):
+    def _model_name(self, step_num):
         return (f"{self.savename_prefix}_in_chainsampler{self.sampler_idx}"
-                + f"_at_step{stepnum}")
+                + f"_at_step{step_num}")
 
-    def store_model(self, model: "RCModelAsyncMixin", stepnum: int) -> None:
+    def store_model(self, model: "RCModelAsyncMixin", step_num: int) -> None:
         """
-        Store the given ``model`` for ``stepnum``.
+        Store the given ``model`` for ``step_num``.
 
         Parameters
         ----------
         model : RCModelAsyncMixin
             The model to store.
-        stepnum : int
+        step_num : int
             The step number in the MC chain, i.e. the number of steps performed
             in the sampler performing this step.
 
@@ -140,22 +136,22 @@ class PathMover(abc.ABC):
         """
         if self.modelstore is None:
             raise RuntimeError("self.modelstore must be set to store a model.")
-        model_name = self._model_name(stepnum=stepnum)
+        model_name = self._model_name(step_num=step_num)
         self.modelstore[model_name] = model
 
-    def get_model(self, stepnum: int) -> "RCModelAsyncMixin":
+    def get_model(self, step_num: int) -> "RCModelAsyncMixin":
         """
-        Load the stored model for given ``stepnum``.
+        Load the stored model for given ``step_num``.
 
         Parameters
         ----------
-        stepnum : int
+        step_num : int
             The step number in the MC chain.
 
         Returns
         -------
         RCModelAsyncMixin
-            The loaded model used for the given stepnum.
+            The loaded model used for the given step_num.
 
         Raises
         ------
@@ -164,16 +160,16 @@ class PathMover(abc.ABC):
         """
         if self.modelstore is None:
             raise RuntimeError("self.modelstore must be set to load a model.")
-        model_name = self._model_name(stepnum=stepnum)
+        model_name = self._model_name(step_num=step_num)
         return self.modelstore[model_name]
 
-    def delete_model(self, stepnum: int) -> None:
+    def delete_model(self, step_num: int) -> None:
         """
-        Delete the stored model for a given ``stepnum``.
+        Delete the stored model for a given ``step_num``.
 
         Parameters
         ----------
-        stepnum : int
+        step_num : int
             The step number in the MC chain to delete the model for.
 
         Raises
@@ -183,12 +179,13 @@ class PathMover(abc.ABC):
         """
         if self.modelstore is None:
             raise RuntimeError("self.modelstore must be set to delete a model.")
-        model_name = self._model_name(stepnum=stepnum)
+        model_name = self._model_name(step_num=step_num)
         del self.modelstore[model_name]
 
-    async def move(self, instep: MCstep, stepnum: int, workdir: str, *,
+    async def move(self, instep: MCstep, simstate_info: PathSamplingSimStateInfo,
+                   *,
                    model: "RCModelAsyncMixin",
-                   continuation: bool = False) -> MCstep:
+                   ) -> MCstep:
         """
         Perform a move in the MC chain, i.e. generate a new MCstep.
 
@@ -200,16 +197,11 @@ class PathMover(abc.ABC):
         ----------
         instep : MCstep
             The input :class:`MCstep`, i.e. the previous step in the MC chain.
-        stepnum : int
-            The step number of the current step in the MC chain. This is the number
-            of steps performed in the sampler performing this step.
-        workdir : str
-            The (working) directory to use for this :class:`MCstep`.
+        simstate_info: PathSamplingSimStateInfo
+            Dataclass carrying the current state of the pathsampling simulation
+            and information about the current step, e.g. the step_num, workdir.
         model : RCModelAsyncMixin
             The reaction coordinate model to use during the step.
-        continuation : bool, optional
-            Whether to (try to) continue an existing step from the files found
-            in the ``workdir``, by default False.
 
         Returns
         -------
@@ -217,16 +209,17 @@ class PathMover(abc.ABC):
             The newly generated :class:`MCstep`.
         """
         if self.trial_generation_uses_model:
-            model = await self._pre_move(stepnum=stepnum, model=model,
-                                         continuation=continuation,
+            model = await self._pre_move(step_num=simstate_info.step_num,
+                                         model=model,
+                                         continuation=simstate_info.continuation,
                                          )
-        outstep = await self.generate_move(instep=instep, stepnum=stepnum, workdir=workdir,
-                                           model=model, continuation=continuation,
+        outstep = await self.generate_move(instep=instep, simstate_info=simstate_info,
+                                           model=model,
                                            )
-        await self._post_move(stepnum=stepnum)
+        await self._post_move(step_num=simstate_info.step_num)
         return outstep
 
-    async def _pre_move(self, stepnum: int, *,
+    async def _pre_move(self, step_num: int, *,
                         model: "RCModelAsyncMixin", continuation: bool,
                         ) -> "RCModelAsyncMixin":
         # NOTE: need to use the same model for the whole MC step independently
@@ -237,18 +230,19 @@ class PathMover(abc.ABC):
             # only store the model if this is the first time we try this step,
             # otherwise we just return what we stored before
             async with _SEMAPHORES["BRAIN_MODEL"]:
-                self.store_model(model=model, stepnum=stepnum)
+                self.store_model(model=model, step_num=step_num)
         # release the Semaphore, return the loaded model for the step os we have
         # a separate copy for selection/accept/reject
-        return self.get_model(stepnum=stepnum)
+        return self.get_model(step_num=step_num)
 
-    async def _post_move(self, stepnum):
+    async def _post_move(self, step_num):
         if self.delete_cached_model:
-            self.delete_model(stepnum=stepnum)
+            self.delete_model(step_num=step_num)
 
     @abc.abstractmethod
-    async def generate_move(self, instep: MCstep, stepnum: int, workdir: str, *,
-                            model: "RCModelAsyncMixin", continuation: bool,
+    async def generate_move(self, instep: MCstep, simstate_info: PathSamplingSimStateInfo,
+                            *,
+                            model: "RCModelAsyncMixin",
                             ) -> MCstep:
         """
         Abstract method to be implemented in subclasses. Will be called by :meth:`move`.
@@ -287,7 +281,8 @@ class ShootingPathMover(PathMover):
     remove_temporary_trajectories = True
 
     def __init__(self, states, md_engine_spec: MDEngineSpec, *,
-                 sp_selector: SPSelector, **kwargs) -> None:
+                 sp_selector_cls: type[SPSelector], sp_selector_kwargs: dict | None,
+                 **kwargs) -> None:
         """
         Parameters
         ----------
@@ -297,8 +292,13 @@ class ShootingPathMover(PathMover):
             Description/Specification of the MD engine (including parameters)
             used in the trial propagation. See :class:`MDEngineSpec` for
             what is included.
-        sp_selector : SPSelector, optional
-            The shooting point selector to use to provide the (forward) SP.
+        sp_selector_cls : type[SPSelector]
+            The class of the shooting point selector to use for providing the
+            (forward) SPs. Note that an uninitialized class is required.
+        sp_selector_kwargs : dict | None
+            Dictionary with keyword arguments used to initialize the shooting
+            point selector. Can be None, in which case no arguments will be used
+            when initializing the SP selector.
         """
         # NOTE
         # The modelstore and the sampler_idx will be set by
@@ -308,7 +308,9 @@ class ShootingPathMover(PathMover):
         super().__init__(modelstore=None, sampler_idx=None, **kwargs)
         self.states = states
         self.md_engine_spec = md_engine_spec
-        self.sp_selector = sp_selector
+        if sp_selector_kwargs is None:
+            sp_selector_kwargs = {}
+        self.sp_selector = sp_selector_cls(**sp_selector_kwargs)
         # and build the frame extractors
         self._frame_extractor_fw, self._frame_extractor_bw = (
             self.build_frame_extractors()
@@ -340,8 +342,8 @@ class ShootingPathMover(PathMover):
             List of forward and (optionally) backward propagators. In this order.
         """
 
-    async def get_or_generate_sp_fw(self, *, instep: MCstep, stepnum: int,
-                                    workdir: str,
+    async def get_or_generate_sp_fw(self, *, instep: MCstep,
+                                    simstate_info: PathSamplingSimStateInfo,
                                     model: "RCModelAsyncMixin",
                                     ) -> tuple[Trajectory, bool]:
         """
@@ -351,11 +353,9 @@ class ShootingPathMover(PathMover):
         ----------
         instep : MCstep
             The input MC step.
-        stepnum : int
-            The step number of the MC step to perform.
-        workdir : str
-            The working directory to which the shooting point will be written or
-            from which it will be retrieved.
+        simstate_info: PathSamplingSimStateInfo
+            Dataclass carrying the current state of the pathsampling simulation
+            and information about the current step, e.g. the step_num, workdir.
         model : RCModelAsyncMixin
             The reaction coordinate model to use to select the shooting point.
 
@@ -365,7 +365,7 @@ class ShootingPathMover(PathMover):
             ``fw_sp, file_exists``: The shooting point and whether it existed.
         """
         fw_sp_name = os.path.join(
-                        workdir,
+                        simstate_info.step_dir,
                         (f"{self.forward_deffnm}{self.shooting_point_suffix}"
                          + f".{self.md_engine_spec.full_precision_traj_type}")
                                   )
@@ -379,7 +379,7 @@ class ShootingPathMover(PathMover):
             fw_sp = await self.sp_selector.pick(
                                     outfile=fw_sp_name,
                                     frame_extractor=self._frame_extractor_fw,
-                                    step_num=stepnum,
+                                    simstate_info=simstate_info,
                                     # make it possible to pick SPs without an in-path
                                     # for schemes that support it, e.g., shooting from EQ SPs
                                     trajectory=instep.path if instep is not None else None,
@@ -433,9 +433,9 @@ class ShootingPathMover(PathMover):
                                                 )
         return (bw_sp, file_exists)
 
-    async def get_or_generate_sps(self, *, instep: MCstep, stepnum: int, workdir: str,
+    async def get_or_generate_sps(self, *, instep: MCstep,
+                                  simstate_info: PathSamplingSimStateInfo,
                                   model: "RCModelAsyncMixin",
-                                  continuation: bool,
                                   ) -> tuple[Trajectory, Trajectory] | Trajectory:
         """
         Generate or retrieve shooting points for both directions.
@@ -450,15 +450,11 @@ class ShootingPathMover(PathMover):
         ----------
         instep : MCstep
             The input MC step.
-        stepnum : int
-            The step number of the MC step to perform.
-        workdir : str
-            The working directory to which the shooting point will be written or
-            from which it will be retrieved.
+        simstate_info: PathSamplingSimStateInfo
+            Dataclass carrying the current state of the pathsampling simulation
+            and information about the current step, e.g. the step_num, workdir.
         model : RCModelAsyncMixin
             The reaction coordinate model to use to select the shooting point.
-        continuation : bool
-            Whether this MC step is a continuation of a previous interrupted trial.
 
         Returns
         -------
@@ -469,11 +465,11 @@ class ShootingPathMover(PathMover):
         """
         # get or generate forward and backward shooting points
         fw_startconf, file_exists = await self.get_or_generate_sp_fw(
-                                            instep=instep, stepnum=stepnum,
-                                            workdir=workdir,
+                                            instep=instep,
+                                            simstate_info=simstate_info,
                                             model=model,
                                             )
-        if continuation and not file_exists:
+        if simstate_info.continuation and not file_exists:
             logger.warning("Sampler %d: continuation=True but the forward SP"
                            " did not exist. Generated a (new) SP to continue.",
                            self.sampler_idx,
@@ -482,9 +478,10 @@ class ShootingPathMover(PathMover):
             # can not generate a bw SP without a frame extractor
             return fw_startconf
         bw_startconf, file_exists = await self.get_or_generate_sp_bw(
-                                            workdir=workdir, fw_sp=fw_startconf,
+                                            workdir=simstate_info.step_dir,
+                                            fw_sp=fw_startconf,
                                             )
-        if continuation and not file_exists:
+        if simstate_info.continuation and not file_exists:
             logger.warning("Sampler %d: continuation=True but the backward SP"
                            " did not exist. Regenerated the backward SP from"
                            " forward SP to continue.",
@@ -516,7 +513,8 @@ class RandomVelocitiesShootingPathMover(ShootingPathMover):
     and :class:`InvertedVelocitiesFrameExtractor` for backward direction.
     """
     def __init__(self, states, md_engine_spec: MDEngineSpec, temperature: float,
-                 *, sp_selector: SPSelector, **kwargs) -> None:
+                 *, sp_selector_cls: type[SPSelector], sp_selector_kwargs: dict | None,
+                 **kwargs) -> None:
         """
         Parameters
         ----------
@@ -528,12 +526,19 @@ class RandomVelocitiesShootingPathMover(ShootingPathMover):
             what is included.
         temperature : float
             Temperature in degree K (used for velocity randomization).
-        sp_selector : SPSelector, optional
-            The shooting point selector to use to provide the (forward) SP.
+        sp_selector_cls : type[SPSelector]
+            The class of the shooting point selector to use for providing the
+            (forward) SPs. Note that an uninitialized class is required.
+        sp_selector_kwargs : dict | None
+            Dictionary with keyword arguments used to initialize the shooting
+            point selector. Can be None, in which case no arguments will be used
+            when initializing the SP selector.
         """
         self.temperature = temperature
         super().__init__(states=states, md_engine_spec=md_engine_spec,
-                         sp_selector=sp_selector, **kwargs)
+                         sp_selector_cls=sp_selector_cls,
+                         sp_selector_kwargs=sp_selector_kwargs,
+                         **kwargs)
 
     def build_frame_extractors(self) -> "tuple[FrameExtractor, FrameExtractor]":
         """
@@ -566,8 +571,9 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
     _propagators: list[ConditionalTrajectoryPropagator]
 
     def __init__(self, states, md_engine_spec: MDEngineSpec, temperature: float,
-                 *, sp_selector: SPSelector = RCModelSPSelectorFromTraj(),
-                 path_weight_func=None, **kwargs) -> None:
+                 *, sp_selector_cls: type[SPSelector] = RCModelSPSelectorFromTraj,
+                 sp_selector_kwargs: dict | None = None, path_weight_func=None,
+                 **kwargs) -> None:
         """
         Initialize a TwoWayShootingPathMover.
 
@@ -581,9 +587,13 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
             what is included.
         temperature : float
             Temperature in degree K (used for velocity randomization).
-        sp_selector : SPSelector, optional
-            The shooting point selector to use, by default we will use the
-            :class:`RCModelSPSelectorFromTraj` with its default options.
+        sp_selector_cls : type[SPSelector]
+            The class of the shooting point selector to use for providing the
+            (forward) SPs. Note that an uninitialized class is required.
+        sp_selector_kwargs : dict | None
+            Dictionary with keyword arguments used to initialize the shooting
+            point selector. Can be None, in which case no arguments will be used
+            when initializing the SP selector.
         path_weight_func : asyncmd.trajectory.functionwrapper.TrajectoryFunctionWrapper
             Weight function for paths. Can be used to enhance the sampling of
             low probability transition mechanisms. Only makes sense when the
@@ -592,7 +602,8 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
         """
         self.path_weight_func = path_weight_func
         super().__init__(states=states, md_engine_spec=md_engine_spec,
-                         temperature=temperature, sp_selector=sp_selector,
+                         temperature=temperature, sp_selector_cls=sp_selector_cls,
+                         sp_selector_kwargs=sp_selector_kwargs,
                          **kwargs)
 
     def build_propagators(self) -> list[ConditionalTrajectoryPropagator]:
@@ -606,12 +617,9 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
                 for _ in range(2)
                 ]
 
-    # TODO: improve?! e.g. add a description of the SP selector?!
-    def __str__(self) -> str:
-        return "TwoWayShootingPathMover"
-
-    async def generate_move(self, instep: MCstep, stepnum: int, workdir: str, *,
-                            continuation: bool, model: "RCModelAsyncMixin",
+    async def generate_move(self, instep: MCstep, simstate_info: PathSamplingSimStateInfo,
+                            *,
+                            model: "RCModelAsyncMixin",
                             ) -> MCstep:
         """
         Perform flexible length two way shooting trial move.
@@ -620,12 +628,9 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
         ----------
         instep : MCstep
             The input MC step.
-        stepnum : int
-            The step number of the current MC step to perform.
-        workdir : str
-            The working directory to use for trial generation and storage.
-        continuation : bool
-            Whether the current MC step is a continuation of an interrupted trial.
+        simstate_info: PathSamplingSimStateInfo
+            Dataclass carrying the current state of the pathsampling simulation
+            and information about the current step, e.g. the step_num, workdir.
         model : RCModelAsyncMixin
             The reaction coordinate model to use during this MC step.
 
@@ -636,17 +641,15 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
         """
         fw_startconf, bw_startconf = await self.get_or_generate_sps(
                                                     instep=instep,
-                                                    stepnum=stepnum,
-                                                    workdir=workdir,
+                                                    simstate_info=simstate_info,
                                                     model=model,
-                                                    continuation=continuation,
                                                     )
         # propagate the two trial trajectories forward and backward in time
         trial_tasks = [asyncio.create_task(p.propagate(
                                                 starting_configuration=sconf,
-                                                workdir=workdir,
+                                                workdir=simstate_info.step_dir,
                                                 deffnm=deffnm,
-                                                continuation=continuation,
+                                                continuation=simstate_info.continuation,
                                                        )
                                            )
                        for p, sconf, deffnm in zip(self._propagators,
@@ -680,13 +683,13 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
         states_reached[fw_state] += 1
         states_reached[bw_state] += 1
         out_tra_names = [os.path.join(
-                            workdir,
+                            simstate_info.step_dir,
                             (self.forward_deffnm
                              + self.concatenated_trajectory_suffix
                              + f".{self.md_engine_spec.output_traj_type}")
                             ),
                          os.path.join(
-                            workdir,
+                            simstate_info.step_dir,
                             (self.backward_deffnm
                              + self.concatenated_trajectory_suffix
                              + f".{self.md_engine_spec.output_traj_type}")
@@ -697,7 +700,8 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
                                               tra_out=traj_out,
                                               # if we continue the traj might
                                               # already be there
-                                              overwrite=continuation)
+                                              overwrite=simstate_info.continuation,
+                                              )
                         for p, trajs, traj_out in zip(self._propagators,
                                                       [fw_trajs, bw_trajs],
                                                       out_tra_names,
@@ -731,7 +735,7 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
                     self.sampler_idx, fw_state, bw_state,
                     )
         tra_out = os.path.join(
-                    workdir,
+                    simstate_info.step_dir,
                     f"{self.path_filename}.{self.md_engine_spec.output_traj_type}"
                     )
         path_traj = await construct_tp_from_plus_and_minus_traj_segments(
@@ -739,13 +743,13 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
                             plus_trajs=plus_trajs, plus_state=plus_state,
                             state_funcs=self.states, tra_out=tra_out,
                             # if we continue the traj might already be there
-                            struct_out=None, overwrite=continuation,
+                            struct_out=None, overwrite=simstate_info.continuation,
                             )
         # (potentially) remove the temporary files now that we have written all
         # concatenated trajectories
         if self.remove_temporary_trajectories:
             await asyncio.gather(*(p.remove_parts(
-                                        workdir=workdir,
+                                        workdir=simstate_info.step_dir,
                                         deffnm=n,
                                         file_endings_to_remove=["trajectories",
                                                                 "log"])
@@ -759,8 +763,8 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
         half_finished_step = functools.partial(
                                     MCstep,
                                     mover=self,
-                                    stepnum=stepnum,
-                                    directory=workdir,
+                                    step_num=simstate_info.step_num,
+                                    directory=simstate_info.step_dir,
                                     path=path_traj,
                                     predicted_committors_sp=predicted_committors_sp,
                                     shooting_snap=fw_startconf,
@@ -792,7 +796,7 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
             ensemble_weight = await self.sp_selector.probability(
                                                     snapshot=fw_startconf,
                                                     trajectory=path_traj,
-                                                    step_num=stepnum,
+                                                    simstate_info=simstate_info,
                                                     model=model,
                                                     )
             p_acc = 1.
@@ -815,12 +819,12 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
                                             self.sp_selector.probability(
                                                         snapshot=fw_startconf,
                                                         trajectory=instep.path,
-                                                        step_num=stepnum,
+                                                        simstate_info=simstate_info,
                                                         model=model),
                                             self.sp_selector.probability(
                                                         snapshot=fw_startconf,
                                                         trajectory=path_traj,
-                                                        step_num=stepnum,
+                                                        simstate_info=simstate_info,
                                                         model=model),
                                             )
             if self.path_weight_func is None:
@@ -874,8 +878,9 @@ class FixedLengthTwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
 
     def __init__(self, n_steps: int, states, md_engine_spec: MDEngineSpec,
                  temperature: float, *,
-                 sp_selector: SPSelector = RCModelSPSelectorFromTraj(),
-                 path_weight_func=None, **kwargs) -> None:
+                 sp_selector_cls: type[SPSelector] = RCModelSPSelectorFromTraj,
+                 sp_selector_kwargs: dict | None = None, path_weight_func=None,
+                 **kwargs) -> None:
         """
         Initialize a FixedLengthTwoWayShootingPathMover.
 
@@ -892,9 +897,13 @@ class FixedLengthTwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
             what is included.
         temperature : float
             Temperature in degree K (used for velocity randomization).
-        sp_selector : SPSelector, optional
-            The shooting point selector to use, by default we will use the
-            `RCModelSPSelectorFromTraj` with its default options.
+        sp_selector_cls : type[SPSelector]
+            The class of the shooting point selector to use for providing the
+            (forward) SPs. Note that an uninitialized class is required.
+        sp_selector_kwargs : dict | None
+            Dictionary with keyword arguments used to initialize the shooting
+            point selector. Can be None, in which case no arguments will be used
+            when initializing the SP selector.
         path_weight_func : asyncmd.trajectory.functionwrapper.TrajectoryFunctionWrapper
             Weight function for paths. Can be used to enhance the sampling of
             low probability transition mechanisms. Only makes sense when the
@@ -904,7 +913,8 @@ class FixedLengthTwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
         self.path_weight_func = path_weight_func
         self.n_steps = n_steps
         super().__init__(states=states, md_engine_spec=md_engine_spec,
-                         temperature=temperature, sp_selector=sp_selector,
+                         temperature=temperature, sp_selector_cls=sp_selector_cls,
+                         sp_selector_kwargs=sp_selector_kwargs,
                          **kwargs)
         self._nstout = nstout_from_mdconfig(
                                     mdconfig=self.md_engine_spec.engine_kwargs["mdconfig"],
@@ -929,12 +939,9 @@ class FixedLengthTwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
                 for _ in range(2)
                 ]
 
-    # TODO: improve?! e.g. add a description of the SP selector?!
-    def __str__(self) -> str:
-        return "FixedLengthTwoWayShootingPathMover"
-
-    async def generate_move(self, instep: MCstep, stepnum: int, workdir: str, *,
-                            continuation: bool, model: "RCModelAsyncMixin",
+    async def generate_move(self, instep: MCstep, simstate_info: PathSamplingSimStateInfo,
+                            *,
+                            model: "RCModelAsyncMixin",
                             ) -> MCstep:
         """
         Perform fixed length two way shooting trial move.
@@ -943,12 +950,9 @@ class FixedLengthTwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
         ----------
         instep : MCstep
             The input MC step.
-        stepnum : int
-            The step number of the current MC step to perform.
-        workdir : str
-            The working directory to use for trial generation and storage.
-        continuation : bool
-            Whether the current MC step is a continuation of an interrupted trial.
+        simstate_info: PathSamplingSimStateInfo
+            Dataclass carrying the current state of the pathsampling simulation
+            and information about the current step, e.g. the step_num, workdir.
         model : RCModelAsyncMixin
             The reaction coordinate model to use during this MC step.
 
@@ -959,18 +963,16 @@ class FixedLengthTwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
         """
         fw_startconf, bw_startconf = await self.get_or_generate_sps(
                                                     instep=instep,
-                                                    stepnum=stepnum,
-                                                    workdir=workdir,
+                                                    simstate_info=simstate_info,
                                                     model=model,
-                                                    continuation=continuation,
                                                     )
         # propagate the two trial trajectories forward and backward in time
         # first create the names for the concatenated output trajs
         out_tra_names = [os.path.join(
-                            workdir,
+                            simstate_info.step_dir,
                             f"{self.forward_deffnm}.{self.md_engine_spec.output_traj_type}"),
                          os.path.join(
-                            workdir,
+                            simstate_info.step_dir,
                             f"{self.backward_deffnm}.{self.md_engine_spec.output_traj_type}")
                          ]
         # Decide/draw how many frames we do in each direction,
@@ -987,11 +989,11 @@ class FixedLengthTwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
         # now the actual trial generation
         trial_tasks = [asyncio.create_task(p.propagate_and_concatenate(
                                                 starting_configuration=sconf,
-                                                workdir=workdir,
+                                                workdir=simstate_info.step_dir,
                                                 deffnm=deffnm,
                                                 tra_out=out_tra,
-                                                overwrite=continuation,
-                                                continuation=continuation,
+                                                overwrite=simstate_info.continuation,
+                                                continuation=simstate_info.continuation,
                                                                        )
                                            )
                        for p, sconf, deffnm, out_tra in zip(
@@ -1073,7 +1075,7 @@ class FixedLengthTwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
             slices = [(-1, None, -1),
                       # the fw slice starts at 1 to exclude the SP once
                       (1, None, 1)]
-        tra_out = os.path.join(workdir,
+        tra_out = os.path.join(simstate_info.step_dir,
                                f"{self.path_filename}.{self.md_engine_spec.output_traj_type}")
         path_traj = await TrajectoryConcatenator().concatenate_async(
                                                         trajs=trajs,
@@ -1095,7 +1097,7 @@ class FixedLengthTwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
             ensemble_weight = await self.sp_selector.probability(
                                                         snapshot=fw_startconf,
                                                         trajectory=path_traj,
-                                                        step_num=stepnum,
+                                                        simstate_info=simstate_info,
                                                         model=model,
                                                                  )
             # make sure we only accept transitions
@@ -1120,12 +1122,12 @@ class FixedLengthTwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
                                             self.sp_selector.probability(
                                                     snapshot=fw_startconf,
                                                     trajectory=instep.path,
-                                                    step_num=stepnum,
+                                                    simstate_info=simstate_info,
                                                     model=model),
                                             self.sp_selector.probability(
                                                     snapshot=fw_startconf,
                                                     trajectory=path_traj,
-                                                    step_num=stepnum,
+                                                    simstate_info=simstate_info,
                                                     model=model),
                                                         )
             if self.path_weight_func is None:
@@ -1161,7 +1163,7 @@ class FixedLengthTwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
         # (potentially) remove the temporary trajectory files
         if self.remove_temporary_trajectories:
             await asyncio.gather(*(p.remove_parts(
-                                        workdir=workdir,
+                                        workdir=simstate_info.step_dir,
                                         deffnm=n,
                                         file_endings_to_remove=["trajectories",
                                                                 "log"])
@@ -1171,8 +1173,8 @@ class FixedLengthTwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
                                    )
                                  )
         return MCstep(mover=self,
-                      stepnum=stepnum,
-                      directory=workdir,
+                      step_num=simstate_info.step_num,
+                      directory=simstate_info.step_dir,
                       predicted_committors_sp=predicted_committors_sp,
                       shooting_snap=fw_startconf,
                       states_reached=states_reached,

@@ -95,7 +95,7 @@ class MDEngineSpec:
 @dataclasses.dataclass
 class MCstep:
     mover: "PathMover"
-    stepnum: int
+    step_num: int
     directory: str
     path: "Trajectory"
     accepted: bool = False
@@ -196,9 +196,9 @@ class DensityAdaptionParameters:
         before (potentially) adding the trajectory from this pick. Setting this
         to True and adding only the trajectory from each pick one arrives at the
         "lazzeri" scheme. By default True.
-    add_trajectories_from_pick : bool
-        Whether to add the trajectory used to pick the shooting configuration to
-        the density estimate. By default True.
+    add_trajectories_from_sampler : bool
+        Whether to add the trajectories produced in the Markov Chain to the
+        density estimate. By default True.
     trajectories_to_flatten : list[Trajectory]
         An (initial) list of trajectories to flatten the density from. When selecting
         configurations from a predefined reservoir, these trajectories should be
@@ -213,10 +213,11 @@ class DensityAdaptionParameters:
     """
     n_bins: int = 10
     # commonly used predefined schemes that will ensure consistency for (some) arguments
+    # TODO: Add a predefined scheme for correcting density from given trajectories
     scheme: typing.Literal["lazzeri", "p_x_tp"] | None = None
     reevaluate_density_interval: int | None = None
     reset_before_pick: bool = True
-    add_trajectories_from_pick: bool = True
+    add_trajectories_from_sampler: bool = True
     trajectories_to_flatten: "list[Trajectory]" = dataclasses.field(
                                                     default_factory=lambda: []
                                                     )
@@ -228,10 +229,10 @@ class DensityAdaptionParameters:
             return
         if self.scheme.lower() == "lazzeri":
             self.reset_before_pick = True
-            self.add_trajectories_from_pick = True
+            self.add_trajectories_from_sampler = True
             # No need to reevaluate as we always only have
             # one trajectory in the density
             self.reevaluate_density_interval = None
         elif self.scheme.lower() == "p_x_tp":
             self.reset_before_pick = False
-            self.add_trajectories_from_pick = True
+            self.add_trajectories_from_sampler = True

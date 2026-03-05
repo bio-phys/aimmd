@@ -42,6 +42,7 @@ from asyncmd.trajectory.propagate import (
 
 from .dataclasses import MDEngineSpec
 from ..tools import attach_kwargs_to_object as _attach_kwargs_to_object
+from ..tools import is_documented_by_docstring as _is_documented_by
 
 if typing.TYPE_CHECKING:  # pragma: no cover
     from asyncmd.trajectory.functionwrapper import TrajectoryFunctionWrapper
@@ -49,18 +50,6 @@ if typing.TYPE_CHECKING:  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
-
-
-def _is_documented_by(docstring, *format_args):
-    """
-    Decorator to add the given docstring to the decorated method.
-    Optionally perform formatting on the string with ``format_args``, i.e. call
-    ``docstring.format(*format_args)`` before decorating.
-    """
-    def wrapper(target):
-        target.__doc__ = docstring.format(*format_args)
-        return target
-    return wrapper
 
 
 @dataclasses.dataclass

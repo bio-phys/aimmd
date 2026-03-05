@@ -30,8 +30,10 @@ import numpy.typing as npt
 from asyncmd import Trajectory
 from asyncmd.trajectory.convert import FrameExtractor
 
-from ..base.density_collection import DensityCollectorAsync
+from ..base.density_collection import DensityCollector
 from .dataclasses import DensityAdaptionParameters
+from .dataclasses_internal import PathSamplingSimStateInfo
+from .utils import accepted_trajs_from_mcstep_collection
 
 if typing.TYPE_CHECKING:  # pragma: no cover
     from ..base.rcmodel import RCModelAsyncMixin
@@ -64,7 +66,7 @@ class SPSelector(abc.ABC):
 
     @abc.abstractmethod
     async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
-                          step_num: int, *,
+                          simstate_info: PathSamplingSimStateInfo, *,
                           model: "RCModelAsyncMixin",
                           ) -> float:
         """Return the proposal probability for the given snapshot."""
@@ -84,9 +86,9 @@ class SPSelector(abc.ABC):
 
     @abc.abstractmethod
     async def pick(self, outfile: str, frame_extractor: FrameExtractor,
-                   step_num: int, *,
-                   # we can use step_num, e.g., for tuning the selection distribution
-                   # over time or for knowing when to reset/reestimate density
+                   simstate_info: PathSamplingSimStateInfo, *,
+                   # we can use simstate_info, e.g. step_num for tuning the selection
+                   # distribution over time or for knowing when to reset/reestimate density
                    model: "RCModelAsyncMixin",
                    trajectory: Trajectory | None = None,
                    ) -> Trajectory:
@@ -129,7 +131,7 @@ class UniformSPSelector(SPSelector):
         self.exclude_frames = exclude_frames
 
     async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
-                          step_num: int, *,
+                          simstate_info: PathSamplingSimStateInfo, *,
                           model: "RCModelAsyncMixin",
                           ) -> float:
         """
@@ -145,9 +147,9 @@ class UniformSPSelector(SPSelector):
             The snapshot in question.
         trajectory : Trajectory
             The trajectory to pick snapshot from.
-        step_num : int
-            The number of the current step in the MC chain, i.e. the number of
-            steps performed in the sampler performing this step.
+        simstate_info: PathSamplingSimStateInfo
+            Dataclass carrying the current state of the pathsampling simulation
+            and information about the current step, e.g. the step_num, workdir.
         model : RCModelAsyncMixin
             Completely ignored in uniform selection.
 
@@ -164,7 +166,7 @@ class UniformSPSelector(SPSelector):
         return 1 / (traj_len - 2 * self.exclude_frames)
 
     async def pick(self, outfile: str, frame_extractor: FrameExtractor,
-                   step_num: int, *,
+                   simstate_info: PathSamplingSimStateInfo, *,
                    model: "RCModelAsyncMixin",
                    trajectory: Trajectory | None = None,
                    ) -> Trajectory:
@@ -180,9 +182,9 @@ class UniformSPSelector(SPSelector):
         frame_extractor : FrameExtractor
             `asyncmd.FrameExtractor` subclass used to extract the chosen frame
             from `trajectory`.
-        step_num : int
-            The number of the current step in the MC chain, i.e. the number of
-            steps performed in the sampler performing this step.
+        simstate_info: PathSamplingSimStateInfo
+            Dataclass carrying the current state of the pathsampling simulation
+            and information about the current step, e.g. the step_num, workdir.
         model : RCModelAsyncMixin
             Completely ignored in uniform selection.
         trajectory : Trajectory
@@ -284,7 +286,9 @@ class RCModelSPSelector(SPSelector):  # pylint: disable=too-many-instance-attrib
             self.distribution = distribution
         self.scale = scale
         self.density_adaptation_params = density_adaptation_params
-        self.density_collector: DensityCollectorAsync | None = None
+        self.density_collector: DensityCollector | None = None
+        self._last_density_collection = 0
+        self._last_density_reevaluation = 0
 
     @property
     def distribution(self) -> str:
@@ -437,23 +441,24 @@ class RCModelSPSelector(SPSelector):  # pylint: disable=too-many-instance-attrib
         return ret
 
     async def pick(self, outfile: str, frame_extractor: FrameExtractor,
-                   step_num: int, *,
+                   simstate_info: PathSamplingSimStateInfo, *,
                    model: "RCModelAsyncMixin",
                    trajectory: Trajectory | None = None,
                    ) -> Trajectory:
         # here we take care of adding trajectories to density adaption and
         # optionally update the density estimate from stored trajectories
         # using the current model
-        await self._pre_pick(step_num=step_num, model=model, trajectory=trajectory)
+        await self._pre_pick(simstate_info=simstate_info, model=model)
         snap = await self.pick_snapshot(outfile=outfile, frame_extractor=frame_extractor,
-                                        step_num=step_num, trajectory=trajectory,
+                                        simstate_info=simstate_info, trajectory=trajectory,
                                         model=model,
                                         )
         return snap
 
     @abc.abstractmethod
     async def pick_snapshot(self, outfile: str, frame_extractor: FrameExtractor,
-                            step_num: int, *, model: "RCModelAsyncMixin",
+                            simstate_info: PathSamplingSimStateInfo, *,
+                            model: "RCModelAsyncMixin",
                             trajectory: Trajectory | None = None,
                             ) -> Trajectory:
         """
@@ -466,9 +471,9 @@ class RCModelSPSelector(SPSelector):  # pylint: disable=too-many-instance-attrib
         frame_extractor : FrameExtractor
             The FrameExtractor class that will be used to extract the selected
             snapshot.
-        step_num : int
-            The number of the current step in the MC chain, i.e. the number of
-            steps performed in the sampler performing this step.
+        simstate_info: PathSamplingSimStateInfo
+            Dataclass carrying the current state of the pathsampling simulation
+            and information about the current step, e.g. the step_num, workdir.
         model : RCModelAsyncMixin
             The committor model to use to select the snapshot.
         trajectory : Trajectory | None, optional
@@ -483,8 +488,8 @@ class RCModelSPSelector(SPSelector):  # pylint: disable=too-many-instance-attrib
         """
         raise NotImplementedError
 
-    async def _pre_pick(self, step_num: int, model: "RCModelAsyncMixin",
-                        trajectory: Trajectory | None = None
+    async def _pre_pick(self, simstate_info: PathSamplingSimStateInfo,
+                        model: "RCModelAsyncMixin",
                         ) -> None:
         """
         Perform needed operations for density adaption pre-pick.
@@ -497,9 +502,9 @@ class RCModelSPSelector(SPSelector):  # pylint: disable=too-many-instance-attrib
 
         Parameters
         ----------
-        step_num : int
-            The number of the current step in the MC chain, i.e. the number of
-            steps performed in the sampler performing this step.
+        simstate_info: PathSamplingSimStateInfo
+            Dataclass carrying the current state of the pathsampling simulation
+            and information about the current step, e.g. the step_num, workdir.
         model : RCModelAsyncMixin
             The committor model used for this step.
         trajectory : Trajectory | None, optional
@@ -510,12 +515,12 @@ class RCModelSPSelector(SPSelector):  # pylint: disable=too-many-instance-attrib
         if self.density_adaptation_params is None:  # we do not do density adaption
             return
         if self.density_collector is None:  # setup DensityCollector (if we need one)
-            self.density_collector = DensityCollectorAsync(
+            self.density_collector = DensityCollector(
                                         n_dim=model.n_out,
                                         bins=self.density_adaptation_params.n_bins,
                                         )
             if len(self.density_adaptation_params.trajectories_to_flatten):
-                await self.density_collector.add_density_for_trajectories(
+                await self.density_collector.add_density_for_trajectories_async(
                         model=model,
                         trajectories=self.density_adaptation_params.trajectories_to_flatten,
                         weights=self.density_adaptation_params.trajectories_to_flatten_weights,
@@ -549,13 +554,28 @@ class RCModelSPSelector(SPSelector):  # pylint: disable=too-many-instance-attrib
             # check if we do reevaluation at all (not None)
             # and if so check if it is a step_num (which will be the total number
             # of steps done so far in the sampler) at which we reevaluate
-            if not step_num % self.density_adaptation_params.reevaluate_density_interval:
-                await self.density_collector.reevaluate_density(model=model)
+            if (
+                simstate_info.step_num - self._last_density_reevaluation
+                >= self.density_adaptation_params.reevaluate_density_interval
+            ):
+                await self.density_collector.reevaluate_density_async(model=model)
+                self._last_density_reevaluation = simstate_info.step_num
         # now add trajectories (if we do so)
-        if self.density_adaptation_params.add_trajectories_from_pick:
-            await self.density_collector.add_density_for_trajectories(
+        if self.density_adaptation_params.add_trajectories_from_sampler:
+            # get the accepted trajectories produced since the SP-selector last ran
+            step_collection = simstate_info.brain.samplers[
+                simstate_info.sampler_idx
+                ].mcstep_collection
+            trajectories, weights = accepted_trajs_from_mcstep_collection(
+                                        mcstep_collection=step_collection,
+                                        start=self._last_density_collection,
+                                        )
+            # and remember until where we have already added
+            self._last_density_collection = len(step_collection)
+            await self.density_collector.add_density_for_trajectories_async(
                                                 model=model,
-                                                trajectories=[trajectory]
+                                                trajectories=trajectories,
+                                                weights=weights,
                                                 )
 
 
@@ -576,7 +596,8 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
         *,
         density_adaptation_params: (
             DensityAdaptionParameters | None
-        ) = DensityAdaptionParameters(scheme="lazzeri"),
+        ) = DensityAdaptionParameters(scheme="p_x_TP",
+                                      reevaluate_density_interval=10),
         exclude_frames: int = 1,
         f_sel: collections.abc.Callable | None = None,
     ) -> None:
@@ -596,9 +617,8 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
             correction factor to flatten the density of potential SP configurations
             along the predicted committor. See also the :class:`DensityAdaptionParameters`
             for more. If set to `None`, no density adaption will be performed.
-            By default density adaption following the scheme introduced in
-            Lazzeri et. al. (JCTC 2023, https://doi.org/10.1021/acs.jctc.3c00821)
-            will be performed.
+            By default density adaption according to the density of points on
+            transition paths, p(x|TP), will be performed.
         exclude_frames : int, optional
             How many frames to exclude from the selection at the start and end
             of the trajectory, e.g. if exclude_frames=2 we exclude the first
@@ -629,7 +649,7 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
         self._exclude_frames = int(val)
 
     async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
-                          step_num: int, *,
+                          simstate_info: PathSamplingSimStateInfo, *,
                           model: "RCModelAsyncMixin",
                           ) -> float:
         """
@@ -648,9 +668,9 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
             The snapshot in question.
         trajectory : Trajectory
             The trajectory to pick `snapshot` from.
-        step_num : int
-            The number of the current step in the MC chain, i.e. the number of
-            steps performed in the sampler performing this step.
+        simstate_info: PathSamplingSimStateInfo
+            Dataclass carrying the current state of the pathsampling simulation
+            and information about the current step, e.g. the step_num, workdir.
         model : RCModelAsyncMixin
             The reaction coordinate model used to pick the snapshot.
 
@@ -681,7 +701,8 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
         return f_val / sum_bias
 
     async def pick_snapshot(self, outfile: str, frame_extractor: FrameExtractor,
-                            step_num: int, *, model: "RCModelAsyncMixin",
+                            simstate_info: PathSamplingSimStateInfo, *,
+                            model: "RCModelAsyncMixin",
                             trajectory: Trajectory | None = None,
                             ) -> Trajectory:
         """
@@ -698,9 +719,9 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
         frame_extractor : FrameExtractor
             The frame extractor to use when getting the snapshot from the
             trajectory, e.g. RandomVelocities for TwoWayShooting.
-        step_num : int
-            The number of the current step in the MC chain, i.e. the number of
-            steps performed in the sampler performing this step.
+        simstate_info: PathSamplingSimStateInfo
+            Dataclass carrying the current state of the pathsampling simulation
+            and information about the current step, e.g. the step_num, workdir.
         model : RCModelAsyncMixin
             The RCModel that is used to bias the selection towards the current
             best guess of the transition state.
@@ -791,7 +812,7 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
             DensityAdaptionParameters | None
         ) = DensityAdaptionParameters(reevaluate_density_interval=10,
                                       reset_before_pick=False,
-                                      add_trajectories_from_pick=False,
+                                      add_trajectories_from_sampler=False,
                                       ),
         f_sel: collections.abc.Callable | None = None,
     ) -> None:
@@ -870,8 +891,8 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
             density_adaption_params.trajectories_to_flatten_weights = equilibrium_weights
             # ensure we dont reset so we dont loose the trajectories
             density_adaption_params.reset_before_pick = False
-            # and ensure that we do not add the trajectories passed to pick method
-            density_adaption_params.add_trajectories_from_pick = False
+            # and ensure that we do not add the trajectories from previous steps in the sampler
+            density_adaption_params.add_trajectories_from_sampler = False
         super().__init__(scale=scale,
                          distribution=distribution,
                          density_adaptation_params=density_adaption_params,
@@ -896,7 +917,7 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
     #        the new points (on the trajectory) come from the reservoir
     #        ensemble and are already included in the normalizing sum [Z_bias])
     async def probability(self, snapshot: Trajectory, trajectory: Trajectory,
-                          step_num: int, *,
+                          simstate_info: PathSamplingSimStateInfo, *,
                           model: "RCModelAsyncMixin",
                           ) -> float:
         """
@@ -913,9 +934,9 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
             Ignored, not needed to calculate ensemble weight of `trajectory`.
         trajectory : Trajectory
             The trajectory to calculate the ensemble weight for.
-        step_num : int
-            The number of the current step in the MC chain, i.e. the number of
-            steps performed in the sampler performing this step.
+        simstate_info: PathSamplingSimStateInfo
+            Dataclass carrying the current state of the pathsampling simulation
+            and information about the current step, e.g. the step_num, workdir.
         model : RCModelAsyncMixin
             The reaction coordinate model used to pick the snapshot.
 
@@ -937,7 +958,8 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
         return z_bias / np.sum(biases_for_new_traj)
 
     async def pick_snapshot(self, outfile: str, frame_extractor: FrameExtractor,
-                            step_num: int, *, model: "RCModelAsyncMixin",
+                            simstate_info: PathSamplingSimStateInfo, *,
+                            model: "RCModelAsyncMixin",
                             trajectory: Trajectory | None = None,
                             ) -> Trajectory:
         """
@@ -954,9 +976,9 @@ class RCModelSPSelectorFromEQ(RCModelSPSelector):
         frame_extractor : FrameExtractor
             The frame extractor to use when getting the snapshot from the
             trajectory, e.g. RandomVelocities for TwoWayShooting.
-        step_num : int
-            The number of the current step in the MC chain, i.e. the number of
-            steps performed in the sampler performing this step.
+        simstate_info: PathSamplingSimStateInfo
+            Dataclass carrying the current state of the pathsampling simulation
+            and information about the current step, e.g. the step_num, workdir.
         model : RCModelAsyncMixin
             The RCModel that is used to bias the selection towards the current
             best guess of the transition state.

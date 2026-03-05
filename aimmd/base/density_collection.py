@@ -20,21 +20,38 @@ In the standard case we will attempt to flatten the distribution of (shooting)
 configurations along the committor.
 """
 import asyncio
+import inspect
 import logging
+import typing
 
 import numpy as np
+
+from ..tools import is_documented_by as _is_documented_by
+
+if typing.TYPE_CHECKING:  # pragma: no cover
+    import numpy.typing as npt
 
 
 logger = logging.getLogger(__name__)
 
 
 class DensityCollector:
-    # TODO: expand docstring
     """
     Keep track of density of configurations on trajectories projected to probabilities.
     """
 
     def __init__(self, n_dim: int, bins: int = 10) -> None:
+        """
+        Initialize a :class:`DensityCollector`.
+
+        Parameters
+        ----------
+        n_dim : int
+            The number of dimensions the probability space has in which we are
+            histograming.
+        bins : int, optional
+            The number of bins to use for each probability direction, by default 10.
+        """
         self.n_dim = n_dim
         self.bins = bins
         self.density_histogram = np.zeros(tuple(bins for _ in range(n_dim)))
@@ -53,46 +70,66 @@ class DensityCollector:
         self._n_allowed_bins = bins**self.n_dim - n_forbidden_bins
 
     def reset(self) -> None:
-        # TODO: document this!
+        """
+        Reset everything stored in self (density histogram, trajectories and weights).
+        """
         self.density_histogram = np.zeros(tuple(self.bins for _ in range(self.n_dim)))
         self._trajectories = []
         self._weights = []
         self._n_samp = 0
 
-    # TODO: cleanup everything below!
+    def _check_for_async(self, model) -> bool:
+        """
+        Check if the given model is async.
+
+        Parameters
+        ----------
+        model : RCModel
+            The model to test
+
+        Returns
+        -------
+        bool
+            Whether the models __call__ method is async.
+        """
+        return (inspect.iscoroutinefunction(model.__call__)
+                # for 'real' models we should not need the second check, but to be sure
+                or inspect.iscoroutinefunction(model)
+                )
 
     def add_density_for_trajectories(self, model, trajectories, weights=None):
-        # TODO: rewrite docstring when we know what this function does!
         """
-        Evaluate the density on the given trajectories.
+        Add the density of the given trajectories to density histogram.
 
-        Only **add** the counts for the added trajectories according to the
-        current models predictions to the existing histogram in probability
-        space.
-        Additionally store trajectories/descriptors for later reevaluation.
+        Adds the weights for the added trajectories according to the given models
+        predictions to the existing histogram in probability space.
+        Additionally stores trajectories/descriptors for later reevaluation.
 
-        See self.reevaluate_density() to only recreate the density estimate
-        without adding new trajectories.
-
-        Parameters:
-        -----------
-        model - aimmd.base.RCModel predicting commitment probabilities
-        trajectories - iterator/iterable of trajectories to evaluate
-        counts - None or list of weights for the trajectories,
-                 i.e. we will add every trajectory with weight=counts,
-                 if None, every trajectory has equal weight,
-                 can also be a list of np.arrays (each of the same length as
-                 the corresponding trajectory), i.e. supports different weights
-                 per configuration.
-
+        Parameters
+        ----------
+        model : aimmd.base.RCModel
+            The model to use for predicting commitment probabilities
+        trajectories : Iterable[Trajectory]
+            The trajectories to evaluate.
+        weights : None | list[float | np.ndarray]
+            The weights to use for the trajectories. If None every configuration
+            on every trajectory will get a weight of one. If a single float per
+            trajectory, each configuration on the corresponding trajectory will
+            get a weight corresponding to the value. Can also be a list of np.arrays
+            (each of the same length as the corresponding trajectory), i.e. supports
+            different weights per configuration.
         """
-        if weights is None:
-            # give each point an equal weight of 1
-            weights = [np.ones(shape=(len(t), )) for t in trajectories]
+        if self._check_for_async(model=model):
+            raise ValueError(
+                "An async model was passed, but this method is not async."
+                " See method ``add_density_for_trajectories_async``"
+                )
+        weights = self._sanitize_weights_for_trajectories(trajectories=trajectories,
+                                                          weights=weights)
         # now predict for the newly added
         preds = [model(tra) for tra in trajectories]
         for pred, tra, w in zip(preds, trajectories, weights):
-            # and add to histogram
+            # add to histogram
             histo, _ = np.histogramdd(sample=pred,
                                       bins=self.bins,
                                       range=[(0., 1.)
@@ -105,19 +142,84 @@ class DensityCollector:
             self._trajectories.append(tra)
             self._weights.append(w)
 
-    def reevaluate_density(self, model):
-        # TODO: rewrite the docstring when we know what this function does!
+    @_is_documented_by(add_density_for_trajectories)
+    # pylint: disable-next=missing-function-docstring
+    async def add_density_for_trajectories_async(self, model, trajectories,
+                                                 weights=None) -> None:
+        if not self._check_for_async(model=model):
+            raise ValueError(
+                "A non-async model was passed, but this method is async."
+                " See method ``add_density_for_trajectories``"
+                )
+        weights = self._sanitize_weights_for_trajectories(trajectories=trajectories,
+                                                          weights=weights)
+        # now predict for the newly added
+        preds = await asyncio.gather(*(model(tra) for tra in trajectories))
+        for pred, tra, w in zip(preds, trajectories, weights):
+            # add to histogram
+            histo, _ = np.histogramdd(sample=pred,
+                                      bins=self.bins,
+                                      range=[(0., 1.)
+                                             for _ in range(self.n_dim)],
+                                      weights=w,
+                                      )
+            self.density_histogram += histo
+            self._n_samp += pred.shape[0]
+            # store trajectories and weights for reevaluation
+            self._trajectories.append(tra)
+            self._weights.append(w)
+
+    def _sanitize_weights_for_trajectories(self, trajectories: list, weights: list | None,
+                                           ) -> "list[npt.NDArray]":
+        """
+        Ensure that weights has the correct/expected shape for each trajectory.
+
+        The correct/expected shape is a np.NDArray of shape=(len(traj),) for each
+        trajectory.
+
+        Parameters
+        ----------
+        trajectories : list
+            A list of trajectories for which the weights should match.
+        weights : list | None
+            The corresponding list of weights to sanitize. Can be None in which
+            case every configuration in every Trajectory will get an equal weight.
+            Can also be one weight for a whole Trajectory, in which case each
+            configuration in that Trajectory will get this value as weight.
+
+        Returns
+        -------
+        list[npt.NDArray]
+            A list with sanitize weights of matching/expected shape.
+        """
+        if weights is None:
+            # give each point an equal weight of 1
+            weights = [np.ones(shape=(len(t), )) for t in trajectories]
+        else:
+            for i, (w, traj) in enumerate(zip(weights, trajectories)):
+                # if weights is one weight for the whole trajectory:
+                # make it an array of the correct length
+                if isinstance(w, (int, np.integer, float, np.floating)):
+                    weights[i] = np.full((len(traj), ), w)
+        return weights
+
+    def reevaluate_density(self, model) -> None:
         """
         Reevaluate the density for all stored trajectories.
 
         Will replace the density histogram with a new density estimate for all
-        trajectories from current models prediction.
+        trajectories using the given models prediction.
 
-        Parameters:
-        -----------
-        model - aimmd.base.RCModel predicting commitment probabilities
-
+        Parameters
+        ----------
+        model : aimmd.base.RCModel
+            The model to use fpr predicting commitment probabilities.
         """
+        if self._check_for_async(model=model):
+            raise ValueError(
+                "An async model was passed, but this method is not async."
+                " See method ``reevaluate_density_async``"
+                )
         # keep a ref to current trajs and weights, then reset self
         trajs, weights = self._trajectories, self._weights
         self.reset()
@@ -125,20 +227,37 @@ class DensityCollector:
         self.add_density_for_trajectories(model=model, trajectories=trajs,
                                           weights=weights)
 
+    @_is_documented_by(reevaluate_density)
+    # pylint: disable-next=missing-function-docstring
+    async def reevaluate_density_async(self, model):
+        if not self._check_for_async(model=model):
+            raise ValueError(
+                "A non-async model was passed, but this method is async."
+                " See method ``reevaluate_density``"
+                )
+        # keep a ref to current trajs and weights, then reset self
+        trajs, weights = self._trajectories, self._weights
+        self.reset()
+        # and finally (re)add all trajectories using the current model
+        await self.add_density_for_trajectories_async(model=model,
+                                                      trajectories=trajs,
+                                                      weights=weights,
+                                                      )
+
     def get_counts(self, probabilities):
-        # TODO: Docstring!
         """
-        Return the current counts in bin for a given probability vector.
+        Return the current counts/density values for a given probability vector.
 
-        Parameters:
-        -----------
-        probabilities - numpy.ndarray, shape=(n_points, self.n_dim)
+        Parameters
+        ----------
+        probabilities : numpy.ndarray
+            The commitment probabilities, with shape=(n_points, self.n_dim), for
+            which density values will be returned.
 
-        Returns:
-        --------
-        counts - numpy.ndarray, shape=(n_points,), values of the density
-                 counter at the given points in probability-space
-
+        Returns
+        -------
+        counts : numpy.ndarray, shape=(n_points,)
+            Values of the density counter at the given points in probability-space.
         """
         # we take the min to make sure we are always in the
         # histogram range, even if p = 1
@@ -151,20 +270,28 @@ class DensityCollector:
         return self.density_histogram[idxs]
 
     def get_correction(self, probabilities):
-        # TODO: Docstring!
         """
         Return the 'flattening factor' for the observed density of points.
 
-        The factor is calculated as total_count / counts[probabilities],
-        i.e. the factor is 1 / rho(probabilities).
-        Note that we replace the potential infinite values appearing if
-        the counts in a bin are zero by a large but finite value derived
-        from the idea of add-one-smoothing.
-        I.e. instead of our estimated rho = 0 we use 0 < rho << 1 when
-        calculating 1 / rho.
+        The factor is calculated as total_count / counts[probabilities], i.e.
+        the factor is proportional to 1 / rho[probabilities].
+
+        Note that we use a variant of add-one-smoothing in case we encounter infinite
+        values due to zero density in a bin.
+        In case we encounter an infinity we replace the value in that bin by
+        (norm + n_bins * weight_1_samp) / weight_1_samp,
+        where norm is the sum of the density in all bins, n_bins is the total
+        number of (allowed) bins in each probability direction combined, and
+        weight_1_samp is the average weight per sample.
+
+        Parameters
+        ----------
+        probabilities : np.ndarray
+            The commitment probabilities, with shape=(n_points, self.n_dim),
+            for which correction factor values are to be returned.
         """
         dens = self.get_counts(probabilities)
-        if (norm := np.sum(self.density_histogram)) == 0.:
+        if not (norm := np.sum(self.density_histogram)):
             return np.ones_like(dens)  # we dont have any density yet
         with np.errstate(divide="ignore"):
             # ignore errors through division by zero
@@ -183,55 +310,5 @@ class DensityCollector:
             #  i.e., we add one average sample into each allowed bin
             #  (as in laplace add-one smoothing)
             factor[factor == np.inf] = norm/weight_1_samp + self._n_allowed_bins
-            # NOTE: this is what we used before
-            #factor[factor == np.inf] = ((norm + self._n_allowed_bins)
-            #                            / weight_1_samp
-            #                            )
 
         return factor
-
-
-# TODO: maybe just merge the two classes into one and have the async versions of
-#       the method have an "_async" suffix in their name?! (and a check for async-model?)
-#       ...this makes it more readable and we also get rid of the overwrite mismatch for
-#        the methods
-class DensityCollectorAsync(DensityCollector):
-    # NOTE: Take the docstrings of the superclass (i.e. the non-async version)
-    __doc__ = ("Async version of the DensityCollector \n"
-               + "Parent class docstring: \n"
-               + str(DensityCollector.__doc__)
-               )
-    # NOTE: "steal" docstrings also for the methods we overwrite, they can
-    #        (and should) be taken from DensityCollector
-
-    async def add_density_for_trajectories(self, model, trajectories, weights=None):
-        if weights is None:
-            # give each point an equal weight of 1
-            weights = [np.ones(shape=(len(t), )) for t in trajectories]
-        # now predict for the newly added
-        preds = await asyncio.gather(*(model(tra) for tra in trajectories))
-        for pred, tra, w in zip(preds, trajectories, weights):
-            # and add to histogram
-            histo, _ = np.histogramdd(sample=pred,
-                                      bins=self.bins,
-                                      range=[(0., 1.)
-                                             for _ in range(self.n_dim)],
-                                      weights=w,
-                                      )
-            self.density_histogram += histo
-            self._n_samp += pred.shape[0]
-            # store trajectories and weights for reevaluation
-            self._trajectories.append(tra)
-            self._weights.append(w)
-
-    add_density_for_trajectories.__doc__ = DensityCollector.add_density_for_trajectories.__doc__
-
-    async def reevaluate_density(self, model):
-        # keep a ref to current trajs and weights, then reset self
-        trajs, weights = self._trajectories, self._weights
-        self.reset()
-        # and finally (re)add all trajectories using the current model
-        await self.add_density_for_trajectories(model=model, trajectories=trajs,
-                                                weights=weights)
-
-    reevaluate_density.__doc__ = DensityCollector.reevaluate_density.__doc__

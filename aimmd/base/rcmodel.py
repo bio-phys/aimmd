@@ -131,9 +131,11 @@ class RCModel(ABC):
                            for s in self.states
                            ]
         # take care of density collector
-        state["density_collector"] = state["density_collector"].object_for_pickle(group,
-                                                                                  overwrite=overwrite,
-                                                                                  )
+        if self.density_collector is not None:
+            state["density_collector"] = state["density_collector"].object_for_pickle(
+                                                                        group,
+                                                                        overwrite=overwrite,
+                                                                        )
         ret_obj = self.__class__.__new__(self.__class__)
         ret_obj.__dict__.update(state)
         return ret_obj
@@ -143,7 +145,8 @@ class RCModel(ABC):
         # for now this is only the density collector
         # (except the ops CollectiveVariable but that needs special care
         #  since it comes from ops storage)
-        self.density_collector = self.density_collector.complete_from_h5py_group(group)
+        if self.density_collector is not None:
+            self.density_collector = self.density_collector.complete_from_h5py_group(group)
         return self
 
     def complete_from_ops_storage(self, ops_storage):
@@ -348,13 +351,9 @@ class RCModelAsyncMixin:
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # use the async version of the density collector
-        # we just overwrite what __init__ set before
-        self.density_collector = TrajectoryDensityCollectorAsync(
-                                        n_dim=self.n_out,
-                                        bins=self.density_collection_n_bins,
-                                        cache_file=self.density_collector.cache_file,
-                                                                 )
+        # NOTE: async models dont need to have a density collector as in distributed
+        # this is handled by the shooting point selector
+        self.density_collector = None
 
     # overwrite the register_sp func for the async model to raise an error and
     # make sure people are warned
@@ -867,61 +866,3 @@ class TrajectoryDensityCollector:
                                         )
 
         return factor
-
-
-class TrajectoryDensityCollectorAsync(TrajectoryDensityCollector):
-    # NOTE: Take the docstrings of the superclass (i.e. the non-async version)
-    __doc__ = ("Async version of the TrajectoryDensityCollector \n"
-               + "Parent class docstring: \n"
-               + TrajectoryDensityCollector.__doc__
-               )
-    # NOTE: "steal" docstrings also for the methods we overwrite, they can
-    #        (and should) be taken from TrajectoryDensityCollector
-
-    async def add_density_for_trajectories(self, model, trajectories, counts=None):
-        len_before = self._fill_pointer
-        # add descriptors to self
-        if counts is None:
-            counts = len(trajectories) * [1.]
-        all_descriptors = await asyncio.gather(*(model.descriptor_transform(tra)
-                                                 for tra in trajectories))
-        for descriptors, c in zip(all_descriptors, counts):
-            self.append(tra_descriptors=descriptors, multiplicity=c)
-        # now predict for the newly added
-        pred = await model(self._descriptors[len_before:self._fill_pointer],
-                           use_transform=False)
-        histo, edges = np.histogramdd(sample=pred,
-                                      bins=self.bins,
-                                      range=[[0., 1.]
-                                             for _ in range(self.n_dim)],
-                                      weights=self._counts[len_before:self._fill_pointer]
-                                      )
-        # and add to self.histogram
-        self.density_histogram += histo
-
-    add_density_for_trajectories.__doc__ = TrajectoryDensityCollector.add_density_for_trajectories.__doc__
-
-    async def reevaluate_density_add_trajectories(self, model, trajectories, counts=None):
-        # add descriptors to self
-        # this also adds them to the density, but we reevaluate anyway...
-        await self.add_density_for_trajectories(model=model,
-                                                trajectories=trajectories,
-                                                counts=counts)
-        # get current density estimate for all stored descriptors
-        await self.reevaluate_density(model=model)
-
-    reevaluate_density_add_trajectories.__doc__ = TrajectoryDensityCollector.reevaluate_density_add_trajectories.__doc__
-
-    async def reevaluate_density(self, model):
-        pred = await model(self._descriptors[:self._fill_pointer],
-                           use_transform=False)
-        histo, edges = np.histogramdd(
-                            sample=pred,
-                            bins=self.bins,
-                            range=[[0., 1.]
-                                   for _ in range(self.n_dim)],
-                            weights=self._counts[:self._fill_pointer]
-                                      )
-        self.density_histogram = histo
-
-    reevaluate_density.__doc__ = TrajectoryDensityCollector.reevaluate_density.__doc__
