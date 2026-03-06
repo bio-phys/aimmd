@@ -17,7 +17,7 @@ along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 import logging
 from openpathsampling.beta.hooks import PathSimulatorHook
 from openpathsampling import CollectiveVariable, Volume
-from ..base.rcmodel import TrajectoryDensityCollector
+from ..base.density_collection import DensityCollector
 from .utils import analyze_ops_mcstep, accepted_trials_from_ops_storage
 
 
@@ -96,20 +96,23 @@ class DensityCollectionHook(PathSimulatorHook):
 
     Note that this hook only operates on the density collector attached to the
     given model. However density collection is inherently model specific, since
-    it uses the given models prediction to span the committor space in whic the
+    it uses the given models prediction to span the committor space in which the
     histogramming is done. Therefore this hook takes a RCModel to initialize
     instead of a density collector.
     """
 
     implemented_for = ["before_simulation", "after_step"]
 
-    def __init__(self, model, first_collection=100, interval=10,
-                 recreate_interval=500, reinitialize=False):
+    def __init__(self, model, n_bins=10, first_collection=100, interval=10,
+                 recreate_interval=500, reinitialize=True):
         """
         Parameters
         ----------
         model - :class:`aimmd.RCModel`, model for which the density collection
                 will be done
+        n_bins : int
+            The number of bins to use in each probability direction in the
+            histogram.
         first_collection - int (default=100), MC step at which to do the first
                            density collection
         interval - int (default=10), interval (in MC steps) in which to add
@@ -117,19 +120,22 @@ class DensityCollectionHook(PathSimulatorHook):
         recreate_interval - int (default=500), interval (in MC steps) in which
                             the complete estimate is redone for all stored
                             trajectories using the current models predictions
-        reinitialize - bool (default=False), if True the models density
+        reinitialize - bool (default=True), if True the hooks density
                        collector is completely recreated before the simulation
-                       starts, the init arguments of the collector are copied
-                       and all accepted trajectories that can be found in the
-                       ops storage are added to the new density collector
-                       Note: mostly useful if you want to later enable density
-                             collection for a model that has already trained
+                       starts and all accepted trajectories that can be found in
+                       the ops storage are added to the new density collector.
+                       Note that this is has no effect for new simulations (as
+                       in that case no steps are contained in the storage), but
+                       is recommended when restarting simulations. It is therefore
+                       enabled by default.
         """
         self.model = model
+        self.n_bins = n_bins
         self.first_collection = first_collection
         self.interval = interval
         self.recreate_interval = recreate_interval
         self.reinitialize = reinitialize
+        self.collector = DensityCollector(n_dim=model.n_out, bins=n_bins)
 
     def before_simulation(self, sim, **kwargs):
         if self.reinitialize:
@@ -138,31 +144,23 @@ class DensityCollectionHook(PathSimulatorHook):
                                    + " only possible for simulations with "
                                    + "attached ops storage."
                                    )
-            n_dim = self.model.density_collector.n_dim
-            bins = self.model.density_collector.bins
-            cache_file = self.model.density_collector.cache_file
-            new_dc = TrajectoryDensityCollector(n_dim=n_dim, bins=bins,
-                                                cache_file=cache_file,
-                                                )
-            self.model.density_collector = new_dc
             tps, counts = accepted_trials_from_ops_storage(
                                                     storage=sim.storage,
                                                     start=0,
                                                            )
-            self.model.density_collector.add_density_for_trajectories(
+            self.collector.add_density_for_trajectories(
                                                         model=self.model,
                                                         trajectories=tps,
-                                                        counts=counts,
-                                                                      )
+                                                        weights=counts,
+                                                        )
 
     def after_step(self, sim, step_number, step_info, state, results,
                    hook_state):
         if sim.storage is None:
-            logger.warn("Density collection/adaptation is currently only "
-                        + "possible for simulations with attached ops storage."
-                        )
+            logger.warning("Density collection/adaptation is currently only "
+                           "possible for simulations with attached ops storage."
+                           )
             return
-        dc = self.model.density_collector
         if step_number - self.first_collection >= 0:
             if step_number - self.first_collection == 0:
                 # first collection
@@ -170,25 +168,25 @@ class DensityCollectionHook(PathSimulatorHook):
                                                 storage=sim.storage,
                                                 start=-self.first_collection,
                                                                )
-                dc.add_density_for_trajectories(model=self.model,
-                                                trajectories=tps,
-                                                counts=counts,
-                                                )
+                self.collector.add_density_for_trajectories(model=self.model,
+                                                            trajectories=tps,
+                                                            weights=counts,
+                                                            )
             elif step_number % self.interval == 0:
                 # add only the last interval steps
                 tps, counts = accepted_trials_from_ops_storage(
                                                 storage=sim.storage,
                                                 start=-self.interval,
                                                                )
-                dc.add_density_for_trajectories(model=self.model,
-                                                trajectories=tps,
-                                                counts=counts,
-                                                )
+                self.collector.add_density_for_trajectories(model=self.model,
+                                                            trajectories=tps,
+                                                            weights=counts,
+                                                            )
             # Note that this below is an if because reevaluation should be
             # independent of adding new TPs in the same MCStep
             if step_number % self.recreate_interval == 0:
                 # reevaluation time
-                dc.reevaluate_density(model=self.model)
+                self.collector.reevaluate_density(model=self.model)
 
 
 class TrainingHook(PathSimulatorHook):

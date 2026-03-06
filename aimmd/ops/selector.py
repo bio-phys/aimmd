@@ -15,8 +15,13 @@ You should have received a copy of the GNU General Public License
 along with AIMMD. If not, see <https://www.gnu.org/licenses/>.
 """
 import logging
+import typing
 import numpy as np
 from openpathsampling import ShootingPointSelector
+
+
+if typing.TYPE_CHECKING:  # pragma: no cover
+    from .hooks import DensityCollectionHook
 
 
 logger = logging.getLogger(__name__)
@@ -27,7 +32,6 @@ class RCModelSelector(ShootingPointSelector):
     Select 'ideal' shooting points learned by the corresponding model.
 
     The points are 'ideal' in the sense that p(TP|x) is maximal there.
-    Can be used together with `CommittorModelTrainer`.
 
     Parameters
     ----------
@@ -41,21 +45,23 @@ class RCModelSelector(ShootingPointSelector):
     scale - float, 'softness' parameter of the selection distribution,
             higher values result in a broader spread of SPs around the TSE,
             1/alpha for 'gaussian' and gamma for 'lorentzian'
-    density_adaptation - bool, whether we try to correct for imbalances in
-                         the density of points on TPs to achieve a more uniform
-                         SP density along the reaction coordinate,
-                         NOTE: updating the density estimate needs to be
-                         enabled by adding the aimmd.ops.DensityCollectionHook
-                         for this feature to have an effect
+    density_collection_hook : aimmd.ops.hooks.DensityCollectionHook | None
+        The density collection hook performing density collection for/with the
+        model used by this SP selector.
+        Density collection is used to correct for imbalances in the density of
+        points on TPs to achieve a more uniform SP density along the reaction
+        coordinate.
+        Can be None in which case no density correction will be performed.
 
     Notes
     -----
     We use the z_sel function of the RCModel as input for the SP selection.
 
     """
-
-    def __init__(self, model, states=None, distribution='lorentzian',
-                 scale=1., density_adaptation=True):
+    def __init__(self, model,
+                 states=None, distribution='lorentzian',
+                 density_collection_hook: "DensityCollectionHook | None" = None,
+                 scale=1.):
         """Initialize a RCModelSelector."""
         super(RCModelSelector, self).__init__()
         self.model = model
@@ -65,7 +71,11 @@ class RCModelSelector(ShootingPointSelector):
         self.states = states
         self.distribution = distribution
         self.scale = scale
-        self.density_adaptation = density_adaptation
+        if density_collection_hook is None:
+            logger.warning("`density_collection_hook` is None, no density "
+                           "collection will be performed."
+                           )
+        self.density_collection_hook = density_collection_hook
 
     @classmethod
     def from_dict(cls, dct):
@@ -75,15 +85,14 @@ class RCModelSelector(ShootingPointSelector):
         # but if used with an aimmd.TrainingHook it will (re)set the model
         # to the one saved besides the OPS storage
         obj = cls(None,
-                  dct['states'],
+                  states=dct['states'],
+                  density_collection_hook=None,
                   distribution=dct['distribution'],
                   scale=dct['scale'],
-                  # this should make selectors saved before adding
-                  # denisty_adaptadtion work as intended
-                  density_adaptation=dct.get('density_adaptation', False)
                   )
-        logger.warning('Restoring RCModelSelector without model.'
-                       + 'Please take care of resetting the model yourself.')
+        logger.warning('Restoring RCModelSelector without model and density_collection_hook.'
+                       ' Please take care of resetting the model and hook yourself.'
+                       )
         return obj
 
     def to_dict(self):
@@ -92,7 +101,7 @@ class RCModelSelector(ShootingPointSelector):
         dct['distribution'] = self._distribution
         dct['scale'] = self.scale
         dct['states'] = self.states
-        dct['density_adaptation'] = self.density_adaptation
+        #dct['density_collection_hook'] = self.density_collection_hook
         return dct
 
     @property
@@ -129,11 +138,11 @@ class RCModelSelector(ShootingPointSelector):
         # casting to python float solves the problem that
         # metropolis_acceptance is not saved !
         ret = float(self._f_sel(z_sel))
-        if self.density_adaptation:
+        if self.density_collection_hook is not None:
             committor_probs = self.model(snapshot)
             if any_nan:
                 committor_probs = np.nan_to_num(committor_probs)
-            density_fact = self.model.density_collector.get_correction(
+            density_fact = self.density_collection_hook.collector.get_correction(
                                                             committor_probs
                                                                        )
             ret *= float(density_fact)
@@ -175,11 +184,11 @@ class RCModelSelector(ShootingPointSelector):
                            'We used np.nan_to_num to proceed')
             z_sels = np.nan_to_num(z_sels)
         ret = self._f_sel(z_sels)
-        if self.density_adaptation:
+        if self.density_collection_hook is not None:
             committor_probs = self.model(trajectory)
             if any_nan:
                 committor_probs = np.nan_to_num(committor_probs)
-            density_fact = self.model.density_collector.get_correction(
+            density_fact = self.density_collection_hook.collector.get_correction(
                                                             committor_probs
                                                                        )
             ret *= density_fact

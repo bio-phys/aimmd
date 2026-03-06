@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `aimmd.ops`: The density collector is now attached to the `aimmd.ops.hooks.DensityCollectionHook` and uses the new density collector implementation from `aimmd.base.density_collection`
 - `aimmd.distributed`: Introduced `PathSamplingSimStateInfo` dataclass to make it easier to access any information about the current state of the path sampling simulation at any level when performing a MC step.
 - `aimmd.distributed`: Improve `aimmd.distributed.pathmovers.PathMover` class inheritance structure, shooting pathmovers now use uninitialized shooting point selectors as init argument and use the additional `sp_selector_kwargs` argument to specify any arguments to the shooting point selector.
 - `aimmd.distributed`: The density adaption is now a part of the `aimmd.distributed.SPSelector` classes, the additional density adaption scheme "lazzeri" has been added.
@@ -18,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `aimmd.base.rcmodel`: Removed old TrajectoryDensityCollector (attached to model) as it is no longer needed with the ops-based aimmd also now using the new `aimmd.base.density_collector.DensityCollector` class
 - `aimmd.distributed`: The density collection `BrainTask` has been removed as it is no longer needed due to the rework of density collection (see changed).
 
 ## [0.9.3] - 2025-08-03
