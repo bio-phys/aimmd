@@ -566,16 +566,21 @@ class RCModelSPSelector(SPSelector):  # pylint: disable=too-many-instance-attrib
             step_collection = simstate_info.brain.samplers[
                 simstate_info.sampler_idx
                 ].mcstep_collection
-            trajectories, weights = accepted_trajs_from_mcstep_collection(
+            # NOTE: We give every accepted step the same weight (via return_mulitplicity=True),
+            # because we will shoot/select from accepted trials irrespective of
+            # their weights, instead using the true weights here would mean that we would
+            # flatten the target density instead of the one we actually shoot from
+            trajectories, multiplicity = accepted_trajs_from_mcstep_collection(
                                         mcstep_collection=step_collection,
                                         start=self._last_density_collection,
+                                        return_multiplicity=True,
                                         )
             # and remember until where we have already added
             self._last_density_collection = len(step_collection)
             await self.density_collector.add_density_for_trajectories_async(
                                                 model=model,
                                                 trajectories=trajectories,
-                                                weights=weights,
+                                                weights=multiplicity,
                                                 )
 
 
@@ -607,7 +612,10 @@ class RCModelSPSelectorFromTraj(RCModelSPSelector):
         Parameters
         ----------
         scale : float, optional
-            Scale of the SP selection distribution, by default 1.
+            Scale of the distribution (default=1), smaller values result in a more
+            peaked selection of shooting points around the predicted transition state.
+            For the Lorentzian distribution scale = gamma,
+            while for the Gaussian distribution scale = 2 * sigma**2.
         distribution : str
             A string indicating the distribution to use when selecting SPs
             around the transition state, can be "lorentzian", "gaussian",

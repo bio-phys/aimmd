@@ -26,6 +26,7 @@ if typing.TYPE_CHECKING:  # pragma: no cover
 
 def accepted_trajs_from_mcstep_collection(mcstep_collection: "MCStepCollection",
                                           start: int = 0,
+                                          return_multiplicity: bool = False,
                                           ) -> "tuple[list[Trajectory], list[float]]":
     """
     Find all accepted trial trajectories and their weights in a aimmd.distributed
@@ -37,6 +38,12 @@ def accepted_trajs_from_mcstep_collection(mcstep_collection: "MCStepCollection",
         The mcstep collection from which the trials should be retrieved
     start : int, optional
         The first trial step number to inspect, by default 0.
+    return_multiplicity : bool, optional
+        Whether to return the multiplicity instead of the (sum of) weights for
+        the trajectories, i.e., if True each trajectory will have a weight of 1
+        and the returned weights simply count if a trajectory was accepted multiple
+        times.
+        By default False.
 
     Returns
     -------
@@ -62,12 +69,15 @@ def accepted_trajs_from_mcstep_collection(mcstep_collection: "MCStepCollection",
     # instead of the rejects we could find
     last_accept = start
     found = False
-    while not found:
+    while not found and last_accept >= 0:
         if (mcstep_collection[last_accept].accepted
                 and mcstep_collection[last_accept].weight > 0):
             found = True  # not necessary since we use break
             break
         last_accept -= 1
+    if last_accept < 0:
+        # no accepts with weight > 0 in storage (yet)
+        return [], []
     # now iterate over the storage
     tras = []
     weights = []
@@ -75,8 +85,12 @@ def accepted_trajs_from_mcstep_collection(mcstep_collection: "MCStepCollection",
         if (step.accepted and step.weight > 0):
             last_accept = i + start
             tras.append(step.path)
-            weights.append(step.weight)
-            last_weight = step.weight  # remember the weight for next iters
+            # add and remember the weight (or multiplicity) for next iters
+            if return_multiplicity:
+                last_weight = 1.
+            else:
+                last_weight = step.weight
+            weights.append(last_weight)
         else:
             try:
                 # can only end up here without triggering IndexError if we
@@ -85,15 +99,19 @@ def accepted_trajs_from_mcstep_collection(mcstep_collection: "MCStepCollection",
             except IndexError:
                 # no accepts yet
                 tras.append(mcstep_collection[last_accept].path)
-                weights.append(mcstep_collection[last_accept].weight)
-                # remember the weight
-                last_weight = mcstep_collection[last_accept].weight
+                # again: add and remember the weight (or multiplicity)
+                if return_multiplicity:
+                    last_weight = 1.
+                else:
+                    last_weight = mcstep_collection[last_accept].weight
+                weights.append(last_weight)
     return tras, weights
 
 
 def accepted_trajs_from_aimmd_storage(storage: "Storage",
                                       per_mcstep_collection: bool = True,
                                       starts: list[int] | None = None,
+                                      return_multiplicity: bool = False,
                                       ):
     """
     Find all accepted trial trajectories in an aimmd.distributed storage.
@@ -110,6 +128,12 @@ def accepted_trajs_from_aimmd_storage(storage: "Storage",
     starts : None or list of ints (len=n_mcstep_collection)
         The starting step for the collection for every collection, if None we
         will start with the first step
+    return_multiplicity : bool, optional
+        Whether to return the multiplicity instead of the (sum of) weights for
+        the trajectories, i.e., if True each trajectory will have a weight of 1
+        and the returned weights simply count if a trajectory was accepted multiple
+        times.
+        By default False.
 
     Returns:
     --------
@@ -122,13 +146,17 @@ def accepted_trajs_from_aimmd_storage(storage: "Storage",
     if starts is None:
         starts = [0 for _ in storage.mcstep_collections]
     if per_mcstep_collection:
-        return [accepted_trajs_from_mcstep_collection(cs, starts[i])
+        return [accepted_trajs_from_mcstep_collection(cs, starts[i],
+                                                      return_multiplicity=return_multiplicity,
+                                                      )
                 for i, cs in enumerate(storage.mcstep_collections)
                 ]
     tras = []
     weights = []
     for i, cs in enumerate(storage.mcstep_collections):
-        t, c = accepted_trajs_from_mcstep_collection(cs, starts[i])
+        t, c = accepted_trajs_from_mcstep_collection(cs, starts[i],
+                                                     return_multiplicity=return_multiplicity,
+                                                     )
         tras += t
         weights += c
     return tras, weights
