@@ -135,9 +135,14 @@ class RCModelSelector(ShootingPointSelector):
             logger.warning('The model predicts NaNs. '
                            + 'We used np.nan_to_num to proceed')
             z_sel = np.nan_to_num(z_sel)
+        ret = self._f_sel(z_sel)
+        if ret.shape[0] > 1 or len(ret.shape) > 1:
+            raise ValueError("It seems snapshot contains more than one configuration. "
+                             "At least the model predict multiple committor values for it."
+                             )
         # casting to python float solves the problem that
         # metropolis_acceptance is not saved !
-        ret = float(self._f_sel(z_sel))
+        ret = float(ret[0])
         if self.density_collection_hook is not None:
             committor_probs = self.model(snapshot)
             if any_nan:
