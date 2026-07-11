@@ -109,6 +109,42 @@ class MCstep:
                                                 )
     default_savename: str = "mcstep_data.pckl"
 
+    @property
+    def transitions(self) -> int:
+        """
+        The number of transitions that could be formed given `states_reached`.
+
+        Usually zero or one. Note that this will be zero if `states_reached` is
+        `None`.
+
+        Returns
+        -------
+        int
+            Number of transitions
+        """
+        if self.states_reached is None:
+            # can not determine number of transitions without states_reached
+            return 0
+        state_pair_idxs = [(i, j) for i in range(self.states_reached.shape[0])
+                           for j in range(i + 1, self.states_reached.shape[0])
+                           ]
+        return sum(self.states_reached[i] * self.states_reached[j]
+                   for i,j in state_pair_idxs)
+
+    @property
+    def contains_transition(self) -> bool:
+        """
+        Whether this :class:`MCStep` contains a transition between two different states.
+
+        Note that this will be False if `states_reached` is `None`.
+
+        Returns
+        -------
+        bool
+            Whether this step contains a transition
+        """
+        return bool(self.transitions)
+
     def save(self, fname: str | None = None,
              overwrite: bool = False) -> None:
         """
