@@ -41,6 +41,7 @@ from ..tools import attach_kwargs_to_object as _attach_kwargs_to_object
 
 if typing.TYPE_CHECKING:  # pragma: no cover
     import collections.abc
+    import asyncmd
 
 
 logger = logging.getLogger(__name__)
@@ -313,7 +314,7 @@ class Brain:
         #       place?! Has the benefit that we dont need to pass it to every
         #       mover, but the big drawback of assuming we only ever want to do
         #       *T*PS with this class
-        self._check_model(model=model, storage=storage)
+        self._check_model(model=model)
         self.model = model
         self.workdir = os.path.relpath(workdir)
         self.storage = storage
@@ -359,13 +360,12 @@ class Brain:
                                       )
                          ]
 
-    def _check_model(self, model, storage):
+    def _check_model(self, model):
         """Check model for basic sanity before TPS simulation.
 
         Checks:
             - that the model has a descriptor transform and if it is async
             - that the model has states and if they are callable and async
-            - the model.density_collector.cache file is set to storage
         """
         # if we warn about anything not being set as expected we should also
         # tell the user about model.ee_params (which will then most likely also
@@ -407,32 +407,9 @@ class Brain:
                            "results not being cached."
                            )
             any_warned = True
-        # density collector cache file
-        # TODO: what is the best thing to do here?
-        #       check if it is set to the 'correct' file (i.e. storage),
-        #       -> If it is None we set it to storage and warn about it
-        #       -> If it is set to a value we dont (re)set it but warn if that
-        #          value is not storage?
-        if not ((model.density_collector.cache_file is storage)
-                or (model.density_collector.cache_file is storage.file)
-                ):
-            # Note: check for the h5-file and the storage class object,
-            #       it could be either of the two
-            if model.density_collector.cache_file is None:
-                warn_str = "`model.density_collector.cache_file` is not set."
-            else:
-                warn_str = "`model.density_collector.cache_file` is not set to"
-                warn_str += "`storage`."
-            logger.warning(("%s If this was not intended it is recommended to "
-                            "set `model.density_collector.cache_file` to the "
-                            "same value as `storage` to avoid unexpected "
-                            "side-effects."
-                            ), warn_str,
-                           )
-            any_warned = True
-        # If we warned about model.descriptor_transform, model.states or
-        # model.density_collector.cache_file we also should let the users know
-        # to check the ee_params (which are potentially at their defaults)
+        # If we warned about model.descriptor_transform or model.states, we also
+        # should let the users know to check the ee_params (which are potentially
+        # at their defaults)
         if any_warned:
             logger.warning("It is likely that you also want to check the"
                            "`model.ee_params` dictionary and potentially "
@@ -564,31 +541,8 @@ class Brain:
                                      replace=replace,
                                      p=weights)
         # put a (dummy) MCstep with the trajectory into every PathSampling sim
-        for sidx, (idx, sampler) in enumerate(zip(traj_idxs, self.samplers)):
-            # save the first dummy step to its own dir as step 0!
-            # we just create the dir and save only the picklesuch that we can
-            # know about the initial traj/path for the chain when using
-            # reinitialize_from_workdir
-            step_dir = os.path.join(
-                        self.workdir,
-                        f"{self.sampler_directory_prefix}{sidx}",
-                        f"{sampler.mcstep_foldername_prefix}{sampler._stepnum}"
-                                    )
-            os.mkdir(step_dir)
-            s = MCstep(mover=None, step_num=0, directory=step_dir,  # required
-                       # our initial seed path for this sampler
-                       path=trajectories[idx],
-                       # initial step must be an accepted MCstate
-                       accepted=True,
-                       p_acc=1,
-                       )
-            # set the step as current step and adds it to samplers storage
-            # also save it as step zero
-            sampler._store_finished_step(step=s, save_step_pckl=True,
-                                         make_symlink=False,
-                                         is_step_zero=True,
-                                         # ^^^ do not add to sampler._accepts
-                                         )
+        for idx, sampler in zip(traj_idxs, self.samplers):
+            sampler.set_step_zero_from_trajectory(trajectory=trajectories[idx])
 
     async def reinitialize_from_workdir(self, run_tasks: bool = True,
                                         finish_steps: bool = False,
@@ -608,13 +562,13 @@ class Brain:
 
         This method can be used to restart a crashed or otherwise prematurely
         terminated simulation to a new storage. In this case the `Brain` should
-        be initialized exactly as at the start of the originial simulation when
+        be initialized exactly as at the start of the original simulation when
         calling this function, i.e. with `movers`, `workdir`, etc. set but no
         steps have been performed yet.
         This method can also be used to restart a simulation with a different
         descriptor_transform and/or reaction coordinate model architecture.
         Note that also in this case the `Brain` needs to be initialized very
-        similar to what you originaly had set when starting the simulation.
+        similar to what you originally had set when starting the simulation.
         For more details on what can be changed and what not please consult the
         example notebooks and the documentation.
 
@@ -874,7 +828,7 @@ class Brain:
         # we have samplers, otherwise we will skip to the last loop directly
         # (because then n_started = n_steps)
         steps_tqdm = tqdm(total=n_steps, desc="Steps")
-        accepts_tqdm = tqdm(total=float("inf"), desc="Accepts (with weight > 0)")
+        accepts_tqdm = tqdm(total=float("inf"), desc="Accepts (that contain a transition)")
         while n_started < n_steps:
             done, pending = await asyncio.wait(sampler_tasks,
                                                return_when=asyncio.FIRST_COMPLETED)
@@ -888,7 +842,7 @@ class Brain:
                     continue
                 self._sampler_idxs_for_steps += [sampler_idx]
                 steps_tqdm.update(1)
-                if mcstep.accepted and mcstep.weight > 0:
+                if mcstep.accepted and mcstep.contains_transition:
                     accepts_tqdm.update(1)
                 # remove old task from list and start next step in the sampler
                 # that just finished
@@ -1136,6 +1090,41 @@ class PathChainSampler:
                            )
                 os.close(fd)
 
+    def set_step_zero_from_trajectory(self, trajectory: "asyncmd.Trajectory") -> None:
+        """
+        Set the initial step in the path sampling chain using trajectory as path.
+
+        Parameters
+        ----------
+        trajectory : asyncmd.Trajectory
+            The trajecotry to use for the initial step.
+        """
+        # save the first dummy step to its own dir as step 0!
+        # we just create the dir and save only the picklesuch that we can
+        # know about the initial traj/path for the chain when using
+        # reinitialize_from_workdir
+        step_dir = os.path.join(
+                        self.workdir,
+                        f"{self.mcstep_foldername_prefix}{self._stepnum}"
+                                    )
+        os.mkdir(step_dir)
+        s = MCstep(mover=None, step_num=0, directory=step_dir,  # required
+                   # our initial seed path for this sampler
+                   path=trajectory,
+                   # initial step must be an accepted MCstate
+                   accepted=True,
+                   p_acc=1,
+                   # TODO: is this what we want?!
+                   weight=0,
+                   )
+        # set the step as current step and adds it to samplers storage
+        # also save it as step zero
+        self._store_finished_step(step=s, save_step_pckl=True,
+                                  make_symlink=False,
+                                  is_step_zero=True,
+                                  # ^^^ do not add to sampler._accepts
+                                  )
+
     async def finish_step(self,
                           model, brain,
                           ):
@@ -1297,7 +1286,7 @@ class PathChainSampler:
 
         # check if we should accept unconditionally, i.e. if it is a TP but
         # would not have been accepted otherwise (see self.__init__ for more)
-        if self.always_accept_next_TP and (outstep.path is not None):
+        if self.always_accept_next_TP and outstep.contains_transition:
             # can (and should) only accept steps that generated a new transition
             # always set to False to make sure the next step is only accepted
             # if the MC criterion allows it, even if this one would be accepted
