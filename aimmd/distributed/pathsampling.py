@@ -1065,6 +1065,26 @@ class PathChainSampler:
                              instep: MCstep | None = None,
                              is_step_zero: bool = False,
                              ):
+        # NOTE: this is a somewhat dirty hack to make saving faster
+        #       we dont need to keep the history of all density_collectors
+        #       for each step we save
+        #       We still save the density_collector state for the current step
+        #       with the brain and when performing a "reinitialize_from_workdir"
+        #       we are repopulating the density collector cache
+        #       (this however makes it slightly harder to just grab a step from
+        #        storage and run a TPS simulation from there by setting it as
+        #        step_zero/current step in the PathSamplingChains, we do loose
+        #        the density collector history in this case)
+        step_has_density_collector = False
+        if getattr(step.mover, "sp_selector", None) is not None:
+            if getattr(step.mover.sp_selector, "density_collector", None) is not None:
+                # keep a ref, but save the collector without trajs and weights
+                dc_weights = step.mover.sp_selector.density_collector._weights
+                dc_trajs = step.mover.sp_selector.density_collector._trajectories
+                step.mover.sp_selector.density_collector._weights = []
+                step.mover.sp_selector.density_collector._trajectories = []
+                step_has_density_collector = True
+
         self.mcstep_collection.append(step)
         if save_step_pckl:
             pickle_fname = os.path.join(step.directory, step.default_savename)
@@ -1084,6 +1104,13 @@ class PathChainSampler:
             # and write the pickle file next to the trajectories
             # at pickle_fname
             step.save()
+
+        # NOTE: somewhat dirty hack (see above)
+        #       reattach what we stored to the density_collector
+        if step_has_density_collector:
+            step.mover.sp_selector.density_collector._weights = dc_weights
+            step.mover.sp_selector.density_collector._trajectories = dc_trajs
+
         if step.accepted:
             if not is_step_zero:
                 self._accepts.append(1)
