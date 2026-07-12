@@ -19,3 +19,4 @@ from .dataclasses import MDEngineSpec
 from .committors import CommittorSimulation, CommittorConfiguration
 # TODO: what PathSampling stuff do we want to have available at the top level?
 from .pathsampling import Brain
+from . import spselectors, pathmovers
