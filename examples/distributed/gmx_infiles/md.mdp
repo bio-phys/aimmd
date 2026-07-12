@@ -1,20 +1,18 @@
-title                    = test
-cpp                      = /lib/cpp
-include                  = -I../top
-define                   = 
+; NOTE: should use VV integrator for two-way shooting to ensure proper time reversal at SP
 integrator               = md-vv ; verlocity-verlet
 ;integrator               = md ; leap-frog
 ;integrator               = sd ; leap-frog langevin dynamics, inverse friction is set via tau-t
 dt                       = 0.002
-nsteps                   = -1  ;  unlimited steps
+nsteps                   = -1  ; unlimited steps
 nstxout                  = 0
 nstvout                  = 0
-nstlog                   = 20
-;nstenergy                = 10
+nstfout                  = 0
+nstlog                   = 100
+nstenergy                = 100
 nstxout-compressed       = 20
 ;compressed-x-grps        = Protein  SOL
 ;energygrps               = Protein  SOL
-nstlist                  = 50  ; was 10
+nstlist                  = 30
 ns-type                  = grid
 cutoff-scheme            = Verlet
 ;verlet-buffer-tolerance  = 0.001  ; kJ/mol/ps (default=0.005)
@@ -23,7 +21,7 @@ coulombtype              = PME
 rcoulomb                 = 1.1
 rvdw                     = 1.1
 tcoupl                   = v-rescale
-tc-grps                  = Protein      SOL
+tc-grps                  = Protein  SOL
 ;tau-t                    = 10.  1.  ; very large (almost no) tcouple for protein, large tau for solvent (docs say \Tau~0.5 for production)
 tau-t                    = 0.5  0.5
 ref-t                    = 300  300
