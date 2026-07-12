@@ -39,8 +39,3 @@ try:
     from . import symreg
 except(ImportError, ModuleNotFoundError):
     logger.warning('dCGPy not found. SymReg will not be available.')
-
-try:
-    from . import keras
-except (ImportError, ModuleNotFoundError):
-    logger.warning("Tensorflow/Keras not available")
