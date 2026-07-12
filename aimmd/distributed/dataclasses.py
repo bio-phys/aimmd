@@ -93,7 +93,59 @@ class MDEngineSpec:
 
 
 @dataclasses.dataclass
-class MCstep:
+class MCstep:  # pylint: disable=too-many-instance-attributes
+    """
+    Represent a single step in the Markov Chain Monte Carlo (MCMC) path sampling simulation.
+
+    This dataclass encapsulates all information about a single MC step, including the
+    path configuration, acceptance status, and metadata needed for the path sampling
+    algorithm to proceed. Each MCstep represents one iteration in the Monte Carlo chain
+    and contains both the trial trajectory and information about whether it was accepted.
+
+    Note that also methods that produce an unordered set of samples with weights,
+    as, e.g., TPS with EQ SPs, use the MCstep dataclass.
+    In their case each step is accepted and the weight corresponds to the (unnormalized)
+    statistical weight of the respective sample.
+
+    Parameters
+    ----------
+    mover : PathMover
+        The path mover that generated this step. None for initial/dummy steps.
+    step_num : int
+        The step number in the Monte Carlo chain (0-indexed).
+    directory : str
+        The directory where this step's data should be stored/loading from.
+    path : Trajectory
+        The current path configuration (sequence of snapshots) for this step.
+    accepted : bool, optional
+        Whether this step was accepted in the Monte Carlo trial. By default False.
+    p_acc : float, optional
+        The calculated acceptance probability for this step. By default 0.0.
+    weight : float, optional
+        Statistical weight associated with this step. By default 1.0.
+    predicted_committors_sp : npt.NDArray | None, optional
+        Array of predicted committor values for shooting points in the trial.
+        By default None.
+    shooting_snap : Trajectory | None, optional
+        The shooting point snapshot that was selected for the trial propagation.
+        By default None.
+    states_reached : npt.NDArray | None, optional
+        Array indicating which states were reached during this step (0=not reached,
+        1=reached once). Used for determining transitions. By default None.
+    trial_trajectories : list[Trajectory], optional
+        List of trial trajectories generated during this step (forward and backward
+        shooting trajectories). By default empty list.
+    default_savename : str, optional
+        Default filename for saving/loading this step's data. By default "mcstep_data.pckl".
+
+    Attributes
+    ----------
+    transitions : int
+        Number of transitions between different states that occurred during this step.
+        Calculated from states_reached array.
+    contains_transition : bool
+        Whether this step contained at least one transition between two different states.
+    """
     mover: "PathMover"
     step_num: int
     directory: str
@@ -129,7 +181,7 @@ class MCstep:
                            for j in range(i + 1, self.states_reached.shape[0])
                            ]
         return sum(self.states_reached[i] * self.states_reached[j]
-                   for i,j in state_pair_idxs)
+                   for i, j in state_pair_idxs)
 
     @property
     def contains_transition(self) -> bool:
