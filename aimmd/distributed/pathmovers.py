@@ -759,28 +759,10 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
                                                    )
                                    )
                                  )
-        # prepare the MCStep with attributes independent of accept/reject/etc
-        half_finished_step = functools.partial(
-                                    MCstep,
-                                    mover=self,
-                                    step_num=simstate_info.step_num,
-                                    directory=simstate_info.step_dir,
-                                    path=path_traj,
-                                    predicted_committors_sp=predicted_committors_sp,
-                                    shooting_snap=fw_startconf,
-                                    states_reached=states_reached,
-                                    trial_trajectories=[fw_traj, bw_traj],
-                                    )
-        # check if we generated a TP, if not we can save some computation
-        if fw_state == bw_state:
-            if self.sp_selector.probability_is_ensemble_weight:
-                # We have/are creating an unordered ensemble of TP with weights
-                # need to 'accept' all trials, in this case with weight=0
-                return half_finished_step(accepted=True, p_acc=1, weight=0,)
-            # we have a 'real' Markov chain, set p_acc=0 for non-TP
-            # this kicks them out of the MCStates iteration
-            return half_finished_step(accepted=False, p_acc=0, weight=1,)
-        # need to actually calculate acceptance probability/ ensemble weight
+        transition_factor = int(fw_state != bw_state)
+        # calculate acceptance probability/ ensemble weight
+        # depending on whether we build an unordered ensemble of transitions with weights
+        # or if we have a "real" Markov chain with accept/reject
         if self.sp_selector.probability_is_ensemble_weight:
             # Build an unordered ensemble of transitions with weights
             # we use this branch if we know that the probability is the
@@ -799,10 +781,14 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
                                                     simstate_info=simstate_info,
                                                     model=model,
                                                     )
+            # We have/are creating an unordered ensemble of TPs with weights
+            # need to 'accept' all trials
             p_acc = 1.
+            accepted = True
+            # but we give every non-TP a weight of 0
+            ensemble_weight *= transition_factor
             log_str = f"Sampler {self.sampler_idx}: Ensemble weight "
             log_str += f"for generated trial is {round(ensemble_weight, 6)}."
-            accepted = True
         else:
             # "Normal" MCMC TPS below
             # we use this branch if we need to cancel part of the
@@ -843,6 +829,8 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
             # part of p_eq_sp and the configuration is the same in old and
             # new, i.e. for the positions we can cancel old with new
             p_acc = (p_sel_new * w_path_new) / (p_sel_old * w_path_old)
+            # and make sure we can only accept transitions
+            p_acc *= transition_factor
             # The weight of the new path is the inverse of the path bias,
             # e.g. if we give it W_path_new=2 we would sample it twice as
             # often as in equilibrium and so we need to give it the
@@ -856,9 +844,19 @@ class TwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
                 log_str += " Trial was accepted."
         # In both cases: log and return the MCstep
         logger.info(log_str)
-        return half_finished_step(accepted=accepted, p_acc=p_acc,
-                                  weight=ensemble_weight,
-                                  )
+        return MCstep(
+            accepted=accepted,
+            p_acc=p_acc,
+            weight=ensemble_weight,
+            mover=self,
+            step_num=simstate_info.step_num,
+            directory=simstate_info.step_dir,
+            path=path_traj,
+            predicted_committors_sp=predicted_committors_sp,
+            shooting_snap=fw_startconf,
+            states_reached=states_reached,
+            trial_trajectories=[fw_traj, bw_traj],
+        )
 
 
 class FixedLengthTwoWayShootingPathMover(RandomVelocitiesShootingPathMover):
