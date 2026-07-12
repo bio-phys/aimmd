@@ -4,7 +4,8 @@
 :maxdepth: 2
 :caption: aimmd.distributed
 
-Committor simulations <committors>
+Transition Path Sampling <pathsampling>
+Committor Simulations <committors>
 ```
 
 The {mod}`aimmd.distributed` module enables users to setup, run, and analyze an unlimited number of MD and TPS simulations simultaneously.
