@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `aimmd.keras`: removed complete submodule (has not seen updates for a long time, the `aimmd.pytorch` submodule is better maintained and offers better functionality)
 - `aimmd.ops`: removed unused legacy code
 - `aimmd.base.rcmodel`: Removed old TrajectoryDensityCollector (attached to model) as it is no longer needed with the ops-based aimmd also now using the new `aimmd.base.density_collector.DensityCollector` class
 - `aimmd.distributed`: The density collection `BrainTask` has been removed as it is no longer needed due to the rework of density collection (see changed).
