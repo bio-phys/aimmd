@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-07-13
+## [0.10.1] - 2026-07-13
 
 ### Changed
 
@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `aimmd.ops`: removed unused legacy code
 - `aimmd.base.rcmodel`: Removed old TrajectoryDensityCollector (attached to model) as it is no longer needed with the ops-based aimmd also now using the new `aimmd.base.density_collector.DensityCollector` class
 - `aimmd.distributed`: The density collection `BrainTask` has been removed as it is no longer needed due to the rework of density collection (see changed).
+
+## [0.10.0] - 2026-07-13
+
+Messed up release. Never published to pypi.
 
 ## [0.9.3] - 2025-08-03
 
@@ -72,7 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - First release on PyPi
 
-[unreleased]: https://github.com/bio-phys/aimmd/compare/v0.10.0...HEAD
+[unreleased]: https://github.com/bio-phys/aimmd/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/bio-phys/aimmd/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/bio-phys/aimmd/compare/v0.9.3...v0.10.0
 [0.9.3]: https://github.com/bio-phys/aimmd/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/bio-phys/aimmd/compare/v0.9.1dev2...v0.9.2
