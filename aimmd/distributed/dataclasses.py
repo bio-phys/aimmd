@@ -324,3 +324,8 @@ class DensityAdaptionParameters:
         elif self.scheme.lower() == "p_x_tp":
             self.reset_before_pick = False
             self.add_trajectories_from_sampler = True
+            # only set to default reevaluate density interval if it is not set
+            # this enables users to use different reevaluation intervals but still
+            # use the shorthand scheme="p_x_TP"
+            if self.reevaluate_density_interval is None:
+                self.reevaluate_density_interval = 10
