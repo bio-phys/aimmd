@@ -23,6 +23,7 @@ Currently in here are:
 - attach_kwargs_to_object: a function to attach kwargs to an object as properties
   or attributes. This does type checking and warns when previously unset things
   are set. It is used, e.g., in the distributed.CommittorSimulation class.
+- is_documented_by: a decorator to copy the docstring of a method to the decorated one
 """
 import logging
 
@@ -58,3 +59,25 @@ def attach_kwargs_to_object(obj, *, logger: logging.Logger,
         else:
             # not previously defined, so warn that we ignore it
             logger.warning("Ignoring unknown keyword-argument %s.", kwarg)
+
+
+def is_documented_by(original):
+    """
+    Decorator to copy the docstring of a given method to the decorated method.
+    """
+    def wrapper(target):
+        target.__doc__ = original.__doc__
+        return target
+    return wrapper
+
+
+def is_documented_by_docstring(docstring, *format_args):
+    """
+    Decorator to add the given docstring to the decorated method.
+    Optionally perform formatting on the string with ``format_args``, i.e. call
+    ``docstring.format(*format_args)`` before decorating.
+    """
+    def wrapper(target):
+        target.__doc__ = docstring.format(*format_args)
+        return target
+    return wrapper

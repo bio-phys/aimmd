@@ -15,10 +15,9 @@
 """
 This file contains the implementation of the :class:`CommittorSimulation`.
 
-It also contains the implementation of the two input dataclasses for
-:class:`CommittorSimulation`, the :class:`CommittorEngineSpec` and the
-:class:`CommittorConfiguration`, as well as various dataclasses used internally
-in the :class:`CommittorSimulation`.
+It also contains the implementation of the input dataclass for the
+:class:`CommittorSimulation`, the :class:`CommittorConfiguration`, as well as
+various dataclasses used internally in the :class:`CommittorSimulation`.
 """
 import asyncio
 import dataclasses
@@ -40,29 +39,17 @@ from asyncmd.trajectory.propagate import (
                                 ConditionalTrajectoryPropagator,
                                 construct_tp_from_plus_and_minus_traj_segments,
                                 )
-from asyncmd.utils import ensure_mdconfig_options
 
+from .dataclasses import MDEngineSpec
 from ..tools import attach_kwargs_to_object as _attach_kwargs_to_object
+from ..tools import is_documented_by_docstring as _is_documented_by
 
 if typing.TYPE_CHECKING:  # pragma: no cover
-    from asyncmd.mdengine import MDEngine
     from asyncmd.trajectory.functionwrapper import TrajectoryFunctionWrapper
     T = typing.TypeVar("T")  # a generic typevar
 
 
 logger = logging.getLogger(__name__)
-
-
-def _is_documented_by(docstring, *format_args):
-    """
-    Decorator to add the given docstring to the decorated method.
-    Optionally perform formatting on the string with ``format_args``, i.e. call
-    ``docstring.format(*format_args)`` before decorating.
-    """
-    def wrapper(target):
-        target.__doc__ = docstring.format(*format_args)
-        return target
-    return wrapper
 
 
 @dataclasses.dataclass
@@ -82,65 +69,6 @@ class CommittorConfiguration:
     trajectory: Trajectory
     index: int
     name: str | None = None
-
-
-@dataclasses.dataclass
-class CommittorEngineSpec:
-    """
-    Specify MDEngine and other propagation options for :class:`CommittorSimulation`.
-
-    Parameters
-    ----------
-    engine_cls : type[asyncmd.mdengine.MDEngine]
-        The MD engine class to use (uninitialized).
-    engine_kwargs : dict[str, Any]
-        A dictionary with keyword arguments that can be used to initialize the
-        MD engine.
-    walltime_per_part : float
-        MD propagation will be split in parts of walltime, measured in hours.
-    max_steps : int
-        The maximum number of integration steps to perform without reaching a
-        state, i.e. upper cutoff for uncommitted trials.
-    full_precision_traj_type : str
-        The trajectory type for the full precision trajectories used by this engine.
-        Will be used as file-ending for the shooting points.
-        Note: Must be a format that stores velocities and coordinates!
-        By default "trr".
-
-    Attributes
-    ----------
-    output_traj_type : str
-        The (potentially lossy) output trajectory type of the engine, will be
-        inferred automatically from engine_cls and engine_kwargs.
-        Note: Only needs to store coordinates (no velocities).
-    """
-    engine_cls: type["MDEngine"]
-    engine_kwargs: dict[str, typing.Any]
-    walltime_per_part: float
-    max_steps: int | None = None
-    full_precision_traj_type: str = "trr"
-    output_traj_type: str = dataclasses.field(init=False)
-
-    def __post_init__(self) -> None:
-        """
-        Ensure that the mdconfig options are what we expect and infer output_traj_type.
-        """
-        # make sure the mdconfig options are what we expect
-        self.engine_kwargs["mdconfig"] = ensure_mdconfig_options(
-                                self.engine_kwargs["mdconfig"],
-                                # dont generate velocities, we do that ourself
-                                genvel="no",
-                                # dont apply constraints at start of simulation
-                                continuation="yes",
-                                )
-        # infer output_traj_type
-        try:
-            # see if it is set as engine_kwarg
-            output_traj_type: str = self.engine_kwargs["output_traj_type"]
-        except KeyError:
-            # it is not, so we use the engine_class default
-            output_traj_type = self.engine_cls.output_traj_type
-        self.output_traj_type = output_traj_type.lower()
 
 
 @dataclasses.dataclass
@@ -195,7 +123,7 @@ class _PreparedTrialData:
     workdir: str
     continuation: bool
     tra_out: str | None
-    engine_spec: CommittorEngineSpec
+    engine_spec: MDEngineSpec
     overwrite: bool
 
 
@@ -238,7 +166,7 @@ class CommittorSimulation:
         configurations: list[CommittorConfiguration], *,
         states: list["TrajectoryFunctionWrapper"],
         temperature: float | list[float],
-        committor_engine_spec: CommittorEngineSpec | list[CommittorEngineSpec],
+        md_engine_spec: MDEngineSpec | list[MDEngineSpec],
         two_way: bool | list[bool] = False,
         **kwargs: dict,
     ) -> None:
@@ -252,7 +180,7 @@ class CommittorSimulation:
         or a single value.
         This means you can simulate systems differing in the number of
         molecules, at different pressures, or at different temperatures (by using
-        different :class:`CommittorEngineSpec`) and even perform two way trials
+        different :class:`MDEngineSpec`) and even perform two way trials
         only for a selected subset of configurations (e.g. the ones you expect
         to be a transition state).
 
@@ -269,11 +197,11 @@ class CommittorSimulation:
             in degree Kelvin. Can vary on a per-configuration basis or be the
             same for all configurations.
             Note: It is the users responsibility to ensure that the `temperature`
-            and other temperatures potentially passed via `committor_engine_spec`
+            and other temperatures potentially passed via `md_engine_spec`
             (e.g. for thermostats in the MD engine) agree!
-        committor_engine_spec : CommittorEngineSpec | list[CommittorEngineSpec]
+        md_engine_spec : MDEngineSpec | list[MDEngineSpec]
             Description/Specification of the MD engine (including parameters)
-            used in the trial propagation. See :class:`CommittorEngineSpec` for
+            used in the trial propagation. See :class:`MDEngineSpec` for
             what is included. Can vary on a per-configuration basis.
         two_way : bool | list[bool], optional
             Whether to perform two way trials, by default False.
@@ -301,7 +229,7 @@ class CommittorSimulation:
         # use the properties to set (and check the values)
         self.states = states
         self.temperature = temperature
-        self.committor_engine_spec = committor_engine_spec
+        self.md_engine_spec = md_engine_spec
         self.two_way = two_way
         # lists to store which state which particular trial reached
         self._states_reached: list[list[int | None]] = [
@@ -409,16 +337,16 @@ class CommittorSimulation:
         self._temperature = self._ensure_list_len_or_single(val, "temperature")
 
     @property
-    def committor_engine_spec(self) -> CommittorEngineSpec | list[CommittorEngineSpec]:
+    def md_engine_spec(self) -> MDEngineSpec | list[MDEngineSpec]:
         """Specification(s) of the MD engines used for the trial propagation."""
-        return self._committor_engine_spec
+        return self._md_engine_spec
 
-    @committor_engine_spec.setter
-    def committor_engine_spec(self, val: CommittorEngineSpec | list[CommittorEngineSpec],
+    @md_engine_spec.setter
+    def md_engine_spec(self, val: MDEngineSpec | list[MDEngineSpec],
                               ) -> None:
         self._ensure_consistent_engine_specs()
-        self._committor_engine_spec = self._ensure_list_len_or_single(
-                                                val, "committor_engine_spec")
+        self._md_engine_spec = self._ensure_list_len_or_single(
+                                                val, "md_engine_spec")
 
     @property
     def two_way(self) -> bool | list[bool]:
@@ -554,7 +482,7 @@ class CommittorSimulation:
         forward trial to be written to each trial directory.
 
         Note: Without fileending, because the file-ending defined in
-        :attr:`committor_engine_spec` will be added.
+        :attr:`md_engine_spec` will be added.
         """
         return self._fnames.initial_conf
 
@@ -570,7 +498,7 @@ class CommittorSimulation:
         backward trial to be written to each trial directory.
 
         Note: Without fileending, because the file-ending defined in
-        :attr:`committor_engine_spec` will be added.
+        :attr:`md_engine_spec` will be added.
         """
         return self._fnames.initial_conf_bw
 
@@ -702,7 +630,7 @@ class CommittorSimulation:
         for conf_num, conf in enumerate(self.configurations):
             trajs_per_conf = []
             engine_spec = self._get_value_corresponding_to_configuration(
-                                self.committor_engine_spec, conf_num=conf_num,
+                                self.md_engine_spec, conf_num=conf_num,
                                 )
             for trial_num in range(self.trial_counter):
                 traj_path = os.path.join(
@@ -812,7 +740,7 @@ class CommittorSimulation:
         init_conf = self.configurations[conf_num]
         trial_dir = self._get_trial_dir(conf_num=conf_num, trial_num=trial_num)
         full_prec_out = self._get_value_corresponding_to_configuration(
-                                self.committor_engine_spec, conf_num=conf_num,
+                                self.md_engine_spec, conf_num=conf_num,
                             ).full_precision_traj_type
         sp_name = os.path.join(
                     trial_dir,
@@ -833,7 +761,7 @@ class CommittorSimulation:
                      + f".{full_prec_out}"),
                     )
         engine_spec = self._get_value_corresponding_to_configuration(
-                            value=self.committor_engine_spec, conf_num=conf_num)
+                            value=self.md_engine_spec, conf_num=conf_num)
         temperature = self._get_value_corresponding_to_configuration(
                             value=self.temperature, conf_num=conf_num)
         extractor = RandomVelocitiesFrameExtractor(T=temperature)
@@ -877,7 +805,7 @@ class CommittorSimulation:
         # as for _generate_sp_fw, if it is already there we just return it
         trial_dir = self._get_trial_dir(conf_num=conf_num, trial_num=trial_num)
         full_prec_out = self._get_value_corresponding_to_configuration(
-                                self.committor_engine_spec, conf_num=conf_num,
+                                self.md_engine_spec, conf_num=conf_num,
                             ).full_precision_traj_type
         sp_name = os.path.join(
                     trial_dir,
@@ -962,7 +890,7 @@ class CommittorSimulation:
         two_way = self._get_value_corresponding_to_configuration(
                                 self.two_way, conf_num=conf_num)
         engine_spec = self._get_value_corresponding_to_configuration(
-                                self.committor_engine_spec, conf_num=conf_num)
+                                self.md_engine_spec, conf_num=conf_num)
         trial_dir = self._get_trial_dir(conf_num=conf_num, trial_num=trial_num)
         # make sure the directory exists so we can write out the SP(s)
         os.makedirs(trial_dir, exist_ok=True)
@@ -1192,7 +1120,7 @@ class CommittorSimulation:
             # and if we ended in two different states, write out the transition
             trial_dir = self._get_trial_dir(conf_num=conf_num, trial_num=trial_num)
             engine_spec = self._get_value_corresponding_to_configuration(
-                                self.committor_engine_spec, conf_num=conf_num,
+                                self.md_engine_spec, conf_num=conf_num,
                                 )
             logger.info(
                 "Forward and backward propagation ended in two different "

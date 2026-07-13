@@ -11,8 +11,6 @@
 4 toy: loading and saving rcmodels <4_Toy_loading_and_saving_rcmodels>
 
 1.5 toy pytorch multidomain model: setup <1.5_Toy_pytorch_MultiDomainModel_setup>
-
-1 toy tensorflow simple: setup <1_Toy_tensorflow_simple_setup>
 ```
 
 This folder contains a number of notebooks using aimmd to learn the committor of 2D toy potentials (with added orthogonal and irrelevant dimensions to make the learning task more challenging and realistic).

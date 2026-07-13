@@ -43,7 +43,16 @@ templates_path = ['_templates']
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
-exclude_patterns = []
+exclude_patterns = [
+    # NOTE: we need to exclude the files included in other files so that they are
+    #       not handled twice, which messes with, e.g. the figure numbering
+    "guide/distributed/pathsamp_*.md"  # included in pathsampling.md
+    ]
+
+# -- Options for figure numbering ---------------------------------------------
+numfig = True  # number figures, tables, and code-blocks if they have a caption
+# prefix section number to fignum, only works with numbered sections
+#numfig_secnum_depth = 1
 
 # -- Options for HTML output --------------------------------------------------
 # The theme to use for HTML and HTML Help pages. See the documentation for
@@ -74,7 +83,7 @@ html_theme_options = {
         {
             "name": "PyPI",
             "url": "https://pypi.org/project/aimmd/",
-            "icon": "https://img.shields.io/pypi/dm/aimmd",
+            "icon": "https://img.shields.io/pypi/v/aimmd",
             "type": "url",
         },
     ],

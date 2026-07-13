@@ -22,11 +22,12 @@ import collections.abc
 import h5py
 import asyncmd
 import numpy as np
-from pkg_resources import parse_version
+#from pkg_resources import parse_version  # pkg_resources is deprecated
+from packaging.version import parse as parse_version
 
 from . import _H5PY_PATH_DICT
 from .trainset import TrainSet
-from ..distributed.pathmovers import ModelDependentPathMover
+from ..distributed.pathmovers import PathMover
 from .. import __version__
 
 
@@ -78,6 +79,8 @@ class BytesStreamtoH5py:
 
 
 # buffered version, seems to be a bit faster(?)
+# TODO: inherit from BytesIO/FileIO or the corresponding ABC
+#class BytesStreamtoH5pyBuffered(io.BytesIO):
 class BytesStreamtoH5pyBuffered:
     """
     'Translate' from python bytes objects to arrays of uint8. Buffered Version.
@@ -168,6 +171,8 @@ class BytesStreamtoH5pyBuffered:
         return add_len
 
 
+# TODO: inherit from BytesIO/FileIO or the corresponding ABC
+#class H5pytoBytesStream(io.BytesIO):
 class H5pytoBytesStream:
     """
     'Translate' from arrays of uint8s to python bytes objects.
@@ -441,7 +446,7 @@ class MCstepMemory(MutableObjectShelf):
 
     def save(self, mcstep):
         mover = mcstep.mover
-        if isinstance(mover, ModelDependentPathMover):
+        if isinstance(mover, PathMover):
             mover_modelstore = mover.modelstore
             # check if they use the same hdf5 group, the RCModelshelf objects
             # do not need to be the same (and most often often are not)
@@ -449,15 +454,15 @@ class MCstepMemory(MutableObjectShelf):
                 # movers that have been pickled can have modelstore=None
                 if mover_modelstore._group != self._modelstore._group:
                     logger.error("saving a mcstep with a 'foreign' modelstore")
-            mcstep.mover.modelstore = None
+                mcstep.mover.modelstore = None
         super().save(obj=mcstep, overwrite=False, buffsize=2**22)
-        if isinstance(mover, ModelDependentPathMover):
+        if isinstance(mover, PathMover):
             # reset the modelstore of the mc.mover in case we use it somewhere else
             mcstep.mover.modelstore = mover_modelstore
 
     def load(self):
         mcstep = super().load(buffsize=2**22)
-        if isinstance(mcstep.mover, ModelDependentPathMover):
+        if isinstance(mcstep.mover, PathMover):
             mcstep.mover.modelstore = self._modelstore
         return mcstep
 
@@ -635,7 +640,7 @@ class ChainSamplerStore(MutableObjectShelf):
         obj.modelstore = None
         mover_modelstores = []
         for mover in obj.movers:
-            if isinstance(mover, ModelDependentPathMover):
+            if isinstance(mover, PathMover):
                 if mover.modelstore._group != self.modelstore._group:
                     logger.error("Saving a mover in the PathSamplingChain with"
                                  " a different modelstore.")
@@ -653,7 +658,7 @@ class ChainSamplerStore(MutableObjectShelf):
         obj.mcstep_collection = pcs_step_collection
         obj.modelstore = pcs_modelstore
         for mover, mover_ms in zip(obj.movers, mover_modelstores):
-            if isinstance(mover, ModelDependentPathMover):
+            if isinstance(mover, PathMover):
                 mover.modelstore = mover_ms
         return
 
@@ -664,7 +669,7 @@ class ChainSamplerStore(MutableObjectShelf):
         #       the step will not have a modelstore set anymore because it has
         #       been pickled)
         for mover in obj.movers:
-            if isinstance(mover, ModelDependentPathMover):
+            if isinstance(mover, PathMover):
                 mover.modelstore = self.modelstore
         obj.modelstore = self.modelstore
         return obj
@@ -866,13 +871,13 @@ class Storage:
         self._dirname = os.path.dirname(os.path.abspath(os.path.join(os.getcwd(), fname)))
         if ("w" in mode) or ("a" in mode and not fexists):
             # first creation of file: write aimmd compatibility version string
-            self._store.attrs["storage_version"] = np.string_(
+            self._store.attrs["storage_version"] = np.bytes_(
                                                     self._compatibility_version
                                                               )
-            self._store.attrs["aimmd_version"] = np.string_(__version__)
+            self._store.attrs["aimmd_version"] = np.bytes_(__version__)
             # save the current (i.e. where the file is when we opened it) dirname to attrs
             # we need this to be able to save tensorflow models properly
-            self._store.attrs["dirname"] = np.string_(self._dirname)
+            self._store.attrs["dirname"] = np.bytes_(self._dirname)
         else:
             store_version = parse_version(
                             self._store.attrs["storage_version"].decode("ASCII")
@@ -894,7 +899,7 @@ class Storage:
                 # i.e. try to not break backwards compatibility
                 if mode != "r":
                     # storage open with write intent, so just add the attr for dirname
-                    self._store.attrs["dirname"] = np.string_(self._dirname)
+                    self._store.attrs["dirname"] = np.bytes_(self._dirname)
                     logger.debug("Converted 'old' storage to 'new' format by adding "
                                  + "the 'dirname' attr.")
                 else:
@@ -915,7 +920,7 @@ class Storage:
                                      + "if you did not copy the KerasRCmodel directory yourself.")
                     else:
                         # we can just change the path
-                        self._store.attrs["dirname"] = np.string_(self._dirname)
+                        self._store.attrs["dirname"] = np.bytes_(self._dirname)
                         # but we warn because the folder with the models must be copied
                         # TODO/FIXME: automatically copy the folder from old to new location?
                         logger.warn("The directory containing the storage changed, we updated it in the storage."

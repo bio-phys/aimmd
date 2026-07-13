@@ -24,9 +24,13 @@ logger = logging.getLogger(__name__)
 
 # TODO: can we write a nice function that works for some selectors only?
 #       i.e. that is selector specific and lets the user choose the selector?
-def set_rcmodel_in_all_selectors(model, simulation):
+def set_rcmodel_and_hook_in_all_selectors(model,
+                                          density_collection_hook,
+                                          simulation,
+                                          ):
     """
-    Replace all RCModelSelectors models with the given model.
+    Replace all RCModelSelectors models with the given model and set the
+    density_collection_hook for these selectors too.
 
     Useful for restarting TPS simulations, since the aimmd RCModels can not be
     saved by ops together with the RCModelSelector.
@@ -35,6 +39,7 @@ def set_rcmodel_in_all_selectors(model, simulation):
         for mover in move_group:
             if isinstance(mover.selector, RCModelSelector):
                 mover.selector.model = model
+                mover.selector.density_collection_hook = density_collection_hook
 
 
 def analyze_ops_mcstep(mcstep, descriptor_transform, states):

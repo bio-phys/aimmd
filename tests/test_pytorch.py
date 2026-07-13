@@ -297,7 +297,7 @@ class Test_RCModel:
         trainhook = aimmd.ops.TrainingHook(model, trainset)
         aimmd_storage = aimmd.Storage(tmp_path / "test.h5")
         storehook = aimmd.ops.AimmdStorageHook(aimmd_storage, model, trainset)
-        selector = aimmd.ops.RCModelSelector(model, setup_dict['states'])
+        selector = aimmd.ops.RCModelSelector(model, states=setup_dict['states'])
         tps = paths.TPSNetwork.from_states_all_to_all(setup_dict['states'])
         move_scheme = paths.MoveScheme(network=tps)
         strategy = paths.strategies.TwoWayShootingStrategy(modifier=setup_dict['modifier'],
@@ -333,7 +333,10 @@ class Test_RCModel:
         assert np.allclose(trainhook.trainset.shot_results,
                            load_ts.shot_results)
         # try restarting
-        aimmd.ops.set_rcmodel_in_all_selectors(load_model, load_sampler)
+        aimmd.ops.set_rcmodel_and_hook_in_all_selectors(model=load_model,
+                                                        density_collection_hook=None,
+                                                        simulation=load_sampler,
+                                                        )
         # NOTE: we reattach the hooks from previous simulation instead of recreating
         sampler.attach_hook(trainhook)
         sampler.attach_hook(storehook)
