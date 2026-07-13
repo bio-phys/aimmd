@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-13
+
 ### Changed
 
 - `aimmd.ops`: The density collector is now attached to the `aimmd.ops.hooks.DensityCollectionHook` and uses the new density collector implementation from `aimmd.base.density_collection`
@@ -70,7 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - First release on PyPi
 
-[unreleased]: https://github.com/bio-phys/aimmd/compare/v0.9.3...HEAD
+[unreleased]: https://github.com/bio-phys/aimmd/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/bio-phys/aimmd/compare/v0.9.3...v0.10.0
 [0.9.3]: https://github.com/bio-phys/aimmd/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/bio-phys/aimmd/compare/v0.9.1dev2...v0.9.2
 [0.9.1dev2]: https://github.com/bio-phys/aimmd/compare/v0.9.1dev1...v0.9.1dev2
